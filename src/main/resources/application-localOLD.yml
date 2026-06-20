@@ -1,0 +1,52 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: qaliye-backend
+
+  datasource:
+    url: jdbc:postgresql://aws-1-eu-north-1.pooler.supabase.com:5432/postgres
+    username: postgres.gjjvmkoxqvdptrqcbvsc
+    password: Maedotzek@1621
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+    validate-on-migrate: true
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: https://gjjvmkoxqvdptrqcbvsc.supabase.co/auth/v1/.well-known/jwks.json
+
+  cache:
+    type: caffeine
+    caffeine:
+      spec: maximumSize=10000
+
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+
+supabase:
+  url: https://gjjvmkoxqvdptrqcbvsc.supabase.co
+  service-role-key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdqanZta294cXZkcHRycWNidnNjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MTU1MDU4MCwiZXhwIjoyMDk3MTI2NTgwfQ.qS8jYklM5ZodUuxJx34b6igy64zzU3QxVXESsTddDZ4
+
+app:
+  cache:
+    user-status-ttl-seconds: 60
+    subscription-features-ttl-seconds: 300
+
+  internal:
+    webhook-secret: local-dev-secret
