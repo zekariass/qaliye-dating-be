@@ -7,6 +7,7 @@ import com.qaliye.backend.discovery.exception.DailyLimitExceededException;
 import com.qaliye.backend.discovery.exception.NoRewindableActionException;
 import com.qaliye.backend.discovery.exception.RewindMatchGracePeriodExpiredException;
 import com.qaliye.backend.discovery.exception.RewindMatchHasMessagesException;
+import com.qaliye.backend.chat.service.MatchLifecycleService;
 import com.qaliye.backend.discovery.repository.DailyLimitRepository;
 import com.qaliye.backend.discovery.repository.DiscoveryActionRepository;
 import com.qaliye.backend.discovery.repository.EntitlementLedgerRepository;
@@ -27,19 +28,22 @@ public class RewindService {
     private final MatchService matchService;
     private final PlanEntitlementService entitlementService;
     private final DiscoveryQueryService queryService;
+    private final MatchLifecycleService matchLifecycleService;
 
     public RewindService(DiscoveryActionRepository actionRepo,
                          DailyLimitRepository dailyLimitRepo,
                          EntitlementLedgerRepository ledgerRepo,
                          MatchService matchService,
                          PlanEntitlementService entitlementService,
-                         DiscoveryQueryService queryService) {
+                         DiscoveryQueryService queryService,
+                         MatchLifecycleService matchLifecycleService) {
         this.actionRepo = actionRepo;
         this.dailyLimitRepo = dailyLimitRepo;
         this.ledgerRepo = ledgerRepo;
         this.matchService = matchService;
         this.entitlementService = entitlementService;
         this.queryService = queryService;
+        this.matchLifecycleService = matchLifecycleService;
     }
 
     @Transactional
@@ -74,7 +78,7 @@ public class RewindService {
                 if (match.firstMessageAt() != null) {
                     throw new RewindMatchHasMessagesException();
                 }
-                matchService.endMatch(match.id(), "CANCELLED_BY_REWIND", actorId);
+                matchLifecycleService.endMatch(match.id(), "CANCELLED_BY_REWIND", actorId);
                 matchId = match.id();
                 matchCancelled = true;
             }

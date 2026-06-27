@@ -34,6 +34,9 @@ public class AppUser {
     @Column(name = "last_active_at")
     private OffsetDateTime lastActiveAt;
 
+    @Column(name = "show_activity_status", nullable = false)
+    private boolean showActivityStatus = true;
+
     @Column(name = "deleted_at")
     private OffsetDateTime deletedAt;
 

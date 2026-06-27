@@ -262,10 +262,20 @@ CREATE TABLE public.profiles (
     ),
     marital_status VARCHAR(50),
 
-    has_children BOOLEAN NOT NULL DEFAULT FALSE,
+    has_children BOOLEAN,
     wants_children BOOLEAN,
-    smoking BOOLEAN NOT NULL DEFAULT FALSE,
-    drinking BOOLEAN NOT NULL DEFAULT FALSE,
+    smoking VARCHAR(20) CHECK (
+        smoking IS NULL OR smoking IN ('NO', 'YES', 'OCCASIONALLY', 'TRYING_TO_QUIT')
+    ),
+    drinking VARCHAR(20) CHECK (
+        drinking IS NULL OR drinking IN ('NO', 'SOCIALLY', 'OCCASIONALLY', 'YES')
+    ),
+
+    activity_level VARCHAR(20) CHECK (
+        activity_level IS NULL OR activity_level IN ('SEDENTARY', 'LIGHT', 'MODERATE', 'ACTIVE', 'VERY_ACTIVE')
+    ),
+    interests TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
+    languages TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
 
     is_visible BOOLEAN NOT NULL DEFAULT FALSE,
     is_onboarded BOOLEAN NOT NULL DEFAULT FALSE,
@@ -323,8 +333,8 @@ CREATE TABLE public.profile_photos (
 CREATE TABLE public.discovery_preferences (
     user_id UUID PRIMARY KEY REFERENCES public.app_users(id) ON DELETE RESTRICT,
 
-    discovery_mode VARCHAR(20) NOT NULL DEFAULT 'STANDARD' CHECK (
-        discovery_mode IN ('STANDARD', 'GLOBAL', 'INCOGNITO')
+    discovery_mode VARCHAR(20) NOT NULL DEFAULT 'PUBLIC' CHECK (
+        discovery_mode IN ('PUBLIC', 'INCOGNITO')
     ),
 
     -- Default includes every supported residency category. The mobile client may
@@ -1942,3 +1952,1353 @@ SET public = EXCLUDED.public,
 --     create an ordered migration plan that backfills data before adding NOT NULL
 --     columns, changing unique constraints, or enabling new trigger rules.
 -- =============================================================================
+
+
+-- =============================================================================
+-- 18. MIGRATION SCRIPTS: MOBILE APP ALIGNMENT (Gap Analysis v1)
+-- =============================================================================
+-- Run these ALTER statements against an existing database that was created from
+-- the pre-alignment baseline. They are safe to apply in order on a live DB.
+-- The baseline table definitions above already reflect the final state.
+-- =============================================================================
+
+
+-- 18.1  profiles: add activity_level, interests, languages
+ALTER TABLE public.profiles
+    ADD COLUMN IF NOT EXISTS activity_level VARCHAR(20) CHECK (
+        activity_level IS NULL OR activity_level IN ('SEDENTARY', 'LIGHT', 'MODERATE', 'ACTIVE', 'VERY_ACTIVE')
+    ),
+    ADD COLUMN IF NOT EXISTS interests TEXT[] NOT NULL DEFAULT '{}'::TEXT[],
+    ADD COLUMN IF NOT EXISTS languages TEXT[] NOT NULL DEFAULT '{}'::TEXT[];
+
+
+-- 18.2  profiles: make has_children nullable (NULL = "Prefer not to say")
+ALTER TABLE public.profiles
+    ALTER COLUMN has_children DROP NOT NULL,
+    ALTER COLUMN has_children DROP DEFAULT;
+
+
+-- 18.3  profiles: change smoking and drinking from BOOLEAN to VARCHAR enum
+--       Existing boolean values are preserved: TRUE -> 'YES', FALSE -> 'NO'.
+ALTER TABLE public.profiles
+    ALTER COLUMN smoking DROP DEFAULT,
+    ALTER COLUMN drinking DROP DEFAULT;
+
+ALTER TABLE public.profiles
+    ALTER COLUMN smoking TYPE VARCHAR(20)
+        USING CASE WHEN smoking::BOOLEAN THEN 'YES' ELSE 'NO' END,
+    ALTER COLUMN drinking TYPE VARCHAR(20)
+        USING CASE WHEN drinking::BOOLEAN THEN 'YES' ELSE 'NO' END;
+
+ALTER TABLE public.profiles
+    ADD CONSTRAINT profiles_smoking_check CHECK (
+        smoking IS NULL OR smoking IN ('NO', 'YES', 'OCCASIONALLY', 'TRYING_TO_QUIT')
+    ),
+    ADD CONSTRAINT profiles_drinking_check CHECK (
+        drinking IS NULL OR drinking IN ('NO', 'SOCIALLY', 'OCCASIONALLY', 'YES')
+    );
+
+
+-- 18.4  discovery_preferences: update discovery_mode enum to PUBLIC / INCOGNITO
+--       Drop the old constraint first so the UPDATE is not blocked by it.
+ALTER TABLE public.discovery_preferences
+    DROP CONSTRAINT IF EXISTS discovery_preferences_discovery_mode_check;
+
+UPDATE public.discovery_preferences
+    SET discovery_mode = 'PUBLIC'
+    WHERE discovery_mode IN ('STANDARD', 'GLOBAL');
+
+SET CONSTRAINTS public.validate_visible_profile_after_preference_change IMMEDIATE;
+
+ALTER TABLE public.discovery_preferences
+    ALTER COLUMN discovery_mode SET DEFAULT 'PUBLIC',
+    ADD CONSTRAINT discovery_preferences_discovery_mode_check CHECK (
+        discovery_mode IN ('PUBLIC', 'INCOGNITO')
+    );
+
+
+
+-- =============================================================================
+-- V4: Make optional profile fields nullable
+-- Fields that are not part of the minimum required profile (name, gender,
+-- date_of_birth, residency_type, relationship_intention, and status flags)
+-- must accept NULL so a profile can be created before onboarding is complete.
+-- =============================================================================
+
+--================================================
+-- -----------------------------------------------------------------------------
+-- 1. smoking / drinking: drop the NOT NULL constraint that was inherited from
+--    the original BOOLEAN columns and was never removed during the V3 type
+--    conversion. The CHECK constraints already allow NULL.
+-- -----------------------------------------------------------------------------
+ALTER TABLE public.profiles
+    ALTER COLUMN smoking  DROP NOT NULL,
+    ALTER COLUMN drinking DROP NOT NULL;
+
+
+-- -----------------------------------------------------------------------------
+-- 2. interests / languages: were added in V3 as NOT NULL DEFAULT '{}'. Allow
+--    NULL so an incomplete profile can omit them. The DEFAULT is kept so rows
+--    inserted via plain SQL without an explicit value still get an empty array.
+-- -----------------------------------------------------------------------------
+ALTER TABLE public.profiles
+    ALTER COLUMN interests  DROP NOT NULL,
+    ALTER COLUMN languages  DROP NOT NULL;
+
+
+
+
+
+
+
+--==============================================
+
+-- =============================================================================
+-- V5: Split smoking/drinking into boolean flag + detail enum
+-- V3 converted smoking/drinking from BOOLEAN to VARCHAR enum.
+-- The profile API spec now requires a boolean flag (smoking/drinking) AND a
+-- detail column (smoking_detail/drinking_detail). This migration:
+--   1. Adds the detail columns and copies the current VARCHAR values into them.
+--   2. Converts smoking/drinking back to BOOLEAN (NO -> false, others -> true).
+--   3. Adds canonical CHECK constraints on the new detail columns.
+--   4. Adds missing CHECK constraints from the profile-api spec (marital_status,
+--      array cardinality limits).
+-- Idempotent: safe to run on a DB where these changes were already applied
+-- manually (steps 1-4 are guarded; step 5+ use DROP ... IF EXISTS).
+-- =============================================================================
+
+
+-- -----------------------------------------------------------------------------
+-- 1. Add smoking_detail and drinking_detail columns (always idempotent)
+-- -----------------------------------------------------------------------------
+ALTER TABLE public.profiles
+    ADD COLUMN IF NOT EXISTS smoking_detail  VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS drinking_detail VARCHAR(50);
+
+
+-- -----------------------------------------------------------------------------
+-- 2-4. Copy values and convert types — skipped when already BOOLEAN
+-- -----------------------------------------------------------------------------
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name   = 'profiles'
+          AND column_name  = 'smoking'
+          AND data_type    = 'character varying'
+    ) THEN
+        UPDATE public.profiles
+            SET smoking_detail  = smoking
+            WHERE smoking IS NOT NULL;
+
+        UPDATE public.profiles
+            SET drinking_detail = drinking
+            WHERE drinking IS NOT NULL;
+
+        -- The UPDATEs above queue deferred constraint triggers on profiles.
+        -- Flush them now so the subsequent ALTER TABLE DDL is not blocked.
+        SET CONSTRAINTS ALL IMMEDIATE;
+
+        ALTER TABLE public.profiles
+            DROP CONSTRAINT IF EXISTS profiles_smoking_check,
+            DROP CONSTRAINT IF EXISTS profiles_drinking_check;
+
+        ALTER TABLE public.profiles
+            ALTER COLUMN smoking  DROP DEFAULT,
+            ALTER COLUMN drinking DROP DEFAULT;
+
+        EXECUTE '
+            ALTER TABLE public.profiles
+                ALTER COLUMN smoking  TYPE BOOLEAN
+                    USING CASE WHEN smoking  IS NULL OR smoking  = ''NO'' THEN FALSE ELSE TRUE END,
+                ALTER COLUMN drinking TYPE BOOLEAN
+                    USING CASE WHEN drinking IS NULL OR drinking = ''NO'' THEN FALSE ELSE TRUE END
+        ';
+    END IF;
+END $$;
+
+
+-- -----------------------------------------------------------------------------
+-- 5. CHECK constraints for the new detail columns (drop-then-add = idempotent)
+-- -----------------------------------------------------------------------------
+ALTER TABLE public.profiles
+    DROP CONSTRAINT IF EXISTS chk_profiles_smoking_detail,
+    DROP CONSTRAINT IF EXISTS chk_profiles_drinking_detail;
+
+ALTER TABLE public.profiles
+    ADD CONSTRAINT chk_profiles_smoking_detail CHECK (
+        smoking_detail IS NULL
+        OR smoking_detail IN ('NO', 'YES', 'OCCASIONALLY', 'TRYING_TO_QUIT')
+    ),
+    ADD CONSTRAINT chk_profiles_drinking_detail CHECK (
+        drinking_detail IS NULL
+        OR drinking_detail IN ('NO', 'SOCIALLY', 'OCCASIONALLY', 'YES')
+    );
+
+
+-- -----------------------------------------------------------------------------
+-- 6. marital_status canonical values constraint
+-- -----------------------------------------------------------------------------
+ALTER TABLE public.profiles
+    DROP CONSTRAINT IF EXISTS chk_profiles_marital_status;
+
+ALTER TABLE public.profiles
+    ADD CONSTRAINT chk_profiles_marital_status CHECK (
+        marital_status IS NULL
+        OR marital_status IN ('NEVER_MARRIED', 'DIVORCED', 'WIDOWED', 'SEPARATED')
+    );
+
+
+-- -----------------------------------------------------------------------------
+-- 7. Lifestyle array cardinality limits
+-- -----------------------------------------------------------------------------
+ALTER TABLE public.profiles
+    DROP CONSTRAINT IF EXISTS chk_profiles_lifestyle_array_limits;
+
+ALTER TABLE public.profiles
+    ADD CONSTRAINT chk_profiles_lifestyle_array_limits CHECK (
+        (interests  IS NULL OR cardinality(interests)  <= 20) AND
+        (languages  IS NULL OR cardinality(languages)  <= 20)
+    );
+
+
+--=====================================================
+
+-- Move discovery_mode from discovery_preferences to profiles.
+-- Values: PUBLIC (default) | INCOGNITO
+
+-- 1. Add column and constraint to profiles FIRST (before any UPDATE that could fire
+--    deferred constraint triggers on this table).
+ALTER TABLE public.profiles
+    ADD COLUMN discovery_mode VARCHAR(20) NOT NULL DEFAULT 'PUBLIC',
+    ADD CONSTRAINT profiles_discovery_mode_check
+    CHECK (discovery_mode IN ('PUBLIC', 'INCOGNITO'));
+
+-- 2. Backfill from existing discovery_preferences rows.
+--    Any constraint trigger events are now pending on profiles, but we are done
+--    altering profiles itself.
+UPDATE public.profiles p
+SET discovery_mode = COALESCE(
+    (SELECT dp.discovery_mode FROM public.discovery_preferences dp WHERE dp.user_id = p.user_id),
+    'PUBLIC'
+);
+
+-- 3. Drop the column from discovery_preferences.
+ALTER TABLE public.discovery_preferences
+    DROP COLUMN IF EXISTS discovery_mode;
+
+
+
+
+--=============================================================
+
+
+-- ============================================================================
+-- V7__add_chat_sequences_outbox_and_notification_settings.sql
+-- ============================================================================
+
+-- ---------------------------------------------------------------------------
+-- 1. Per-match ordered message sequences and receipt cursors
+-- ---------------------------------------------------------------------------
+
+ALTER TABLE public.matches
+    ADD COLUMN next_message_sequence BIGINT NOT NULL DEFAULT 1,
+    ADD COLUMN user_one_last_delivered_sequence BIGINT NOT NULL DEFAULT 0,
+    ADD COLUMN user_two_last_delivered_sequence BIGINT NOT NULL DEFAULT 0,
+    ADD COLUMN user_one_last_read_sequence BIGINT NOT NULL DEFAULT 0,
+    ADD COLUMN user_two_last_read_sequence BIGINT NOT NULL DEFAULT 0,
+    ADD COLUMN user_one_last_delivered_at TIMESTAMPTZ,
+    ADD COLUMN user_two_last_delivered_at TIMESTAMPTZ;
+
+ALTER TABLE public.messages
+    ADD COLUMN sequence_number BIGINT;
+
+-- Backfill deterministic sequence values for existing messages.
+WITH numbered_messages AS (
+    SELECT
+        id,
+        ROW_NUMBER() OVER (
+            PARTITION BY match_id
+            ORDER BY created_at ASC, id ASC
+        )::BIGINT AS sequence_number
+    FROM public.messages
+)
+UPDATE public.messages m
+SET sequence_number = n.sequence_number
+FROM numbered_messages n
+WHERE m.id = n.id;
+
+ALTER TABLE public.messages
+    ALTER COLUMN sequence_number SET NOT NULL;
+
+-- Existing historical messages are treated as delivered and read.
+WITH max_sequences AS (
+    SELECT
+        match_id,
+        MAX(sequence_number)::BIGINT AS max_sequence
+    FROM public.messages
+    GROUP BY match_id
+)
+UPDATE public.matches m
+SET
+    next_message_sequence = max_sequences.max_sequence + 1,
+    user_one_last_delivered_sequence = max_sequences.max_sequence,
+    user_two_last_delivered_sequence = max_sequences.max_sequence,
+    user_one_last_read_sequence = max_sequences.max_sequence,
+    user_two_last_read_sequence = max_sequences.max_sequence
+FROM max_sequences
+WHERE max_sequences.match_id = m.id;
+
+-- Matches with no messages remain at sequence 1 and cursor 0.
+UPDATE public.matches
+SET next_message_sequence = 1
+WHERE next_message_sequence IS NULL
+   OR next_message_sequence < 1;
+
+ALTER TABLE public.messages
+    ADD CONSTRAINT check_messages_sequence_number_positive
+    CHECK (sequence_number > 0);
+
+ALTER TABLE public.messages
+    ADD CONSTRAINT unique_messages_match_sequence
+    UNIQUE (match_id, sequence_number);
+
+ALTER TABLE public.matches
+    ADD CONSTRAINT check_matches_receipt_sequence_state
+    CHECK (
+        next_message_sequence >= 1
+        AND user_one_last_delivered_sequence >= 0
+        AND user_two_last_delivered_sequence >= 0
+        AND user_one_last_read_sequence >= 0
+        AND user_two_last_read_sequence >= 0
+        AND user_one_last_read_sequence <= user_one_last_delivered_sequence
+        AND user_two_last_read_sequence <= user_two_last_delivered_sequence
+        AND user_one_last_delivered_sequence < next_message_sequence
+        AND user_two_last_delivered_sequence < next_message_sequence
+    );
+
+CREATE INDEX idx_messages_match_sequence
+    ON public.messages(match_id, sequence_number DESC)
+    WHERE deleted_at IS NULL;
+
+CREATE INDEX idx_messages_match_sender_visible_sequence
+    ON public.messages(match_id, sender_user_id, sequence_number)
+    WHERE deleted_at IS NULL
+      AND moderation_status = 'APPROVED';
+
+DROP INDEX IF EXISTS public.idx_messages_match_cursor;
+
+CREATE INDEX idx_matches_user_one_active_inbox
+    ON public.matches(
+        user_one_id,
+        last_message_at DESC NULLS LAST,
+        matched_at DESC,
+        id DESC
+    )
+    WHERE status = 'ACTIVE';
+
+CREATE INDEX idx_matches_user_two_active_inbox
+    ON public.matches(
+        user_two_id,
+        last_message_at DESC NULLS LAST,
+        matched_at DESC,
+        id DESC
+    )
+    WHERE status = 'ACTIVE';
+
+
+-- ---------------------------------------------------------------------------
+-- 2. Transactional outbox
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE public.chat_outbox_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    event_type VARCHAR(100) NOT NULL CHECK (
+        event_type IN (
+            'chat.message.created',
+            'chat.receipt.updated',
+            'chat.match.ended',
+            'inbox.match.updated',
+            'inbox.match.removed'
+        )
+    ),
+
+    match_id UUID REFERENCES public.matches(id) ON DELETE SET NULL,
+    recipient_user_id UUID REFERENCES public.app_users(id) ON DELETE RESTRICT,
+
+    topic TEXT NOT NULL CHECK (
+        char_length(BTRIM(topic)) BETWEEN 1 AND 500
+    ),
+
+    -- Full immutable event envelope.
+    payload JSONB NOT NULL CHECK (
+        jsonb_typeof(payload) = 'object'
+    ),
+
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (
+        status IN ('PENDING', 'PROCESSING', 'PUBLISHED', 'FAILED')
+    ),
+
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (
+        attempt_count >= 0
+    ),
+
+    available_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    locked_at TIMESTAMPTZ,
+    locked_by VARCHAR(100),
+    lease_expires_at TIMESTAMPTZ,
+    last_attempt_at TIMESTAMPTZ,
+
+    published_at TIMESTAMPTZ,
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT check_chat_outbox_recipient_shape CHECK (
+        (
+            event_type IN ('inbox.match.updated', 'inbox.match.removed')
+            AND recipient_user_id IS NOT NULL
+        )
+        OR
+        (
+            event_type IN (
+                'chat.message.created',
+                'chat.receipt.updated',
+                'chat.match.ended'
+            )
+            AND recipient_user_id IS NULL
+        )
+    ),
+
+    CONSTRAINT check_chat_outbox_processing_lease CHECK (
+        status <> 'PROCESSING'
+        OR (
+            locked_at IS NOT NULL
+            AND locked_by IS NOT NULL
+            AND lease_expires_at IS NOT NULL
+        )
+    )
+);
+
+CREATE INDEX idx_chat_outbox_claim_pending
+    ON public.chat_outbox_events(available_at, created_at)
+    WHERE status = 'PENDING';
+
+CREATE INDEX idx_chat_outbox_processing_lease
+    ON public.chat_outbox_events(lease_expires_at)
+    WHERE status = 'PROCESSING';
+
+CREATE INDEX idx_chat_outbox_failed
+    ON public.chat_outbox_events(created_at DESC)
+    WHERE status = 'FAILED';
+
+CREATE INDEX idx_chat_outbox_match_created
+    ON public.chat_outbox_events(match_id, created_at DESC);
+
+ALTER TABLE public.chat_outbox_events ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE public.chat_outbox_events
+FROM anon, authenticated;
+
+
+-- ---------------------------------------------------------------------------
+-- 3. Per-user match notification settings
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE public.match_notification_settings (
+    match_id UUID NOT NULL REFERENCES public.matches(id) ON DELETE RESTRICT,
+    user_id UUID NOT NULL REFERENCES public.app_users(id) ON DELETE RESTRICT,
+
+    muted_until TIMESTAMPTZ,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (match_id, user_id)
+);
+
+CREATE INDEX idx_match_notification_settings_user
+    ON public.match_notification_settings(user_id, muted_until);
+
+CREATE OR REPLACE FUNCTION public.validate_match_notification_settings_member()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM public.matches m
+        WHERE m.id = NEW.match_id
+          AND (
+              m.user_one_id = NEW.user_id
+              OR m.user_two_id = NEW.user_id
+          )
+    ) THEN
+        RAISE EXCEPTION
+            'Notification settings user must be a participant of the match.';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER validate_match_notification_settings_member
+BEFORE INSERT OR UPDATE OF match_id, user_id
+ON public.match_notification_settings
+FOR EACH ROW
+EXECUTE FUNCTION public.validate_match_notification_settings_member();
+
+CREATE TRIGGER set_timestamp_match_notification_settings
+BEFORE UPDATE ON public.match_notification_settings
+FOR EACH ROW
+EXECUTE FUNCTION public.update_updated_at_column();
+
+ALTER TABLE public.match_notification_settings ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE public.match_notification_settings
+FROM anon, authenticated;
+
+
+-- ---------------------------------------------------------------------------
+-- 4. Improve existing message trigger protections
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.validate_message_sender_is_match_participant()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM public.matches m
+        JOIN public.app_users sender
+            ON sender.id = NEW.sender_user_id
+           AND sender.status = 'ACTIVE'
+        WHERE m.id = NEW.match_id
+          AND m.status = 'ACTIVE'
+          AND (
+              m.user_one_id = NEW.sender_user_id
+              OR m.user_two_id = NEW.sender_user_id
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM public.user_blocks ub
+              WHERE ub.status = 'ACTIVE'
+                AND (
+                    (
+                        ub.blocker_user_id = m.user_one_id
+                        AND ub.blocked_user_id = m.user_two_id
+                    )
+                    OR
+                    (
+                        ub.blocker_user_id = m.user_two_id
+                        AND ub.blocked_user_id = m.user_one_id
+                    )
+                )
+          )
+    ) THEN
+        RAISE EXCEPTION
+            'Message sender must be an active participant in an active, unblocked match.';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.touch_match_message_timestamps()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.deleted_at IS NULL
+       AND NEW.moderation_status = 'APPROVED' THEN
+
+        UPDATE public.matches
+        SET
+            first_message_at = COALESCE(first_message_at, NEW.created_at),
+            last_message_at = CASE
+                WHEN last_message_at IS NULL THEN NEW.created_at
+                WHEN NEW.created_at > last_message_at THEN NEW.created_at
+                ELSE last_message_at
+            END,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = NEW.match_id;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.enforce_message_identity_immutability()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.match_id IS DISTINCT FROM OLD.match_id
+       OR NEW.sender_user_id IS DISTINCT FROM OLD.sender_user_id
+       OR NEW.client_message_id IS DISTINCT FROM OLD.client_message_id
+       OR NEW.sequence_number IS DISTINCT FROM OLD.sequence_number
+       OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+        RAISE EXCEPTION
+            'Message identity and sequence fields are immutable.';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER enforce_message_identity_immutability
+BEFORE UPDATE ON public.messages
+FOR EACH ROW
+EXECUTE FUNCTION public.enforce_message_identity_immutability();
+
+
+
+--=============================================================
+
+
+-- ============================================================================
+-- V8__configure_chat_private_realtime_broadcast.sql
+-- ============================================================================
+
+-- ---------------------------------------------------------------------------
+-- 1. Remove direct client message reads.
+-- Spring Boot is the chat read and write path.
+-- ---------------------------------------------------------------------------
+
+DROP POLICY IF EXISTS "Users can read approved messages in their active matches"
+ON public.messages;
+
+REVOKE ALL ON TABLE public.messages
+FROM anon, authenticated;
+
+DROP FUNCTION IF EXISTS public.can_read_match_messages(UUID);
+
+
+-- ---------------------------------------------------------------------------
+-- 2. Stop Postgres Changes publication for messages.
+-- Chat uses private Broadcast events from the transactional outbox instead.
+-- ---------------------------------------------------------------------------
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_publication_tables
+        WHERE pubname = 'supabase_realtime'
+          AND schemaname = 'public'
+          AND tablename = 'messages'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime DROP TABLE public.messages;
+    END IF;
+END $$;
+
+ALTER TABLE public.messages REPLICA IDENTITY DEFAULT;
+
+
+-- ---------------------------------------------------------------------------
+-- 3. Secure Realtime topic helper functions.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.chat_realtime_is_active_match_member(
+    p_topic TEXT,
+    p_kind TEXT
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+DECLARE
+    v_match_id UUID;
+    v_user_id UUID := auth.uid();
+BEGIN
+    IF v_user_id IS NULL THEN
+        RETURN FALSE;
+    END IF;
+
+    IF p_kind NOT IN ('events', 'typing', 'presence') THEN
+        RETURN FALSE;
+    END IF;
+
+    IF p_topic !~ (
+        '^match:[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-'
+        || '[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}:'
+        || p_kind
+        || '$'
+    ) THEN
+        RETURN FALSE;
+    END IF;
+
+    v_match_id := split_part(p_topic, ':', 2)::UUID;
+
+    RETURN EXISTS (
+        SELECT 1
+        FROM public.matches m
+        JOIN public.app_users au
+            ON au.id = v_user_id
+           AND au.status = 'ACTIVE'
+        WHERE m.id = v_match_id
+          AND m.status = 'ACTIVE'
+          AND (
+              m.user_one_id = v_user_id
+              OR m.user_two_id = v_user_id
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM public.user_blocks ub
+              WHERE ub.status = 'ACTIVE'
+                AND (
+                    (
+                        ub.blocker_user_id = m.user_one_id
+                        AND ub.blocked_user_id = m.user_two_id
+                    )
+                    OR
+                    (
+                        ub.blocker_user_id = m.user_two_id
+                        AND ub.blocked_user_id = m.user_one_id
+                    )
+                )
+          )
+    );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.chat_realtime_is_own_inbox_topic(
+    p_topic TEXT
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+DECLARE
+    v_user_id UUID := auth.uid();
+BEGIN
+    IF v_user_id IS NULL THEN
+        RETURN FALSE;
+    END IF;
+
+    IF p_topic !~ (
+        '^user:[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-'
+        || '[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}:inbox$'
+    ) THEN
+        RETURN FALSE;
+    END IF;
+
+    IF split_part(p_topic, ':', 2)::UUID <> v_user_id THEN
+        RETURN FALSE;
+    END IF;
+
+    RETURN EXISTS (
+        SELECT 1
+        FROM public.app_users au
+        WHERE au.id = v_user_id
+          AND au.status = 'ACTIVE'
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.chat_realtime_is_active_match_member(TEXT, TEXT)
+FROM PUBLIC;
+
+REVOKE ALL ON FUNCTION public.chat_realtime_is_own_inbox_topic(TEXT)
+FROM PUBLIC;
+
+GRANT EXECUTE ON FUNCTION public.chat_realtime_is_active_match_member(TEXT, TEXT)
+TO authenticated;
+
+GRANT EXECUTE ON FUNCTION public.chat_realtime_is_own_inbox_topic(TEXT)
+TO authenticated;
+
+
+-- ---------------------------------------------------------------------------
+-- 4. Supabase Realtime private Broadcast and Presence policies.
+-- ---------------------------------------------------------------------------
+
+ALTER TABLE realtime.messages ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "chat realtime receive" ON realtime.messages;
+DROP POLICY IF EXISTS "chat realtime publish ephemeral" ON realtime.messages;
+
+CREATE POLICY "chat realtime receive"
+ON realtime.messages
+FOR SELECT
+TO authenticated
+USING (
+    (
+        extension = 'broadcast'
+        AND (
+            public.chat_realtime_is_active_match_member(
+                realtime.topic(),
+                'events'
+            )
+            OR public.chat_realtime_is_active_match_member(
+                realtime.topic(),
+                'typing'
+            )
+            OR public.chat_realtime_is_own_inbox_topic(
+                realtime.topic()
+            )
+        )
+    )
+    OR
+    (
+        extension = 'presence'
+        AND public.chat_realtime_is_active_match_member(
+            realtime.topic(),
+            'presence'
+        )
+    )
+);
+
+CREATE POLICY "chat realtime publish ephemeral"
+ON realtime.messages
+FOR INSERT
+TO authenticated
+WITH CHECK (
+    (
+        extension = 'broadcast'
+        AND public.chat_realtime_is_active_match_member(
+            realtime.topic(),
+            'typing'
+        )
+    )
+    OR
+    (
+        extension = 'presence'
+        AND public.chat_realtime_is_active_match_member(
+            realtime.topic(),
+            'presence'
+        )
+    )
+);
+
+
+--===========================================
+
+
+
+-- ============================================================================
+-- V9__fix_presence_broadcast_authorization.sql
+-- ============================================================================
+-- Supabase Realtime presence channels internally use the 'broadcast' extension
+-- for state-sync diffs in addition to the 'presence' extension for join/leave
+-- events. The V8 "chat realtime receive" SELECT policy only allowed the
+-- 'broadcast' extension for :events and :typing topics, so when Supabase
+-- checked a broadcast-extension row on the :presence topic the policy fell
+-- through all clauses and RLS denied the subscription with:
+--   "Unauthorized: You do not have permissions to read from this Channel topic"
+--
+-- Fix: add chat_realtime_is_active_match_member(topic, 'presence') to both
+-- the broadcast arm of the SELECT policy and the broadcast arm of the INSERT
+-- (publish) policy so presence state-sync messages are authorized.
+-- ============================================================================
+
+DROP POLICY IF EXISTS "chat realtime receive" ON realtime.messages;
+DROP POLICY IF EXISTS "chat realtime publish ephemeral" ON realtime.messages;
+
+CREATE POLICY "chat realtime receive"
+ON realtime.messages
+FOR SELECT
+TO authenticated
+USING (
+    (
+        extension = 'broadcast'
+        AND (
+            public.chat_realtime_is_active_match_member(
+                realtime.topic(),
+                'events'
+            )
+            OR public.chat_realtime_is_active_match_member(
+                realtime.topic(),
+                'typing'
+            )
+            OR public.chat_realtime_is_active_match_member(
+                realtime.topic(),
+                'presence'
+            )
+            OR public.chat_realtime_is_own_inbox_topic(
+                realtime.topic()
+            )
+        )
+    )
+    OR
+    (
+        extension = 'presence'
+        AND public.chat_realtime_is_active_match_member(
+            realtime.topic(),
+            'presence'
+        )
+    )
+);
+
+CREATE POLICY "chat realtime publish ephemeral"
+ON realtime.messages
+FOR INSERT
+TO authenticated
+WITH CHECK (
+    (
+        extension = 'broadcast'
+        AND (
+            public.chat_realtime_is_active_match_member(
+                realtime.topic(),
+                'typing'
+            )
+            OR public.chat_realtime_is_active_match_member(
+                realtime.topic(),
+                'presence'
+            )
+        )
+    )
+    OR
+    (
+        extension = 'presence'
+        AND public.chat_realtime_is_active_match_member(
+            realtime.topic(),
+            'presence'
+        )
+    )
+);
+
+
+--============================================================
+
+-- ============================================================================
+-- V10__add_activity_status_visibility.sql
+-- ============================================================================
+-- Add a boolean column `show_activity_status` to `app_users` to control
+-- whether other authorized users may see this user's derived activity status.
+-- ============================================================================
+
+ALTER TABLE public.app_users
+    ADD COLUMN show_activity_status BOOLEAN NOT NULL DEFAULT TRUE;
+
+COMMENT ON COLUMN public.app_users.show_activity_status IS
+    'Whether other authorized users may see this user''s derived activity status.';
+
+
+--========================================================
+
+
+-- ============================================================================
+-- V11__add_push_notification_support.sql
+-- ============================================================================
+
+-- ---------------------------------------------------------------------------
+-- 1. Extend notification_devices
+-- ---------------------------------------------------------------------------
+
+ALTER TABLE public.notification_devices
+    ADD COLUMN installation_id UUID,
+    ADD COLUMN app_environment VARCHAR(20) NOT NULL DEFAULT 'PRODUCTION'
+        CHECK (app_environment IN ('DEVELOPMENT', 'PREVIEW', 'PRODUCTION')),
+    ADD COLUMN disabled_at TIMESTAMPTZ,
+    ADD COLUMN last_error_code VARCHAR(100),
+    ADD COLUMN last_error_at TIMESTAMPTZ;
+
+CREATE INDEX idx_notification_devices_active_environment
+    ON public.notification_devices(user_id, app_environment)
+    WHERE is_active = TRUE;
+
+CREATE UNIQUE INDEX unique_active_notification_installation
+    ON public.notification_devices(app_environment, installation_id)
+    WHERE installation_id IS NOT NULL
+      AND is_active = TRUE;
+
+
+-- ---------------------------------------------------------------------------
+-- 2. User notification preferences
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE public.user_notification_preferences (
+    user_id UUID PRIMARY KEY
+        REFERENCES public.app_users(id) ON DELETE RESTRICT,
+
+    push_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+
+    message_notifications_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    match_notifications_enabled   BOOLEAN NOT NULL DEFAULT TRUE,
+    like_notifications_enabled    BOOLEAN NOT NULL DEFAULT TRUE,
+
+    message_preview_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+
+    marketing_notifications_enabled        BOOLEAN NOT NULL DEFAULT FALSE,
+    marketing_notifications_opted_in_at    TIMESTAMPTZ,
+    marketing_notifications_consent_version VARCHAR(50),
+
+    last_marketing_sent_at            TIMESTAMPTZ,
+    marketing_reservation_event_id    UUID,
+    marketing_reservation_expires_at  TIMESTAMPTZ,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT check_marketing_opt_in CHECK (
+        NOT marketing_notifications_enabled
+        OR (
+            marketing_notifications_opted_in_at IS NOT NULL
+            AND NULLIF(BTRIM(marketing_notifications_consent_version), '') IS NOT NULL
+        )
+    )
+);
+
+CREATE TRIGGER set_timestamp_user_notification_preferences
+BEFORE UPDATE ON public.user_notification_preferences
+FOR EACH ROW
+EXECUTE FUNCTION public.update_updated_at_column();
+
+ALTER TABLE public.user_notification_preferences ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE public.user_notification_preferences
+FROM anon, authenticated;
+
+-- Backfill preference rows for existing users
+INSERT INTO public.user_notification_preferences (user_id)
+SELECT id
+FROM public.app_users
+ON CONFLICT (user_id) DO NOTHING;
+
+-- Trigger: create default preference row for every future app_users row
+CREATE OR REPLACE FUNCTION public.create_default_notification_preferences()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    INSERT INTO public.user_notification_preferences (user_id)
+    VALUES (NEW.id)
+    ON CONFLICT (user_id) DO NOTHING;
+
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER create_default_notification_preferences_after_user_insert
+AFTER INSERT ON public.app_users
+FOR EACH ROW
+EXECUTE FUNCTION public.create_default_notification_preferences();
+
+
+-- ---------------------------------------------------------------------------
+-- 3. Notification campaigns
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE public.notification_campaigns (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    campaign_key VARCHAR(100) NOT NULL UNIQUE,
+
+    title VARCHAR(120) NOT NULL,
+    body  VARCHAR(300) NOT NULL,
+
+    navigation_payload JSONB NOT NULL DEFAULT '{}'::JSONB
+        CHECK (jsonb_typeof(navigation_payload) = 'object'),
+
+    audience_definition JSONB NOT NULL DEFAULT '{}'::JSONB
+        CHECK (jsonb_typeof(audience_definition) = 'object'),
+
+    status VARCHAR(20) NOT NULL DEFAULT 'DRAFT'
+        CHECK (status IN (
+            'DRAFT',
+            'SCHEDULED',
+            'SENDING',
+            'COMPLETED',
+            'CANCELLED'
+        )),
+
+    scheduled_at  TIMESTAMPTZ,
+    started_at    TIMESTAMPTZ,
+    completed_at  TIMESTAMPTZ,
+    cancelled_at  TIMESTAMPTZ,
+
+    created_by_user_id UUID
+        REFERENCES public.app_users(id) ON DELETE SET NULL,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TRIGGER set_timestamp_notification_campaigns
+BEFORE UPDATE ON public.notification_campaigns
+FOR EACH ROW
+EXECUTE FUNCTION public.update_updated_at_column();
+
+-- Enforce campaign lifecycle rules:
+--   * Content is immutable once SENDING/COMPLETED/CANCELLED.
+--   * Invalid status transitions are rejected.
+CREATE OR REPLACE FUNCTION public.enforce_notification_campaign_lifecycle()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    -- Reject invalid status transitions
+    IF OLD.status = 'COMPLETED' OR OLD.status = 'CANCELLED' THEN
+        IF NEW.status IS DISTINCT FROM OLD.status THEN
+            RAISE EXCEPTION
+                'Campaign status cannot change from % once finalised.', OLD.status;
+        END IF;
+    END IF;
+
+    IF OLD.status = 'SENDING' AND NEW.status NOT IN ('COMPLETED', 'CANCELLED') THEN
+        RAISE EXCEPTION
+            'A SENDING campaign can only transition to COMPLETED or CANCELLED.';
+    END IF;
+
+    IF OLD.status = 'SCHEDULED' AND NEW.status NOT IN ('SENDING', 'CANCELLED', 'DRAFT') THEN
+        RAISE EXCEPTION
+            'A SCHEDULED campaign can only transition to SENDING, CANCELLED, or DRAFT.';
+    END IF;
+
+    -- SCHEDULED requires scheduled_at
+    IF NEW.status = 'SCHEDULED' AND NEW.scheduled_at IS NULL THEN
+        RAISE EXCEPTION 'scheduled_at is required when status is SCHEDULED.';
+    END IF;
+
+    -- SENDING requires started_at
+    IF NEW.status = 'SENDING' AND NEW.started_at IS NULL THEN
+        RAISE EXCEPTION 'started_at is required when status is SENDING.';
+    END IF;
+
+    -- COMPLETED requires started_at and completed_at
+    IF NEW.status = 'COMPLETED'
+       AND (NEW.started_at IS NULL OR NEW.completed_at IS NULL) THEN
+        RAISE EXCEPTION
+            'started_at and completed_at are required when status is COMPLETED.';
+    END IF;
+
+    -- CANCELLED requires cancelled_at
+    IF NEW.status = 'CANCELLED' AND NEW.cancelled_at IS NULL THEN
+        RAISE EXCEPTION 'cancelled_at is required when status is CANCELLED.';
+    END IF;
+
+    -- Content is immutable after SENDING / COMPLETED / CANCELLED
+    IF OLD.status IN ('SENDING', 'COMPLETED', 'CANCELLED') THEN
+        IF NEW.title IS DISTINCT FROM OLD.title THEN
+            RAISE EXCEPTION 'Campaign title is immutable after %s.', OLD.status;
+        END IF;
+        IF NEW.body IS DISTINCT FROM OLD.body THEN
+            RAISE EXCEPTION 'Campaign body is immutable after %s.', OLD.status;
+        END IF;
+        IF NEW.navigation_payload IS DISTINCT FROM OLD.navigation_payload THEN
+            RAISE EXCEPTION
+                'Campaign navigation_payload is immutable after %s.', OLD.status;
+        END IF;
+        IF NEW.audience_definition IS DISTINCT FROM OLD.audience_definition THEN
+            RAISE EXCEPTION
+                'Campaign audience_definition is immutable after %s.', OLD.status;
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER enforce_notification_campaign_lifecycle
+BEFORE UPDATE ON public.notification_campaigns
+FOR EACH ROW
+EXECUTE FUNCTION public.enforce_notification_campaign_lifecycle();
+
+ALTER TABLE public.notification_campaigns ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE public.notification_campaigns
+FROM anon, authenticated;
+
+
+-- ---------------------------------------------------------------------------
+-- 4. Notification outbox events
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE public.notification_outbox_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    notification_type VARCHAR(30) NOT NULL CHECK (
+        notification_type IN (
+            'CHAT_MESSAGE',
+            'MATCH_CREATED',
+            'LIKE_RECEIVED',
+            'ACCOUNT_ALERT',
+            'MARKETING'
+        )
+    ),
+
+    recipient_user_id UUID NOT NULL
+        REFERENCES public.app_users(id) ON DELETE RESTRICT,
+
+    actor_user_id UUID
+        REFERENCES public.app_users(id) ON DELETE SET NULL,
+
+    match_id UUID
+        REFERENCES public.matches(id) ON DELETE SET NULL,
+
+    message_id UUID
+        REFERENCES public.messages(id) ON DELETE SET NULL,
+
+    discovery_action_id UUID
+        REFERENCES public.user_discovery_actions(id) ON DELETE SET NULL,
+
+    campaign_id UUID
+        REFERENCES public.notification_campaigns(id) ON DELETE SET NULL,
+
+    dedupe_key VARCHAR(255) NOT NULL UNIQUE,
+    collapse_key VARCHAR(255),
+
+    payload JSONB NOT NULL DEFAULT '{}'::JSONB
+        CHECK (jsonb_typeof(payload) = 'object'),
+
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (
+        status IN (
+            'PENDING',
+            'PROCESSING',
+            'FANOUT_COMPLETE',
+            'SKIPPED',
+            'FAILED'
+        )
+    ),
+
+    attempt_count INTEGER NOT NULL DEFAULT 0
+        CHECK (attempt_count >= 0),
+
+    available_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at        TIMESTAMPTZ,
+
+    locked_at         TIMESTAMPTZ,
+    locked_by         VARCHAR(100),
+    lease_expires_at  TIMESTAMPTZ,
+
+    fanout_completed_at TIMESTAMPTZ,
+    last_error        TEXT,
+
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT check_notification_outbox_processing_lease CHECK (
+        status <> 'PROCESSING'
+        OR (
+            locked_at IS NOT NULL
+            AND locked_by IS NOT NULL
+            AND lease_expires_at IS NOT NULL
+        )
+    )
+);
+
+CREATE INDEX idx_notification_outbox_claim_pending
+    ON public.notification_outbox_events(available_at, created_at)
+    WHERE status = 'PENDING';
+
+CREATE INDEX idx_notification_outbox_processing_lease
+    ON public.notification_outbox_events(lease_expires_at)
+    WHERE status = 'PROCESSING';
+
+CREATE INDEX idx_notification_outbox_recipient_created
+    ON public.notification_outbox_events(recipient_user_id, created_at DESC);
+
+CREATE INDEX idx_notification_outbox_campaign
+    ON public.notification_outbox_events(campaign_id, created_at)
+    WHERE campaign_id IS NOT NULL;
+
+ALTER TABLE public.notification_outbox_events ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE public.notification_outbox_events
+FROM anon, authenticated;
+
+
+-- ---------------------------------------------------------------------------
+-- 5. Per-device notification deliveries
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE public.notification_deliveries (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    notification_outbox_event_id UUID NOT NULL
+        REFERENCES public.notification_outbox_events(id) ON DELETE RESTRICT,
+
+    notification_device_id UUID NOT NULL
+        REFERENCES public.notification_devices(id) ON DELETE RESTRICT,
+
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (
+        status IN (
+            'PENDING',
+            'PROCESSING',
+            'SUBMITTED',
+            'CONFIRMED',
+            'UNKNOWN',
+            'FAILED',
+            'SKIPPED'
+        )
+    ),
+
+    resolution_code VARCHAR(100),
+
+    attempt_count INTEGER NOT NULL DEFAULT 0
+        CHECK (attempt_count >= 0),
+
+    available_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    locked_at        TIMESTAMPTZ,
+    locked_by        VARCHAR(100),
+    lease_expires_at TIMESTAMPTZ,
+
+    provider_ticket_id  TEXT,
+    submitted_at        TIMESTAMPTZ,
+
+    next_receipt_check_at TIMESTAMPTZ,
+    receipt_deadline_at   TIMESTAMPTZ,
+    receipt_checked_at    TIMESTAMPTZ,
+    confirmed_at          TIMESTAMPTZ,
+
+    last_error_code VARCHAR(100),
+    last_error      TEXT,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT unique_notification_delivery_per_device
+        UNIQUE (notification_outbox_event_id, notification_device_id),
+
+    CONSTRAINT check_notification_delivery_processing_lease CHECK (
+        status <> 'PROCESSING'
+        OR (
+            locked_at IS NOT NULL
+            AND locked_by IS NOT NULL
+            AND lease_expires_at IS NOT NULL
+        )
+    )
+);
+
+CREATE INDEX idx_notification_deliveries_claim_pending
+    ON public.notification_deliveries(available_at, created_at)
+    WHERE status = 'PENDING';
+
+CREATE INDEX idx_notification_deliveries_processing_lease
+    ON public.notification_deliveries(lease_expires_at)
+    WHERE status = 'PROCESSING';
+
+CREATE INDEX idx_notification_deliveries_receipt_check
+    ON public.notification_deliveries(next_receipt_check_at)
+    WHERE status = 'SUBMITTED';
+
+CREATE UNIQUE INDEX unique_notification_delivery_provider_ticket
+    ON public.notification_deliveries(provider_ticket_id)
+    WHERE provider_ticket_id IS NOT NULL;
+
+CREATE TRIGGER set_timestamp_notification_deliveries
+BEFORE UPDATE ON public.notification_deliveries
+FOR EACH ROW
+EXECUTE FUNCTION public.update_updated_at_column();
+
+ALTER TABLE public.notification_deliveries ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE public.notification_deliveries
+FROM anon, authenticated;
+
+-- Also apply RLS to notification_devices (already has rows; add without dropping)
+ALTER TABLE public.notification_devices ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON TABLE public.notification_devices
+FROM anon, authenticated;

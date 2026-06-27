@@ -58,7 +58,7 @@ public class DiscoveryController {
         UUID callerId = CallerUtils.callerId();
         List<Map<String, Object>> rows = jdbc.queryForList("""
                 SELECT interested_in_gender, min_age, max_age, max_distance_km,
-                       discovery_mode, preferred_residency_types,
+                       preferred_residency_types,
                        open_to_long_distance, open_to_relocation, show_verified_only
                 FROM discovery_preferences
                 WHERE user_id = :userId
@@ -72,7 +72,6 @@ public class DiscoveryController {
         result.put("min_age", pref.get("min_age"));
         result.put("max_age", pref.get("max_age"));
         result.put("max_distance_km", pref.get("max_distance_km"));
-        result.put("discovery_mode", pref.get("discovery_mode"));
         result.put("preferred_residency_types", pref.get("preferred_residency_types"));
         result.put("open_to_long_distance", pref.get("open_to_long_distance"));
         result.put("open_to_relocation", pref.get("open_to_relocation"));
@@ -92,7 +91,6 @@ public class DiscoveryController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "INVALID_AGE_RANGE");
         }
 
-        String discoveryMode = request.discoveryMode() != null ? request.discoveryMode() : "STANDARD";
         boolean openToLongDistance = request.openToLongDistance() != null && request.openToLongDistance();
         boolean openToRelocation = request.openToRelocation() != null && request.openToRelocation();
         boolean showVerifiedOnly = request.showVerifiedOnly() != null && request.showVerifiedOnly();
@@ -110,7 +108,6 @@ public class DiscoveryController {
                         .addValue("minAge", request.minAge())
                         .addValue("maxAge", request.maxAge())
                         .addValue("maxDist", request.maxDistanceKm())
-                        .addValue("discoveryMode", discoveryMode)
                         .addValue("residencyTypes", residencyArray)
                         .addValue("openToLongDistance", openToLongDistance)
                         .addValue("openToRelocation", openToRelocation)
@@ -119,17 +116,16 @@ public class DiscoveryController {
         jdbc.update("""
                 INSERT INTO discovery_preferences
                     (user_id, interested_in_gender, min_age, max_age, max_distance_km,
-                     discovery_mode, preferred_residency_types,
+                     preferred_residency_types,
                      open_to_long_distance, open_to_relocation, show_verified_only)
                 VALUES (:userId, :gender, :minAge, :maxAge, :maxDist,
-                        :discoveryMode, :residencyTypes::text[],
+                        :residencyTypes::text[],
                         :openToLongDistance, :openToRelocation, :showVerifiedOnly)
                 ON CONFLICT (user_id) DO UPDATE SET
                     interested_in_gender      = EXCLUDED.interested_in_gender,
                     min_age                   = EXCLUDED.min_age,
                     max_age                   = EXCLUDED.max_age,
                     max_distance_km           = EXCLUDED.max_distance_km,
-                    discovery_mode            = EXCLUDED.discovery_mode,
                     preferred_residency_types = EXCLUDED.preferred_residency_types,
                     open_to_long_distance     = EXCLUDED.open_to_long_distance,
                     open_to_relocation        = EXCLUDED.open_to_relocation,
@@ -144,7 +140,6 @@ public class DiscoveryController {
         preferences.put("min_age", request.minAge());
         preferences.put("max_age", request.maxAge());
         preferences.put("max_distance_km", request.maxDistanceKm());
-        preferences.put("discovery_mode", discoveryMode);
         preferences.put("preferred_residency_types", preferredResidencyTypes);
         preferences.put("open_to_long_distance", openToLongDistance);
         preferences.put("open_to_relocation", openToRelocation);

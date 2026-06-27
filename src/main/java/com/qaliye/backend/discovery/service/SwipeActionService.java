@@ -9,6 +9,7 @@ import com.qaliye.backend.discovery.exception.TargetIneligibleException;
 import com.qaliye.backend.discovery.repository.DailyLimitRepository;
 import com.qaliye.backend.discovery.repository.DiscoveryActionRepository;
 import com.qaliye.backend.discovery.repository.EntitlementLedgerRepository;
+import com.qaliye.backend.notifications.NotificationDispatcher;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,7 @@ public class SwipeActionService {
     private final EntitlementLedgerRepository ledgerRepo;
     private final MatchService matchService;
     private final PlanEntitlementService entitlementService;
+    private final NotificationDispatcher notificationDispatcher;
     private final NamedParameterJdbcTemplate jdbc;
 
     public SwipeActionService(DiscoveryActionRepository actionRepo,
@@ -33,12 +35,14 @@ public class SwipeActionService {
                                EntitlementLedgerRepository ledgerRepo,
                                MatchService matchService,
                                PlanEntitlementService entitlementService,
+                               NotificationDispatcher notificationDispatcher,
                                NamedParameterJdbcTemplate jdbc) {
         this.actionRepo = actionRepo;
         this.dailyLimitRepo = dailyLimitRepo;
         this.ledgerRepo = ledgerRepo;
         this.matchService = matchService;
         this.entitlementService = entitlementService;
+        this.notificationDispatcher = notificationDispatcher;
         this.jdbc = jdbc;
     }
 
@@ -101,6 +105,8 @@ public class SwipeActionService {
         Optional<MatchSummaryDto> match = Optional.empty();
         if (mutualAction.isPresent()) {
             match = matchService.tryCreateMatch(actorId, targetId, action.id(), mutualAction.get().id());
+            match.ifPresent(m ->
+                    notificationDispatcher.dispatchMatchNotification(actorId, targetId, m.matchId()));
         }
 
         int likesRemaining = ent.dailyLikesLimit() == null
@@ -184,6 +190,8 @@ public class SwipeActionService {
         Optional<MatchSummaryDto> match = Optional.empty();
         if (mutualAction.isPresent()) {
             match = matchService.tryCreateMatch(actorId, targetId, action.id(), mutualAction.get().id());
+            match.ifPresent(m ->
+                    notificationDispatcher.dispatchMatchNotification(actorId, targetId, m.matchId()));
         }
 
         int superLikesRemaining = ent.dailySuperLikesLimit() == null

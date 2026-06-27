@@ -27,7 +27,6 @@ public class DiscoveryService {
 
     private record CallerContext(
             UUID addressId,
-            String discoveryMode,
             String interestedInGender,
             int minAge,
             int maxAge,
@@ -46,7 +45,6 @@ public class DiscoveryService {
 
     private static final String CONTEXT_SQL = """
             SELECT au.address_id,
-                   dp.discovery_mode,
                    dp.interested_in_gender,
                    dp.min_age,
                    dp.max_age,
@@ -104,14 +102,13 @@ public class DiscoveryService {
                     ) AS is_boosted
                 FROM profiles p
                 JOIN app_users au ON au.id = p.user_id
-                JOIN discovery_preferences dp_t ON dp_t.user_id = p.user_id
                 JOIN addresses a ON a.id = au.address_id
                 JOIN addresses ca ON ca.id = :callerAddressId
                 WHERE
                     p.is_visible = TRUE
                     AND p.is_onboarded = TRUE
                     AND au.status = 'ACTIVE'
-                    AND dp_t.discovery_mode <> 'INCOGNITO'
+                    AND p.discovery_mode <> 'INCOGNITO'
                     AND p.gender = :genderFilter
                     AND p.date_of_birth BETWEEN :maxDobBound AND :minDobBound
                     AND (COALESCE(ARRAY_LENGTH(:residencyFilter::text[], 1), 0) = 0
@@ -203,9 +200,7 @@ public class DiscoveryService {
 
         // Scope determines distance filter and optional residency pin
         boolean isNearbyScope = scope == null || "NEARBY".equalsIgnoreCase(scope);
-        boolean skipDistance = !isNearbyScope
-                || "GLOBAL".equals(ctx.discoveryMode())
-                || ctx.addressId() == null;
+        boolean skipDistance = !isNearbyScope || ctx.addressId() == null;
         String scopeResidencyType = resolveScopeResidencyType(scope);
 
         MapSqlParameterSource params = new MapSqlParameterSource()
@@ -254,7 +249,6 @@ public class DiscoveryService {
                 Map.of("callerId", callerId),
                 (rs, rowNum) -> new CallerContext(
                         rs.getObject("address_id", UUID.class),
-                        rs.getString("discovery_mode"),
                         rs.getString("interested_in_gender"),
                         rs.getInt("min_age"),
                         rs.getInt("max_age"),

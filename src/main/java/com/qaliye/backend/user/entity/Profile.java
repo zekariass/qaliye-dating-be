@@ -59,17 +59,35 @@ public class Profile {
     @Column(name = "marital_status")
     private String maritalStatus;
 
-    @Column(name = "has_children", nullable = false)
-    private Boolean hasChildren = Boolean.FALSE;
+    @Column(name = "has_children")
+    private Boolean hasChildren;
 
     @Column(name = "wants_children")
     private Boolean wantsChildren;
 
-    @Column(nullable = false)
-    private Boolean smoking = Boolean.FALSE;
+    @Column(name = "smoking")
+    private Boolean smoking;
 
-    @Column(nullable = false)
-    private Boolean drinking = Boolean.FALSE;
+    @Column(name = "drinking")
+    private Boolean drinking;
+
+    @Column(name = "smoking_detail")
+    private String smokingDetail;
+
+    @Column(name = "drinking_detail")
+    private String drinkingDetail;
+
+    @Column(name = "activity_level")
+    private String activityLevel;
+
+    @Column(name = "interests", columnDefinition = "text[]")
+    private String[] interests;
+
+    @Column(name = "languages", columnDefinition = "text[]")
+    private String[] languages;
+
+    @Column(name = "discovery_mode", nullable = false)
+    private String discoveryMode;
 
     @Column(name = "is_visible", nullable = false)
     private Boolean isVisible;

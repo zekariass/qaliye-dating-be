@@ -1,5 +1,7 @@
 package com.qaliye.backend.discovery.service;
 
+import com.qaliye.backend.activity.ActivityStatus;
+import com.qaliye.backend.activity.ActivityStatusService;
 import com.qaliye.backend.discovery.config.DiscoveryProperties;
 import com.qaliye.backend.discovery.dto.DiscoveryPhotoDto;
 import com.qaliye.backend.discovery.dto.DiscoveryProfileDto;
@@ -10,6 +12,8 @@ import org.springframework.stereotype.Service;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.*;
 
 @Service
@@ -18,19 +22,21 @@ public class DiscoveryQueryService {
     private final NamedParameterJdbcTemplate jdbc;
     private final StorageSigningService signingService;
     private final DiscoveryProperties props;
+    private final ActivityStatusService activityStatusService;
 
     public DiscoveryQueryService(NamedParameterJdbcTemplate jdbc,
                                  StorageSigningService signingService,
-                                 DiscoveryProperties props) {
+                                 DiscoveryProperties props,
+                                 ActivityStatusService activityStatusService) {
         this.jdbc = jdbc;
         this.signingService = signingService;
         this.props = props;
+        this.activityStatusService = activityStatusService;
     }
 
     public record ActorContext(
             UUID addressId,
             String coordsEwkt,
-            String discoveryMode,
             String interestedInGender,
             int minAge,
             int maxAge,
@@ -44,7 +50,6 @@ public class DiscoveryQueryService {
     private static final String LOAD_ACTOR_CONTEXT_SQL = """
             SELECT au.address_id,
                    ST_AsEWKT(a.coords) AS coords_ewkt,
-                   dp.discovery_mode,
                    dp.interested_in_gender,
                    dp.min_age,
                    dp.max_age,
@@ -82,6 +87,15 @@ public class DiscoveryQueryService {
                 WHERE (user_one_id = :actorId OR user_two_id = :actorId)
                   AND status = 'ACTIVE'
                 UNION
+                SELECT CASE
+                    WHEN user_one_id = :actorId THEN user_two_id
+                    ELSE user_one_id
+                END AS user_id
+                FROM matches
+                WHERE (user_one_id = :actorId OR user_two_id = :actorId)
+                  AND status = 'ENDED'
+                  AND end_reason IN ('USER_UNMATCH', 'BLOCKED', 'ADMIN_ACTION')
+                UNION
                 SELECT blocked_user_id AS user_id
                 FROM user_blocks
                 WHERE blocker_user_id = :actorId AND status = 'ACTIVE'
@@ -114,19 +128,16 @@ public class DiscoveryQueryService {
                     a.city,
                     a.region,
                     a.country_name,
-                    CASE
-                        WHEN :locationFilter = 'NEARBY' THEN
-                            GREATEST(
-                                1,
-                                ROUND(ST_Distance(:actorCoords::geography, a.coords::geography) / 1000.0)::INTEGER
-                            )
-                        ELSE NULL
-                    END                                                           AS distance_km,
+                    GREATEST(
+                        1,
+                        ROUND(ST_Distance(:actorCoords::geography, a.coords::geography) / 1000.0)::INTEGER
+                    )                                                             AS distance_km,
                     EXISTS (
                         SELECT 1 FROM active_boosts ab
                         WHERE ab.user_id = p.user_id
                           AND NOW() BETWEEN ab.started_at AND ab.expires_at
-                    )                                                             AS is_boosted
+                    )                                                             AS is_boosted,
+                    a.coords                                                      AS candidate_coords
                 FROM profiles p
                 JOIN app_users au    ON au.id = p.user_id
                 JOIN addresses a     ON a.id  = au.address_id
@@ -135,6 +146,7 @@ public class DiscoveryQueryService {
                   AND au.status         = 'ACTIVE'
                   AND au.deleted_at     IS NULL
                   AND p.user_id        <> :actorId
+                  AND p.discovery_mode <> 'INCOGNITO'
                   AND p.gender          = :targetGender
                   AND p.user_id        NOT IN (SELECT user_id FROM excluded_targets)
                   AND calculate_age(p.date_of_birth) BETWEEN :minAge AND :maxAge
@@ -150,6 +162,8 @@ public class DiscoveryQueryService {
             )
             SELECT
                 cd.*,
+                au.last_active_at,
+                au.show_activity_status,
                 (
                     CASE WHEN cd.is_boosted THEN 1000.0 ELSE 0.0 END
                     + (EXTRACT(EPOCH FROM au.last_active_at) / 1e9)
@@ -167,7 +181,7 @@ public class DiscoveryQueryService {
                 OR (
                     ST_DWithin(
                         :actorCoords::geography,
-                        (SELECT coords FROM addresses WHERE id = (SELECT address_id FROM app_users WHERE id = cd.user_id)),
+                        cd.candidate_coords::geography,
                         :maxDistanceKm * 1000.0
                     )
                 )
@@ -191,6 +205,15 @@ public class DiscoveryQueryService {
                 FROM matches
                 WHERE (user_one_id = :actorId OR user_two_id = :actorId)
                   AND status = 'ACTIVE'
+                UNION
+                SELECT CASE
+                    WHEN user_one_id = :actorId THEN user_two_id
+                    ELSE user_one_id
+                END AS user_id
+                FROM matches
+                WHERE (user_one_id = :actorId OR user_two_id = :actorId)
+                  AND status = 'ENDED'
+                  AND end_reason IN ('USER_UNMATCH', 'BLOCKED', 'ADMIN_ACTION')
                 UNION
                 SELECT blocked_user_id AS user_id
                 FROM user_blocks
@@ -268,7 +291,6 @@ public class DiscoveryQueryService {
             return new ActorContext(
                     addressId,
                     rs.getString("coords_ewkt"),
-                    rs.getString("discovery_mode"),
                     rs.getString("interested_in_gender"),
                     rs.getInt("min_age"),
                     rs.getInt("max_age"),
@@ -331,9 +353,10 @@ public class DiscoveryQueryService {
         String residencyParam = buildArrayParam(residencyTypes);
 
         var params = buildCoreParams(actorId, ctx, locationFilter, residencyParam, limit, offset);
+        Instant now = activityStatusService.now();
 
         List<DiscoveryProfileDto> profiles = new ArrayList<>(
-                jdbc.query(CORE_DISCOVERY_SQL, params, this::mapProfile));
+                jdbc.query(CORE_DISCOVERY_SQL, params, (rs, rowNum) -> mapProfile(rs, rowNum, now)));
         if (profiles.isEmpty()) return profiles;
 
         enrichWithPhotos(profiles);
@@ -355,6 +378,7 @@ public class DiscoveryQueryService {
         String residencyParam = buildArrayParam(resolveResidencyTypes(locationFilter, ctx));
         var params = buildCoreParams(actorId, ctx, locationFilter, residencyParam, 1, 0);
         params.addValue("targetUserId", targetUserId);
+        Instant now = activityStatusService.now();
 
         String singleProfileSql = CORE_DISCOVERY_SQL.replace(
                 "AND p.user_id        NOT IN (SELECT user_id FROM excluded_targets)",
@@ -362,7 +386,7 @@ public class DiscoveryQueryService {
                         + "                  AND p.user_id        = :targetUserId");
 
         List<DiscoveryProfileDto> results = new ArrayList<>(
-                jdbc.query(singleProfileSql, params, this::mapProfile));
+                jdbc.query(singleProfileSql, params, (rs, rowNum) -> mapProfile(rs, rowNum, now)));
         if (results.isEmpty()) return null;
 
         enrichWithPhotos(results);
@@ -435,11 +459,14 @@ public class DiscoveryQueryService {
         }
     }
 
+    private static final String[] ALL_RESIDENCY_TYPES = {"ETHIOPIA", "ERITREA", "DIASPORA"};
+
     private static String[] resolveResidencyTypes(String locationFilter, ActorContext ctx) {
         return switch (locationFilter) {
             case "ETHIOPIA" -> new String[]{"ETHIOPIA"};
             case "ERITREA" -> new String[]{"ERITREA"};
             case "DIASPORA" -> new String[]{"DIASPORA"};
+            case "ANYWHERE" -> ALL_RESIDENCY_TYPES;
             default -> ctx.preferredResidencyTypes();
         };
     }
@@ -458,7 +485,10 @@ public class DiscoveryQueryService {
         return sb.toString();
     }
 
-    private DiscoveryProfileDto mapProfile(ResultSet rs, int rowNum) throws SQLException {
+    private DiscoveryProfileDto mapProfile(ResultSet rs, int rowNum, Instant now) throws SQLException {
+        OffsetDateTime lastActiveAt = rs.getObject("last_active_at", OffsetDateTime.class);
+        boolean showActivity = rs.getBoolean("show_activity_status");
+        ActivityStatus activityStatus = activityStatusService.resolve(showActivity, lastActiveAt, now);
         return new DiscoveryProfileDto(
                 rs.getObject("user_id", UUID.class),
                 rs.getString("display_name"),
@@ -479,14 +509,15 @@ public class DiscoveryQueryService {
                 rs.getString("education_level"),
                 rs.getString("occupation"),
                 rs.getString("marital_status"),
-                rs.getBoolean("has_children"),
+                rs.getObject("has_children") != null ? rs.getBoolean("has_children") : null,
                 rs.getObject("wants_children") != null ? rs.getBoolean("wants_children") : null,
-                rs.getBoolean("smoking"),
-                rs.getBoolean("drinking"),
+                rs.getString("smoking"),
+                rs.getString("drinking"),
                 Collections.emptyList(),
                 Collections.emptyList(),
                 rs.getBoolean("is_boosted"),
-                rs.getDouble("discovery_score")
+                rs.getDouble("discovery_score"),
+                activityStatus
         );
     }
 }

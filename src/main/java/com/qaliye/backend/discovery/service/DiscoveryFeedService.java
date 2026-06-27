@@ -16,7 +16,7 @@ import java.util.UUID;
 public class DiscoveryFeedService {
 
     private static final Set<String> VALID_LOCATION_FILTERS =
-            Set.of("NEARBY", "ETHIOPIA", "ERITREA", "DIASPORA");
+            Set.of("NEARBY", "ETHIOPIA", "ERITREA", "DIASPORA", "ANYWHERE");
 
     private final DiscoveryQueryService queryService;
     private final DiscoveryCursorCodec cursorCodec;

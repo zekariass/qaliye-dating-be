@@ -1,6 +1,7 @@
 package com.qaliye.backend.discovery.controller;
 
 import com.qaliye.backend.discovery.dto.DiscoveryProfilesResponse;
+import com.qaliye.backend.discovery.dto.RevisitPassesResponse;
 import com.qaliye.backend.discovery.dto.RewindResponse;
 import com.qaliye.backend.discovery.dto.SwipeActionRequest;
 import com.qaliye.backend.discovery.dto.SwipeActionResponse;
@@ -8,6 +9,7 @@ import com.qaliye.backend.discovery.exception.ActorIneligibleException;
 import com.qaliye.backend.discovery.exception.SelfActionException;
 import com.qaliye.backend.discovery.service.DiscoveryFeedService;
 import com.qaliye.backend.discovery.service.DiscoveryQueryService;
+import com.qaliye.backend.discovery.service.RevisitPassesService;
 import com.qaliye.backend.discovery.service.RewindService;
 import com.qaliye.backend.discovery.service.SwipeActionService;
 import jakarta.validation.Valid;
@@ -22,25 +24,32 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Set;
 import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/discovery")
 public class DiscoveryProfilesController {
 
+    private static final Set<String> VALID_LOCATION_FILTERS =
+            Set.of("NEARBY", "ETHIOPIA", "ERITREA", "DIASPORA", "ANYWHERE");
+
     private final DiscoveryFeedService feedService;
     private final SwipeActionService swipeService;
     private final RewindService rewindService;
     private final DiscoveryQueryService queryService;
+    private final RevisitPassesService revisitPassesService;
 
     public DiscoveryProfilesController(DiscoveryFeedService feedService,
                                         SwipeActionService swipeService,
                                         RewindService rewindService,
-                                        DiscoveryQueryService queryService) {
+                                        DiscoveryQueryService queryService,
+                                        RevisitPassesService revisitPassesService) {
         this.feedService = feedService;
         this.swipeService = swipeService;
         this.rewindService = rewindService;
         this.queryService = queryService;
+        this.revisitPassesService = revisitPassesService;
     }
 
     @GetMapping("/profiles")
@@ -87,6 +96,19 @@ public class DiscoveryProfilesController {
         UUID actorId = requireActorId(jwt);
         checkActorEligibility(actorId);
         return rewindService.rewind(actorId);
+    }
+
+    @PostMapping("/passes/revisit")
+    public RevisitPassesResponse revisitPasses(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(defaultValue = "10") int count) {
+        if (count != 10 && count != 20 && count != 30) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "count must be 10, 20, or 30");
+        }
+        UUID actorId = requireActorId(jwt);
+        checkActorEligibility(actorId);
+        return revisitPassesService.revisitPasses(actorId, count);
     }
 
     private void checkSelfAction(UUID actorId, UUID targetId) {

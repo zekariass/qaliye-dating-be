@@ -17,8 +17,4 @@ public class RestClientConfig {
         return builder.build();
     }
 
-    @Bean
-    public RestClient expoRestClient(RestClient.Builder builder) {
-        return builder.baseUrl("https://exp.host/--/api/v2/push").build();
-    }
 }

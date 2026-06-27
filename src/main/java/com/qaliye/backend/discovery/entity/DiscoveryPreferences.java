@@ -27,9 +27,6 @@ public class DiscoveryPreferences {
     @JoinColumn(name = "user_id")
     private AppUser appUser;
 
-    @Column(name = "discovery_mode", nullable = false)
-    private String discoveryMode;
-
     @Column(name = "preferred_residency_types", columnDefinition = "text[]")
     @JdbcTypeCode(SqlTypes.ARRAY)
     private String[] preferredResidencyTypes;

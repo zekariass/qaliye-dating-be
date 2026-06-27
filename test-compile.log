@@ -1,0 +1,106 @@
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] ---------------------< com.qaliye:qaliye-backend >----------------------
+[INFO] Building  0.0.1-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ qaliye-backend ---
+[INFO] Copying 2 resources from src\main\resources to target\classes
+[INFO] Copying 12 resources from src\main\resources to target\classes
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ qaliye-backend ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 288 source files with javac [debug parameters release 21] to target\classes
+[INFO] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/actions/ActionsController.java: Some input files use or override a deprecated API.
+[INFO] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/actions/ActionsController.java: Recompile with -Xlint:deprecation for details.
+[INFO] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/chat/service/ChatRealtimePublisher.java: C:\PROJECT\QALIYE\qaliye-backend\src\main\java\com\qaliye\backend\chat\service\ChatRealtimePublisher.java uses unchecked or unsafe operations.
+[INFO] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/chat/service/ChatRealtimePublisher.java: Recompile with -Xlint:unchecked for details.
+[INFO] 
+[INFO] --- resources:3.5.0:testResources (default-testResources) @ qaliye-backend ---
+[INFO] skip non existing resourceDirectory C:\PROJECT\QALIYE\qaliye-backend\src\test\resources
+[INFO] 
+[INFO] --- compiler:3.15.0:testCompile (default-testCompile) @ qaliye-backend ---
+[INFO] Recompiling the module because of changed dependency.
+[INFO] Compiling 22 source files with javac [debug parameters release 21] to target\test-classes
+[INFO] -------------------------------------------------------------
+[ERROR] COMPILATION ERROR : 
+[INFO] -------------------------------------------------------------
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/activity/ActivityControllerTest.java:[11,63] package org.springframework.boot.test.autoconfigure.web.servlet does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/activity/ActivityControllerTest.java:[12,50] package org.springframework.boot.test.mock.mockito does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/activity/ActivityControllerTest.java:[29,2] cannot find symbol
+  symbol: class WebMvcTest
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/chat/ChatControllerTest.java:[10,63] package org.springframework.boot.test.autoconfigure.web.servlet does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/chat/ChatControllerTest.java:[11,50] package org.springframework.boot.test.mock.mockito does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/chat/ChatControllerTest.java:[26,2] cannot find symbol
+  symbol: class WebMvcTest
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/activity/ActivityControllerTest.java:[31,88] package org.springframework.boot.autoconfigure.security.oauth2.resource.servlet does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/activity/ActivityControllerTest.java:[38,6] cannot find symbol
+  symbol:   class MockBean
+  location: class com.qaliye.backend.activity.ActivityControllerTest
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/activity/ActivityControllerTest.java:[39,6] cannot find symbol
+  symbol:   class MockBean
+  location: class com.qaliye.backend.activity.ActivityControllerTest
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/chat/ChatControllerTest.java:[28,88] package org.springframework.boot.autoconfigure.security.oauth2.resource.servlet does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/chat/ChatControllerTest.java:[35,6] cannot find symbol
+  symbol:   class MockBean
+  location: class com.qaliye.backend.chat.ChatControllerTest
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/chat/ChatControllerTest.java:[36,6] cannot find symbol
+  symbol:   class MockBean
+  location: class com.qaliye.backend.chat.ChatControllerTest
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/chat/ChatControllerTest.java:[37,6] cannot find symbol
+  symbol:   class MockBean
+  location: class com.qaliye.backend.chat.ChatControllerTest
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/chat/ChatControllerTest.java:[38,6] cannot find symbol
+  symbol:   class MockBean
+  location: class com.qaliye.backend.chat.ChatControllerTest
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/chat/ChatControllerTest.java:[39,6] cannot find symbol
+  symbol:   class MockBean
+  location: class com.qaliye.backend.chat.ChatControllerTest
+[INFO] 15 errors 
+[INFO] -------------------------------------------------------------
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  18.097 s
+[INFO] Finished at: 2026-06-27T14:03:14+01:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.15.0:testCompile (default-testCompile) on project qaliye-backend: Compilation failure: Compilation failure: 
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/activity/ActivityControllerTest.java:[11,63] package org.springframework.boot.test.autoconfigure.web.servlet does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/activity/ActivityControllerTest.java:[12,50] package org.springframework.boot.test.mock.mockito does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/activity/ActivityControllerTest.java:[29,2] cannot find symbol
+[ERROR]   symbol: class WebMvcTest
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/chat/ChatControllerTest.java:[10,63] package org.springframework.boot.test.autoconfigure.web.servlet does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/chat/ChatControllerTest.java:[11,50] package org.springframework.boot.test.mock.mockito does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/chat/ChatControllerTest.java:[26,2] cannot find symbol
+[ERROR]   symbol: class WebMvcTest
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/activity/ActivityControllerTest.java:[31,88] package org.springframework.boot.autoconfigure.security.oauth2.resource.servlet does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/activity/ActivityControllerTest.java:[38,6] cannot find symbol
+[ERROR]   symbol:   class MockBean
+[ERROR]   location: class com.qaliye.backend.activity.ActivityControllerTest
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/activity/ActivityControllerTest.java:[39,6] cannot find symbol
+[ERROR]   symbol:   class MockBean
+[ERROR]   location: class com.qaliye.backend.activity.ActivityControllerTest
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/chat/ChatControllerTest.java:[28,88] package org.springframework.boot.autoconfigure.security.oauth2.resource.servlet does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/chat/ChatControllerTest.java:[35,6] cannot find symbol
+[ERROR]   symbol:   class MockBean
+[ERROR]   location: class com.qaliye.backend.chat.ChatControllerTest
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/chat/ChatControllerTest.java:[36,6] cannot find symbol
+[ERROR]   symbol:   class MockBean
+[ERROR]   location: class com.qaliye.backend.chat.ChatControllerTest
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/chat/ChatControllerTest.java:[37,6] cannot find symbol
+[ERROR]   symbol:   class MockBean
+[ERROR]   location: class com.qaliye.backend.chat.ChatControllerTest
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/chat/ChatControllerTest.java:[38,6] cannot find symbol
+[ERROR]   symbol:   class MockBean
+[ERROR]   location: class com.qaliye.backend.chat.ChatControllerTest
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/test/java/com/qaliye/backend/chat/ChatControllerTest.java:[39,6] cannot find symbol
+[ERROR]   symbol:   class MockBean
+[ERROR]   location: class com.qaliye.backend.chat.ChatControllerTest
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException

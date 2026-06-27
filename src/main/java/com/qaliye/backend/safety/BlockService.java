@@ -1,5 +1,6 @@
 package com.qaliye.backend.safety;
 
+import com.qaliye.backend.chat.service.MatchLifecycleService;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -40,9 +41,12 @@ public class BlockService {
             """;
 
     private final NamedParameterJdbcTemplate jdbc;
+    private final MatchLifecycleService matchLifecycleService;
 
-    public BlockService(NamedParameterJdbcTemplate jdbc) {
+    public BlockService(NamedParameterJdbcTemplate jdbc,
+                        MatchLifecycleService matchLifecycleService) {
         this.jdbc = jdbc;
+        this.matchLifecycleService = matchLifecycleService;
     }
 
     @Transactional
@@ -61,8 +65,10 @@ public class BlockService {
                 .addValue("callerId", callerId)
                 .addValue("blockedId", blockedId);
 
-        // Insert or reactivate the block.
-        // The DB trigger end_active_matches_when_blocked handles ending any active match.
+        // End any active match before creating the block so outbox events are emitted.
+        // The DB trigger end_active_matches_when_blocked remains defense-in-depth.
+        matchLifecycleService.endMatchByPair(callerId, blockedId, "BLOCKED", callerId);
+
         jdbc.update(UPSERT_BLOCK_SQL, params);
 
         String details = "{\"blocked_user_id\": \"" + blockedId + "\"}";

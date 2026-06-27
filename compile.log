@@ -1,0 +1,191 @@
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] ---------------------< com.qaliye:qaliye-backend >----------------------
+[INFO] Building  0.0.1-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- resources:3.5.0:resources (default-resources) @ qaliye-backend ---
+[INFO] Copying 2 resources from src\main\resources to target\classes
+[INFO] Copying 12 resources from src\main\resources to target\classes
+[INFO] 
+[INFO] --- compiler:3.15.0:compile (default-compile) @ qaliye-backend ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 288 source files with javac [debug parameters release 21] to target\classes
+[INFO] -------------------------------------------------------------
+[ERROR] COMPILATION ERROR : 
+[INFO] -------------------------------------------------------------
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/common/CallerUtils.java:[4,47] package org.springframework.security.oauth2.jwt does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/config/SecurityConfig.java:[11,78] package org.springframework.security.oauth2.server.resource.web.authentication does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/config/SecurityConfig.java:[13,74] package org.springframework.security.oauth2.server.resource.authentication does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/config/UserStatusFilter.java:[12,47] package org.springframework.security.oauth2.jwt does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/config/SecurityConfig.java:[46,13] cannot find symbol
+  symbol:   class JwtAuthenticationConverter
+  location: class com.qaliye.backend.config.SecurityConfig
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/DiscoveryProfilesController.java:[17,47] package org.springframework.security.oauth2.jwt does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/DiscoveryProfilesController.java:[52,38] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.discovery.controller.DiscoveryProfilesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/DiscoveryProfilesController.java:[61,38] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.discovery.controller.DiscoveryProfilesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/DiscoveryProfilesController.java:[71,38] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.discovery.controller.DiscoveryProfilesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/DiscoveryProfilesController.java:[81,38] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.discovery.controller.DiscoveryProfilesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/DiscoveryProfilesController.java:[90,59] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.discovery.controller.DiscoveryProfilesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/DiscoveryProfilesController.java:[98,38] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.discovery.controller.DiscoveryProfilesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/DiscoveryProfilesController.java:[122,40] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.discovery.controller.DiscoveryProfilesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/LikesController.java:[7,47] package org.springframework.security.oauth2.jwt does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/LikesController.java:[28,38] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.discovery.controller.LikesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/LikesController.java:[36,39] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.discovery.controller.LikesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/MatchesController.java:[7,47] package org.springframework.security.oauth2.jwt does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/MatchesController.java:[28,38] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.discovery.controller.MatchesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/MatchesController.java:[35,39] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.discovery.controller.MatchesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationCampaignAdminController.java:[16,47] package org.springframework.security.oauth2.jwt does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationCampaignAdminController.java:[56,38] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.notifications.controller.NotificationCampaignAdminController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationCampaignAdminController.java:[68,38] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.notifications.controller.NotificationCampaignAdminController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationCampaignAdminController.java:[77,38] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.notifications.controller.NotificationCampaignAdminController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationCampaignAdminController.java:[95,38] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.notifications.controller.NotificationCampaignAdminController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationCampaignAdminController.java:[114,38] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.notifications.controller.NotificationCampaignAdminController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationCampaignAdminController.java:[123,38] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.notifications.controller.NotificationCampaignAdminController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationCampaignAdminController.java:[130,31] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.notifications.controller.NotificationCampaignAdminController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationDeviceController.java:[11,47] package org.springframework.security.oauth2.jwt does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationDeviceController.java:[36,38] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.notifications.controller.NotificationDeviceController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationDeviceController.java:[48,38] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.notifications.controller.NotificationDeviceController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationPreferencesController.java:[8,47] package org.springframework.security.oauth2.jwt does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationPreferencesController.java:[47,38] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.notifications.controller.NotificationPreferencesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationPreferencesController.java:[56,38] cannot find symbol
+  symbol:   class Jwt
+  location: class com.qaliye.backend.notifications.controller.NotificationPreferencesController
+[INFO] 33 errors 
+[INFO] -------------------------------------------------------------
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  10.224 s
+[INFO] Finished at: 2026-06-27T14:27:14+01:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.15.0:compile (default-compile) on project qaliye-backend: Compilation failure: Compilation failure: 
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/common/CallerUtils.java:[4,47] package org.springframework.security.oauth2.jwt does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/config/SecurityConfig.java:[11,78] package org.springframework.security.oauth2.server.resource.web.authentication does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/config/SecurityConfig.java:[13,74] package org.springframework.security.oauth2.server.resource.authentication does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/config/UserStatusFilter.java:[12,47] package org.springframework.security.oauth2.jwt does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/config/SecurityConfig.java:[46,13] cannot find symbol
+[ERROR]   symbol:   class JwtAuthenticationConverter
+[ERROR]   location: class com.qaliye.backend.config.SecurityConfig
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/DiscoveryProfilesController.java:[17,47] package org.springframework.security.oauth2.jwt does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/DiscoveryProfilesController.java:[52,38] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.discovery.controller.DiscoveryProfilesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/DiscoveryProfilesController.java:[61,38] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.discovery.controller.DiscoveryProfilesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/DiscoveryProfilesController.java:[71,38] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.discovery.controller.DiscoveryProfilesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/DiscoveryProfilesController.java:[81,38] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.discovery.controller.DiscoveryProfilesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/DiscoveryProfilesController.java:[90,59] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.discovery.controller.DiscoveryProfilesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/DiscoveryProfilesController.java:[98,38] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.discovery.controller.DiscoveryProfilesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/DiscoveryProfilesController.java:[122,40] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.discovery.controller.DiscoveryProfilesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/LikesController.java:[7,47] package org.springframework.security.oauth2.jwt does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/LikesController.java:[28,38] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.discovery.controller.LikesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/LikesController.java:[36,39] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.discovery.controller.LikesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/MatchesController.java:[7,47] package org.springframework.security.oauth2.jwt does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/MatchesController.java:[28,38] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.discovery.controller.MatchesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/discovery/controller/MatchesController.java:[35,39] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.discovery.controller.MatchesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationCampaignAdminController.java:[16,47] package org.springframework.security.oauth2.jwt does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationCampaignAdminController.java:[56,38] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.notifications.controller.NotificationCampaignAdminController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationCampaignAdminController.java:[68,38] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.notifications.controller.NotificationCampaignAdminController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationCampaignAdminController.java:[77,38] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.notifications.controller.NotificationCampaignAdminController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationCampaignAdminController.java:[95,38] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.notifications.controller.NotificationCampaignAdminController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationCampaignAdminController.java:[114,38] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.notifications.controller.NotificationCampaignAdminController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationCampaignAdminController.java:[123,38] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.notifications.controller.NotificationCampaignAdminController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationCampaignAdminController.java:[130,31] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.notifications.controller.NotificationCampaignAdminController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationDeviceController.java:[11,47] package org.springframework.security.oauth2.jwt does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationDeviceController.java:[36,38] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.notifications.controller.NotificationDeviceController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationDeviceController.java:[48,38] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.notifications.controller.NotificationDeviceController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationPreferencesController.java:[8,47] package org.springframework.security.oauth2.jwt does not exist
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationPreferencesController.java:[47,38] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.notifications.controller.NotificationPreferencesController
+[ERROR] /C:/PROJECT/QALIYE/qaliye-backend/src/main/java/com/qaliye/backend/notifications/controller/NotificationPreferencesController.java:[56,38] cannot find symbol
+[ERROR]   symbol:   class Jwt
+[ERROR]   location: class com.qaliye.backend.notifications.controller.NotificationPreferencesController
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException

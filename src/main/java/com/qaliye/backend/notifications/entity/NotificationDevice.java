@@ -31,6 +31,24 @@ public class NotificationDevice {
     @Column(name = "is_active", nullable = false)
     private Boolean isActive;
 
+    @Column(name = "installation_id")
+    private UUID installationId;
+
+    @Column(name = "app_environment", nullable = false)
+    private String appEnvironment = "PRODUCTION";
+
+    @Column(name = "disabled_at")
+    private OffsetDateTime disabledAt;
+
+    @Column(name = "last_error_code")
+    private String lastErrorCode;
+
+    @Column(name = "last_error_at")
+    private OffsetDateTime lastErrorAt;
+
+    @Column(name = "last_seen_at")
+    private OffsetDateTime lastSeenAt;
+
     @Column(name = "created_at", updatable = false)
     private OffsetDateTime createdAt;
 

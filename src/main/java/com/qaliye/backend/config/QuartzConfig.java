@@ -1,6 +1,10 @@
 package com.qaliye.backend.config;
 
 import com.qaliye.backend.moderation.MessageModerationJob;
+import com.qaliye.backend.notifications.worker.ExpoDeliveryWorker;
+import com.qaliye.backend.notifications.worker.ExpoReceiptWorker;
+import com.qaliye.backend.notifications.worker.NotificationOutboxFanoutWorker;
+import com.qaliye.backend.notifications.worker.NotificationRecoveryWorker;
 import com.qaliye.backend.payments.SubscriptionReconciliationJob;
 import com.qaliye.backend.user.DataDeletionJob;
 import org.quartz.CronScheduleBuilder;
@@ -80,6 +84,82 @@ public class QuartzConfig {
                 .withIdentity("dataDeletionTrigger")
                 .withSchedule(CronScheduleBuilder.cronSchedule("0 0 3 ? * SUN")
                         .inTimeZone(TimeZone.getTimeZone("UTC")))
+                .build();
+    }
+
+    @Bean
+    public JobDetail notificationOutboxFanoutJobDetail() {
+        return JobBuilder.newJob(NotificationOutboxFanoutWorker.class)
+                .withIdentity("notificationOutboxFanoutJob")
+                .storeDurably()
+                .build();
+    }
+
+    @Bean
+    public Trigger notificationOutboxFanoutTrigger(JobDetail notificationOutboxFanoutJobDetail) {
+        return TriggerBuilder.newTrigger()
+                .forJob(notificationOutboxFanoutJobDetail)
+                .withIdentity("notificationOutboxFanoutTrigger")
+                .withSchedule(SimpleScheduleBuilder.simpleSchedule()
+                        .withIntervalInSeconds(1)
+                        .repeatForever())
+                .build();
+    }
+
+    @Bean
+    public JobDetail expoDeliveryJobDetail() {
+        return JobBuilder.newJob(ExpoDeliveryWorker.class)
+                .withIdentity("expoDeliveryJob")
+                .storeDurably()
+                .build();
+    }
+
+    @Bean
+    public Trigger expoDeliveryTrigger(JobDetail expoDeliveryJobDetail) {
+        return TriggerBuilder.newTrigger()
+                .forJob(expoDeliveryJobDetail)
+                .withIdentity("expoDeliveryTrigger")
+                .withSchedule(SimpleScheduleBuilder.simpleSchedule()
+                        .withIntervalInSeconds(1)
+                        .repeatForever())
+                .build();
+    }
+
+    @Bean
+    public JobDetail expoReceiptJobDetail() {
+        return JobBuilder.newJob(ExpoReceiptWorker.class)
+                .withIdentity("expoReceiptJob")
+                .storeDurably()
+                .build();
+    }
+
+    @Bean
+    public Trigger expoReceiptTrigger(JobDetail expoReceiptJobDetail) {
+        return TriggerBuilder.newTrigger()
+                .forJob(expoReceiptJobDetail)
+                .withIdentity("expoReceiptTrigger")
+                .withSchedule(SimpleScheduleBuilder.simpleSchedule()
+                        .withIntervalInSeconds(30)
+                        .repeatForever())
+                .build();
+    }
+
+    @Bean
+    public JobDetail notificationRecoveryJobDetail() {
+        return JobBuilder.newJob(NotificationRecoveryWorker.class)
+                .withIdentity("notificationRecoveryJob")
+                .storeDurably()
+                .build();
+    }
+
+    @Bean
+    public Trigger notificationRecoveryTrigger(JobDetail notificationRecoveryJobDetail) {
+        return TriggerBuilder.newTrigger()
+                .forJob(notificationRecoveryJobDetail)
+                .withIdentity("notificationRecoveryTrigger")
+                .withSchedule(SimpleScheduleBuilder.simpleSchedule()
+                        .withIntervalInMinutes(2)
+                        .repeatForever())
                 .build();
     }
 }

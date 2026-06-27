@@ -1,5 +1,6 @@
 package com.qaliye.backend.messaging;
 
+import com.qaliye.backend.chat.service.MatchLifecycleService;
 import com.qaliye.backend.notifications.NotificationDispatcher;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
@@ -76,11 +77,14 @@ public class MessagingService {
 
     private final NamedParameterJdbcTemplate jdbc;
     private final NotificationDispatcher notificationDispatcher;
+    private final MatchLifecycleService matchLifecycleService;
 
     public MessagingService(NamedParameterJdbcTemplate jdbc,
-                            NotificationDispatcher notificationDispatcher) {
+                            NotificationDispatcher notificationDispatcher,
+                            MatchLifecycleService matchLifecycleService) {
         this.jdbc = jdbc;
         this.notificationDispatcher = notificationDispatcher;
+        this.matchLifecycleService = matchLifecycleService;
     }
 
     @Transactional
@@ -157,8 +161,7 @@ public class MessagingService {
     @Transactional
     public boolean unmatch(UUID callerId, UUID matchId) {
         fetchAndValidateParticipant(matchId, callerId);
-        int rows = jdbc.update(UNMATCH_SQL, Map.of("matchId", matchId, "callerId", callerId));
-        return rows > 0;
+        return matchLifecycleService.endMatch(matchId, "USER_UNMATCH", callerId);
     }
 
     private MatchRow fetchAndValidateParticipant(UUID matchId, UUID callerId) {

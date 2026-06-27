@@ -63,6 +63,16 @@ public class DiscoveryActionRepository {
               AND status = 'ACTIVE'
             """;
 
+    private static final String REVERSE_PASS_FOR_REVISIT = """
+            UPDATE user_discovery_actions
+            SET status = 'REVERSED',
+                reversed_at = NOW(),
+                reversed_reason = 'REVISIT_PASSES'
+            WHERE id = :actionId
+              AND status = 'ACTIVE'
+              AND action_type = 'PASS'
+            """;
+
     private static final String FIND_MUTUAL_ACTIVE_LIKE = """
             SELECT id, actor_user_id, target_user_id, action_type, status, client_action_id, created_at
             FROM user_discovery_actions
@@ -117,6 +127,10 @@ public class DiscoveryActionRepository {
 
     public int reverseAction(UUID actionId) {
         return jdbc.update(REVERSE_ACTION, new MapSqlParameterSource("actionId", actionId));
+    }
+
+    public int reversePassForRevisit(UUID actionId) {
+        return jdbc.update(REVERSE_PASS_FOR_REVISIT, new MapSqlParameterSource("actionId", actionId));
     }
 
     private ActionRow mapRow(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
