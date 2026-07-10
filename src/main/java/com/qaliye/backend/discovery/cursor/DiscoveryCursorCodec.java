@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.UUID;
 
 @Component
 public class DiscoveryCursorCodec {
@@ -20,18 +21,21 @@ public class DiscoveryCursorCodec {
         this.props = props;
     }
 
-    public record CursorState(int offset, String locationFilter, Instant generatedAt, boolean reset) {
-        public static CursorState fresh(String locationFilter) {
-            return new CursorState(0, locationFilter, Instant.now(), false);
+    public record CursorState(Instant generatedAt, boolean reset,
+                              Double lastScore, UUID lastUserId) {
+        public static CursorState fresh() {
+            return new CursorState(Instant.now(), false, null, null);
         }
     }
 
-    private record CursorPayload(int offset, String locationFilter, String generatedAt) {}
+    private record CursorPayload(String generatedAt,
+                                  Double lastScore, String lastUserId) {}
 
-    public String encode(int offset, String locationFilter) {
+    public String encode(Double lastScore, UUID lastUserId) {
         try {
+            String lastUserIdStr = lastUserId != null ? lastUserId.toString() : null;
             String json = objectMapper.writeValueAsString(
-                    new CursorPayload(offset, locationFilter, Instant.now().toString()));
+                    new CursorPayload(Instant.now().toString(), lastScore, lastUserIdStr));
             return Base64.getUrlEncoder().withoutPadding()
                     .encodeToString(json.getBytes(StandardCharsets.UTF_8));
         } catch (JsonProcessingException e) {
@@ -39,9 +43,9 @@ public class DiscoveryCursorCodec {
         }
     }
 
-    public CursorState decode(String cursor, String requestedFilter) {
+    public CursorState decode(String cursor) {
         if (cursor == null || cursor.isBlank()) {
-            return CursorState.fresh(requestedFilter);
+            return CursorState.fresh();
         }
         try {
             byte[] decoded = Base64.getUrlDecoder().decode(cursor);
@@ -50,14 +54,15 @@ public class DiscoveryCursorCodec {
 
             boolean tooOld = generatedAt.isBefore(
                     Instant.now().minusSeconds(props.getCursor().maxAgeMinutes() * 60L));
-            boolean filterMismatch = !requestedFilter.equals(payload.locationFilter());
 
-            if (tooOld || filterMismatch) {
-                return new CursorState(0, requestedFilter, Instant.now(), true);
+            if (tooOld) {
+                return new CursorState(Instant.now(), true, null, null);
             }
-            return new CursorState(payload.offset(), payload.locationFilter(), generatedAt, false);
+            UUID lastUserId = payload.lastUserId() != null ? UUID.fromString(payload.lastUserId()) : null;
+            return new CursorState(generatedAt, false,
+                    payload.lastScore(), lastUserId);
         } catch (Exception e) {
-            return CursorState.fresh(requestedFilter);
+            return CursorState.fresh();
         }
     }
 }

@@ -98,7 +98,9 @@ public class DiscoveryService {
                     END AS distance_km,
                     EXISTS (
                         SELECT 1 FROM active_boosts ab
-                        WHERE ab.user_id = p.user_id AND ab.expires_at > NOW()
+                        WHERE ab.user_id = p.user_id
+                          AND ab.status = 'ACTIVE'
+                          AND NOW() BETWEEN ab.started_at AND ab.expires_at
                     ) AS is_boosted
                 FROM profiles p
                 JOIN app_users au ON au.id = p.user_id

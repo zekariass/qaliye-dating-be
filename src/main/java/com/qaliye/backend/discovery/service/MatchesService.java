@@ -107,15 +107,33 @@ public class MatchesService {
                   AND pp.deleted_at IS NULL
             WHERE (m.user_one_id = :userId OR m.user_two_id = :userId)
               AND m.status = 'ACTIVE'
+              AND NOT EXISTS (
+                  SELECT 1 FROM user_blocks ub
+                  WHERE ub.status = 'ACTIVE'
+                    AND (
+                        (ub.blocker_user_id = m.user_one_id AND ub.blocked_user_id = m.user_two_id)
+                        OR
+                        (ub.blocker_user_id = m.user_two_id AND ub.blocked_user_id = m.user_one_id)
+                    )
+              )
             ORDER BY m.last_message_at DESC NULLS LAST, m.matched_at DESC
             LIMIT :limit OFFSET :offset
             """;
 
     private static final String MATCHES_COUNT_SQL = """
             SELECT COUNT(*)
-            FROM matches
-            WHERE (user_one_id = :userId OR user_two_id = :userId)
-              AND status = 'ACTIVE'
+            FROM matches m
+            WHERE (m.user_one_id = :userId OR m.user_two_id = :userId)
+              AND m.status = 'ACTIVE'
+              AND NOT EXISTS (
+                  SELECT 1 FROM user_blocks ub
+                  WHERE ub.status = 'ACTIVE'
+                    AND (
+                        (ub.blocker_user_id = m.user_one_id AND ub.blocked_user_id = m.user_two_id)
+                        OR
+                        (ub.blocker_user_id = m.user_two_id AND ub.blocked_user_id = m.user_one_id)
+                    )
+              )
             """;
 
     @Transactional(readOnly = true)

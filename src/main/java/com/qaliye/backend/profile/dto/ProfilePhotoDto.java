@@ -9,5 +9,6 @@ public record ProfilePhotoDto(
         Boolean isPrimary,
         String signedUrl,
         Instant expiresAt,
-        String moderationStatus
+        String moderationStatus,
+        String rejectionReason
 ) {}

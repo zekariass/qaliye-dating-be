@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "verify-et-api": {
+      "source": "NegusNati/verify-et-api",
+      "sourceType": "github",
+      "skillPath": "skills/verify-et-api/SKILL.md",
+      "computedHash": "75d8b9b9a774adff1cf31322d315c27c98cf2931d95bc634db1a93d56ae6f9a5"
+    }
+  }
+}

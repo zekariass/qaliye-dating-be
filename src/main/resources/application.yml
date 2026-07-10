@@ -52,6 +52,21 @@ supabase:
   realtime-broadcast-url: ${SUPABASE_REALTIME_BROADCAST_URL:${SUPABASE_URL}/realtime/v1/api/broadcast}
   jwt-issuer: ${SUPABASE_JWT_ISSUER:}
   jwt-audience: ${SUPABASE_JWT_AUDIENCE:}
+  auth:
+    send-sms-hook-secret: ${SUPABASE_AUTH_SEND_SMS_HOOK_SECRET:v1,whsec_E1H2WXyrRXBRZM8eiyGUO6bpzDK1TYmfp+KXPikKOwq4GfYVMff2LySxloKJHbAJzv3t1TfWGMKIXXxZ}
+
+sms:
+  provider: ${SMS_PROVIDER:AFROMESSAGE} # AFROMESSAGE or SMS_ETHIOPIA
+
+  afromessage:
+    base-url: ${AFROMESSAGE_BASE_URL:https://api.afromessage.com/api/send}
+    token: ${AFROMESSAGE_TOKEN:eyJhbGciOiJIUzI1NiJ9.eyJpZGVudGlmaWVyIjoid2szSlZwSDhHU2tsdTRkTFZxaUQwS004cmVvNm95MUciLCJleHAiOjE5NDE0MDUwMzcsImlhdCI6MTc4MzYzODYzNywianRpIjoiODU0OThhYTItMGM3Ni00ZjUwLThkZWQtMTRkMTc3ODZjMDM1In0.fuS6OaQIfgSDri5QajDT61z5wi_utBMS0t3_jsAn2fY}
+    sender-id: ${AFROMESSAGE_SENDER_ID:}
+    identifier-id: ${AFROMESSAGE_IDENTIFIER_ID:}
+
+  sms-ethiopia:
+    base-url: ${SMS_ETHIOPIA_BASE_URL:https://smsethiopia.et/api/sms/send}
+    api-key: ${SMS_ETHIOPIA_API_KEY:O2ZAFDHKX4Q4KIOAQNKXQY2MSHBHZVY5:1417}
 
 chat:
   outbox:
@@ -75,6 +90,33 @@ stripe:
 
 revenuecat:
   webhook-secret: ${REVENUECAT_WEBHOOK_SECRET:dummy}
+  webhook-authorization: ${REVENUECAT_WEBHOOK_AUTHORIZATION:Bearer 81681740bf621b2e857dac2d658fc83ab2b4e17d3e08252573fa5e99061cc7b4}
+
+billing:
+  boost-duration-minutes: ${BILLING_BOOST_DURATION_MINUTES:30}
+  payment-order-expiry-hours: ${BILLING_ORDER_EXPIRY_HOURS:72}
+  receipt-signed-url-ttl-seconds: ${BILLING_RECEIPT_URL_TTL:300}
+  manual-transfer-max-age-hours: ${BILLING_MANUAL_TRANSFER_MAX_AGE_HOURS:48000}
+  revenuecat:
+    webhook-authorization-token: ${REVENUECAT_WEBHOOK_AUTH_TOKEN:Bearer 81681740bf621b2e857dac2d658fc83ab2b4e17d3e08252573fa5e99061cc7b4}
+    api-key: ${REVENUECAT_API_KEY:}
+    api-base-url: ${REVENUECAT_API_BASE_URL:https://api.revenuecat.com/v1}
+  chapa:
+    secret-key: ${CHAPA_SECRET_KEY:}
+    webhook-secret: ${CHAPA_WEBHOOK_SECRET:}
+    base-url: ${CHAPA_BASE_URL:https://api.chapa.co/v1}
+    callback-url: ${CHAPA_CALLBACK_URL:}
+  verifier:
+    provider: VERIFY_ET
+    api-key: ${VERIFY_ET_API_KEY:VERIFY_BANK_ET_BdHRjlvR9CLfMTANPZmGyeWGjpdzB7fZIq3-GhxjfhrBWz0u5EzX2qlYSdIgOEqa}
+    base-url: ${VERIFY_ET_BASE_URL:https://verify.et}
+    webhook-url: ${VERIFY_ET_WEBHOOK_URL:https://lunular-leonia-branchial.ngrok-free.dev/api/v1/billing/webhooks/verify-et}
+    webhook-secret: ${VERIFY_ET_API_KEY:VERIFY_BANK_ET_BdHRjlvR9CLfMTANPZmGyeWGjpdzB7fZIq3-GhxjfhrBWz0u5EzX2qlYSdIgOEqa}
+  payment-instructions:
+    bank-name: ${PAYMENT_BANK_NAME:Commercial Bank of Ethiopia}
+    account-number: ${PAYMENT_ACCOUNT_NUMBER:}
+    account-name: ${PAYMENT_ACCOUNT_NAME:Qaliye Technologies}
+    telebirr-short-code: ${PAYMENT_TELEBIRR_SHORT_CODE:}
 
 app:
   cache:
@@ -140,3 +182,4 @@ logging:
     org.springframework.security: DEBUG
     com.qaliye.backend.discovery.service.LikesService: DEBUG
     com.qaliye.backend.discovery.service.MatchesService: DEBUG
+    com.qaliye.backend.billing.service.OfferService: DEBUG

@@ -35,6 +35,17 @@ public class BlockService {
             RETURNING id
             """;
 
+    private static final String REVERSE_LIKES_SQL = """
+            UPDATE user_discovery_actions
+            SET status = 'REVERSED',
+                reversed_at = NOW(),
+                reversed_reason = 'BLOCK'
+            WHERE actor_user_id = :callerId
+              AND target_user_id = :blockedId
+              AND action_type IN ('LIKE', 'SUPERLIKE')
+              AND status = 'ACTIVE'
+            """;
+
     private static final String AUDIT_LOG_SQL = """
             INSERT INTO audit_log (actor_user_id, action, target_table, target_id, details)
             VALUES (:callerId, 'USER_BLOCK', 'app_users', :blockedId, :details::jsonb)
@@ -68,6 +79,10 @@ public class BlockService {
         // End any active match before creating the block so outbox events are emitted.
         // The DB trigger end_active_matches_when_blocked remains defense-in-depth.
         matchLifecycleService.endMatchByPair(callerId, blockedId, "BLOCKED", callerId);
+
+        // Reverse any active like/superlike from the caller to the blocked user so
+        // unblocking later allows the caller to rediscover and re-like the profile.
+        jdbc.update(REVERSE_LIKES_SQL, params);
 
         jdbc.update(UPSERT_BLOCK_SQL, params);
 

@@ -13,7 +13,5 @@ public record UpdatePreferencesRequest(
         @NotNull @Min(18) @Max(120) Integer maxAge,
         @NotNull @Min(1) @Max(500) Integer maxDistanceKm,
         List<String> preferredResidencyTypes,
-        Boolean openToLongDistance,
-        Boolean openToRelocation,
         Boolean showVerifiedOnly
 ) {}

@@ -9,14 +9,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 
 @Service
 public class DiscoveryFeedService {
-
-    private static final Set<String> VALID_LOCATION_FILTERS =
-            Set.of("NEARBY", "ETHIOPIA", "ERITREA", "DIASPORA", "ANYWHERE");
 
     private final DiscoveryQueryService queryService;
     private final DiscoveryCursorCodec cursorCodec;
@@ -31,13 +27,7 @@ public class DiscoveryFeedService {
     }
 
     @Transactional(readOnly = true)
-    public DiscoveryProfilesResponse fetchProfiles(UUID actorId,
-                                                    String locationFilter,
-                                                    String cursorToken) {
-        if (!VALID_LOCATION_FILTERS.contains(locationFilter)) {
-            locationFilter = "NEARBY";
-        }
-
+    public DiscoveryProfilesResponse fetchProfiles(UUID actorId, String cursorToken) {
         DiscoveryQueryService.ActorEligibilityResult eligibility =
                 queryService.checkActorEligibilityReason(actorId);
         if (eligibility == DiscoveryQueryService.ActorEligibilityResult.ACCOUNT_INELIGIBLE) {
@@ -52,24 +42,41 @@ public class DiscoveryFeedService {
             throw ActorIneligibleException.profileIncomplete();
         }
 
-        DiscoveryCursorCodec.CursorState cursor = cursorCodec.decode(cursorToken, locationFilter);
+        DiscoveryCursorCodec.CursorState cursor = cursorCodec.decode(cursorToken);
 
         int batchSize = props.getQueue().batchSize();
-        int totalEligible = queryService.countEligible(actorId, ctx, locationFilter);
+
+        boolean skipDistance = false;
+        boolean isFirstPage = cursor.lastScore() == null && cursor.lastUserId() == null;
+        if (isFirstPage && "nearby".equals(ctx.locationMode()) && ctx.expandSearchWhenLimited()) {
+            int nearbyCount = queryService.countEligible(actorId, ctx, false);
+            if (nearbyCount < batchSize) {
+                skipDistance = true;
+            }
+        }
+
+        int totalEligible = queryService.countEligible(actorId, ctx, skipDistance);
+
+        DiscoveryQueryService.FetchCursor fetchCursor = cursor.lastScore() != null && cursor.lastUserId() != null
+                ? new DiscoveryQueryService.FetchCursor(cursor.lastScore(), cursor.lastUserId())
+                : new DiscoveryQueryService.FetchCursor(null, null);
 
         List<DiscoveryProfileDto> profiles = queryService.fetchProfiles(
-                actorId, ctx, locationFilter, batchSize, cursor.offset());
+                actorId, ctx, batchSize, fetchCursor, skipDistance);
 
-        int newOffset = cursor.offset() + profiles.size();
-        boolean hasMore = newOffset < totalEligible;
-        String nextCursor = hasMore ? cursorCodec.encode(newOffset, locationFilter) : null;
+        String nextCursor = null;
+        if (!profiles.isEmpty()) {
+            DiscoveryProfileDto last = profiles.get(profiles.size() - 1);
+            boolean hasMoreLocal = profiles.size() == batchSize;
+            nextCursor = hasMoreLocal ? cursorCodec.encode(last.discoveryScore(), last.userId()) : null;
+        }
+        boolean hasMore = nextCursor != null;
 
         return new DiscoveryProfilesResponse(
                 profiles,
                 nextCursor,
                 hasMore,
                 totalEligible,
-                locationFilter,
                 profiles.size(),
                 cursor.reset()
         );

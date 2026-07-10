@@ -10,6 +10,8 @@ import org.hibernate.annotations.UpdateTimestamp;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "profiles")
@@ -44,7 +46,13 @@ public class Profile {
     @Column(name = "residency_type", nullable = false)
     private String residencyType;
 
-    private String ethnicity;
+    @Column(name = "ethnicity_ids", columnDefinition = "uuid[]")
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    private UUID[] ethnicityIds;
+
+    @Column(name = "ethnicity_other_text")
+    private String ethnicityOtherText;
+
     private String nationality;
     private String religion;
 
@@ -83,8 +91,9 @@ public class Profile {
     @Column(name = "interests", columnDefinition = "text[]")
     private String[] interests;
 
-    @Column(name = "languages", columnDefinition = "text[]")
-    private String[] languages;
+    @Column(name = "language_ids", columnDefinition = "uuid[]")
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    private UUID[] languageIds;
 
     @Column(name = "discovery_mode", nullable = false)
     private String discoveryMode;

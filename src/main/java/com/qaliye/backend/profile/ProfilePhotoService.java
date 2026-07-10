@@ -36,7 +36,7 @@ public class ProfilePhotoService {
 
     public ProfilePhotosResponse getPhotos(UUID userId) {
         List<Map<String, Object>> rows = jdbc.queryForList("""
-                SELECT id, photo_order, is_primary, moderation_status, storage_bucket, storage_path, created_at
+                SELECT id, photo_order, is_primary, moderation_status, rejection_reason, storage_bucket, storage_path, created_at
                 FROM profile_photos
                 WHERE user_id = :userId AND deleted_at IS NULL
                 ORDER BY photo_order ASC
@@ -83,7 +83,19 @@ public class ProfilePhotoService {
 
         String signedUrl = storageService.generateSignedUrl(request.storageBucket(), request.storagePath(), SIGNED_URL_TTL_SECONDS);
         return new ProfilePhotoDto(photoId, order, isPrimary, signedUrl,
-                Instant.now().plusSeconds(SIGNED_URL_TTL_SECONDS), "PENDING");
+                Instant.now().plusSeconds(SIGNED_URL_TTL_SECONDS), "PENDING", null);
+    }
+
+    @Transactional
+    public ProfilePhotosResponse registerPhotos(UUID userId, List<PhotoRegistrationRequest> requests) {
+        long activeCount = countActivePhotos(userId);
+        if (activeCount + requests.size() > MAX_PHOTOS) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "PHOTO_LIMIT_EXCEEDED");
+        }
+        for (PhotoRegistrationRequest request : requests) {
+            registerPhoto(userId, request);
+        }
+        return getPhotos(userId);
     }
 
     @Transactional
@@ -113,6 +125,20 @@ public class ProfilePhotoService {
 
         List<PhotoReorderItem> sorted = new ArrayList<>(items);
         sorted.sort((a, b) -> Integer.compare(a.photoOrder(), b.photoOrder()));
+
+        // Shift existing orders out of the way first to avoid transient unique constraint
+        // violations (user_id, photo_order) when two photos swap positions.
+        jdbc.update("""
+                UPDATE profile_photos
+                SET photo_order = photo_order + :offset
+                WHERE user_id = :userId AND deleted_at IS NULL
+                """,
+                Map.of("offset", 10000, "userId", userId));
+
+        // Clear all primary flags so the per-row loop never leaves two rows with
+        // is_primary = TRUE simultaneously (unique_active_primary_photo_per_user).
+        jdbc.update("UPDATE profile_photos SET is_primary = FALSE WHERE user_id = :userId AND deleted_at IS NULL",
+                Map.of("userId", userId));
 
         for (int i = 0; i < sorted.size(); i++) {
             PhotoReorderItem item = sorted.get(i);
@@ -212,9 +238,9 @@ public class ProfilePhotoService {
         List<Map<String, Object>> rows = jdbc.queryForList("""
                 SELECT
                     p.display_name, p.gender, p.date_of_birth, p.height_cm, p.residency_type,
-                    p.bio, p.ethnicity, p.nationality, p.religion, p.education_level, p.occupation,
+                    p.bio, p.ethnicity_ids, p.nationality, p.religion, p.education_level, p.occupation,
                     p.relationship_intention, p.marital_status, p.has_children, p.wants_children,
-                    p.smoking_detail, p.drinking_detail, p.activity_level, p.interests, p.languages,
+                    p.smoking_detail, p.drinking_detail, p.activity_level, p.interests, p.language_ids,
                     au.address_id
                 FROM profiles p
                 JOIN app_users au ON au.id = p.user_id
@@ -233,7 +259,7 @@ public class ProfilePhotoService {
         if (r.get("address_id") != null)                           filled++;
 
         if (notBlank((String) r.get("bio")))                       filled++;
-        if (r.get("ethnicity") != null)                            filled++;
+        if (isNonEmptyArray(r.get("ethnicity_ids")))                filled++;
         if (r.get("nationality") != null)                          filled++;
         if (r.get("religion") != null)                             filled++;
         if (r.get("education_level") != null)                      filled++;
@@ -247,7 +273,7 @@ public class ProfilePhotoService {
         if (r.get("drinking_detail") != null)                      filled++;
         if (r.get("activity_level") != null)                       filled++;
         if (isNonEmptyArray(r.get("interests")))                   filled++;
-        if (isNonEmptyArray(r.get("languages")))                   filled++;
+        if (isNonEmptyArray(r.get("language_ids")))                filled++;
 
         Boolean hasPrefs = jdbc.queryForObject(
                 "SELECT EXISTS(SELECT 1 FROM discovery_preferences WHERE user_id = :userId)",
@@ -282,11 +308,12 @@ public class ProfilePhotoService {
         Integer order = ((Number) row.get("photo_order")).intValue();
         Boolean isPrimary = (Boolean) row.get("is_primary");
         String status = (String) row.get("moderation_status");
+        String rejectionReason = (String) row.get("rejection_reason");
         String bucket = (String) row.get("storage_bucket");
         String path = (String) row.get("storage_path");
 
         String signedUrl = storageService.generateSignedUrl(bucket, path, ttlSeconds);
         Instant expiresAt = Instant.now().plusSeconds(ttlSeconds);
-        return new ProfilePhotoDto(id, order, isPrimary, signedUrl, expiresAt, status);
+        return new ProfilePhotoDto(id, order, isPrimary, signedUrl, expiresAt, status, rejectionReason);
     }
 }

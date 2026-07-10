@@ -8,6 +8,7 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
@@ -60,6 +61,18 @@ public class RevisitPassesService {
               AND calculate_age(p.date_of_birth) BETWEEN :minAge AND :maxAge
               AND (:showVerifiedOnly = FALSE OR p.is_verified = TRUE)
               AND p.residency_type  = ANY(:residencyTypes::TEXT[])
+              AND (:langPrefIds = '{}' OR p.language_ids && :langPrefIds::UUID[])
+              AND (:ethPrefIds  = '{}' OR p.ethnicity_ids && :ethPrefIds::UUID[])
+              AND (:hasChildrenPref = 'any' OR
+                   (:hasChildrenPref = 'yes' AND p.has_children = TRUE) OR
+                   (:hasChildrenPref = 'no'  AND p.has_children IS DISTINCT FROM TRUE))
+              AND (:wantsChildrenPref = 'any' OR
+                   (:wantsChildrenPref = 'yes' AND p.wants_children = TRUE) OR
+                   (:wantsChildrenPref = 'no'  AND p.wants_children IS DISTINCT FROM TRUE) OR
+                   (:wantsChildrenPref = 'not_sure' AND p.wants_children IS NULL) OR
+                   (:wantsChildrenPref = 'open_to_discussion' AND p.wants_children IS DISTINCT FROM FALSE))
+              AND (:religionPrefs = '{}' OR p.religion = ANY(:religionPrefs::TEXT[]))
+              AND (:specificCountryCodes = '{}' OR a.country_code = ANY(:specificCountryCodes::TEXT[]))
               AND EXISTS (
                   SELECT 1 FROM profile_photos pp
                   WHERE pp.user_id           = p.user_id
@@ -89,8 +102,8 @@ public class RevisitPassesService {
                     AND uda2.status         = 'ACTIVE'
               )
               AND (
-                  :locationFilter    <> 'NEARBY'
-                  OR :openToLongDistance = TRUE
+                  :skipDistance
+                  OR :locationMode <> 'nearby'
                   OR ST_DWithin(:actorCoords::geography, a.coords::geography, :maxDistanceKm * 1000.0)
               )
             ORDER BY uda.created_at DESC, uda.id DESC
@@ -105,20 +118,25 @@ public class RevisitPassesService {
             throw ActorIneligibleException.profileIncomplete();
         }
 
-        String locationFilter = "NEARBY";
-        String residencyParam = buildArrayParam(resolveResidencyTypes(locationFilter, ctx));
+        String residencyParam = buildArrayParam(resolveResidencyTypes(ctx));
 
         var params = new MapSqlParameterSource()
                 .addValue("actorId", actorId)
-                .addValue("locationFilter", locationFilter)
+                .addValue("skipDistance", false)
                 .addValue("actorCoords", ctx.coordsEwkt())
                 .addValue("targetGender", ctx.interestedInGender())
                 .addValue("minAge", ctx.minAge())
-                .addValue("maxAge", ctx.maxAge())
-                .addValue("maxDistanceKm", ctx.maxDistanceKm())
+                .addValue("maxAge", ctx.maxAge() > 0 ? ctx.maxAge() : 120)
+                .addValue("maxDistanceKm", ctx.maxDistanceKm() > 0 ? ctx.maxDistanceKm() : 500)
                 .addValue("residencyTypes", residencyParam)
                 .addValue("showVerifiedOnly", ctx.showVerifiedOnly())
-                .addValue("openToLongDistance", ctx.openToLongDistance())
+                .addValue("locationMode", ctx.locationMode() != null ? ctx.locationMode() : "nearby")
+                .addValue("langPrefIds", buildUuidArrayParam(Arrays.asList(ctx.languagePreferenceIds())))
+                .addValue("ethPrefIds", buildUuidArrayParam(Arrays.asList(ctx.ethnicityPreferenceIds())))
+                .addValue("hasChildrenPref", ctx.hasChildrenPreference() != null ? ctx.hasChildrenPreference() : "any")
+                .addValue("wantsChildrenPref", ctx.wantsChildrenPreference() != null ? ctx.wantsChildrenPreference() : "any")
+                .addValue("religionPrefs", buildArrayParam(ctx.religionPreferences() != null ? ctx.religionPreferences() : new String[0]))
+                .addValue("specificCountryCodes", buildArrayParam(ctx.specificCountryCodes() != null ? ctx.specificCountryCodes() : new String[0]))
                 .addValue("limit", count * CANDIDATE_FETCH_MULTIPLIER);
 
         List<UUID> candidateIds = jdbc.query(FIND_ELIGIBLE_PASSES_SQL, params,
@@ -138,18 +156,32 @@ public class RevisitPassesService {
         return new RevisitPassesResponse(true, reopenedCount);
     }
 
-    private static String[] resolveResidencyTypes(String locationFilter,
+    private static final String[] ALL_RESIDENCY_TYPES = {"ETHIOPIA", "ERITREA", "DIASPORA"};
+
+    private static String[] resolveResidencyTypes(
                                                     DiscoveryQueryService.ActorContext ctx) {
-        return switch (locationFilter) {
-            case "ETHIOPIA" -> new String[]{"ETHIOPIA"};
-            case "ERITREA"  -> new String[]{"ERITREA"};
-            case "DIASPORA" -> new String[]{"DIASPORA"};
-            case "ANYWHERE" -> new String[]{"ETHIOPIA", "ERITREA", "DIASPORA"};
-            default         -> ctx.preferredResidencyTypes();
+        return resolveFromLocationMode(ctx);
+    }
+
+    private static String[] resolveFromLocationMode(DiscoveryQueryService.ActorContext ctx) {
+        return switch (ctx.locationMode()) {
+            case "diaspora" -> new String[]{"DIASPORA"};
+            case "specific_countries" -> ALL_RESIDENCY_TYPES;
+            default -> ALL_RESIDENCY_TYPES;
         };
     }
 
     private static String buildArrayParam(String[] values) {
         return "{" + String.join(",", values) + "}";
+    }
+
+    private static String buildUuidArrayParam(List<UUID> ids) {
+        StringBuilder sb = new StringBuilder("{");
+        for (int i = 0; i < ids.size(); i++) {
+            if (i > 0) sb.append(",");
+            sb.append(ids.get(i));
+        }
+        sb.append("}");
+        return sb.toString();
     }
 }

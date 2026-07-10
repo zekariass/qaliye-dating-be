@@ -7,7 +7,6 @@ public record DiscoveryProfilesResponse(
         String nextCursor,
         boolean hasMore,
         int totalEligible,
-        String locationFilter,
         int batchSize,
         boolean cursorReset
 ) {}

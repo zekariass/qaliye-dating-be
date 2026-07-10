@@ -1,6 +1,7 @@
 package com.qaliye.backend.payments;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.qaliye.backend.billing.BillingProperties;
 import com.qaliye.backend.user.UserStatusService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,9 +49,11 @@ public class PaymentService {
             VALUES
               (:userId, :planId, :provider, :providerSubscriptionId, 'ACTIVE',
                :now, :currentPeriodStart, :currentPeriodEnd)
-            ON CONFLICT (provider, provider_subscription_id) DO UPDATE
+            ON CONFLICT (user_id) WHERE status IN ('ACTIVE', 'PENDING_VERIFICATION') DO UPDATE
               SET status = 'ACTIVE',
                   plan_id = EXCLUDED.plan_id,
+                  provider = EXCLUDED.provider,
+                  provider_subscription_id = EXCLUDED.provider_subscription_id,
                   current_period_start = EXCLUDED.current_period_start,
                   current_period_end = EXCLUDED.current_period_end,
                   updated_at = NOW()
@@ -101,7 +104,7 @@ public class PaymentService {
 
     private static final String INSERT_BOOST_SQL = """
             INSERT INTO active_boosts (user_id, transaction_id, expires_at)
-            VALUES (:userId, :transactionId, NOW() + INTERVAL '30 minutes')
+            VALUES (:userId, :transactionId, NOW() + make_interval(mins => :durationMinutes))
             """;
 
     private static final String AUDIT_SQL = """
@@ -129,15 +132,18 @@ public class PaymentService {
     private final CacheManager cacheManager;
     private final UserStatusService userStatusService;
     private final ObjectMapper objectMapper;
+    private final BillingProperties billingProperties;
 
     public PaymentService(NamedParameterJdbcTemplate jdbc,
                           CacheManager cacheManager,
                           UserStatusService userStatusService,
-                          ObjectMapper objectMapper) {
+                          ObjectMapper objectMapper,
+                          BillingProperties billingProperties) {
         this.jdbc = jdbc;
         this.cacheManager = cacheManager;
         this.userStatusService = userStatusService;
         this.objectMapper = objectMapper;
+        this.billingProperties = billingProperties;
     }
 
     /** Returns true if event is new (should be processed), false if duplicate. */
@@ -379,7 +385,10 @@ public class PaymentService {
                     }
                 }
             } else if ("PROFILE_BOOST".equals(paymentPurpose)) {
-                jdbc.update(INSERT_BOOST_SQL, Map.of("userId", userId, "transactionId", transactionId));
+                jdbc.update(INSERT_BOOST_SQL, Map.of(
+                        "userId", userId,
+                        "transactionId", transactionId,
+                        "durationMinutes", billingProperties.getBoostDurationMinutes()));
             }
         }
 

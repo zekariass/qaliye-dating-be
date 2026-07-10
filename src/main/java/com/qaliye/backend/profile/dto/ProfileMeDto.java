@@ -1,5 +1,8 @@
 package com.qaliye.backend.profile.dto;
 
+import com.qaliye.backend.catalog.EthnicityOption;
+import com.qaliye.backend.catalog.LanguageOption;
+
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
@@ -14,7 +17,8 @@ public record ProfileMeDto(
         Integer heightCm,
         String residencyType,
         ProfileAddressDto address,
-        String ethnicity,
+        List<EthnicityOption> ethnicities,
+        String ethnicityOtherText,
         String nationality,
         String religion,
         String educationLevel,
@@ -29,7 +33,7 @@ public record ProfileMeDto(
         String drinkingDetail,
         String activityLevel,
         List<String> interests,
-        List<String> languages,
+        List<LanguageOption> languages,
         Boolean isVisible,
         String discoveryMode,
         Boolean isOnboarded,

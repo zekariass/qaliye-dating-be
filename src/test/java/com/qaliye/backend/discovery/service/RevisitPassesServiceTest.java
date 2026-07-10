@@ -122,7 +122,7 @@ class RevisitPassesServiceTest {
         RevisitPassesResponse response = service.revisitPasses(actorId, 10);
 
         assertThat(response).isExactlyInstanceOf(RevisitPassesResponse.class);
-        verify(queryService, never()).fetchSingleProfile(any(), any(), any(), anyString());
+        verify(queryService, never()).fetchSingleProfile(any(), any(), any());
     }
 
     @Test
@@ -216,10 +216,16 @@ class RevisitPassesServiceTest {
                 18,
                 35,
                 50,
-                new String[]{"ETHIOPIA"},
                 false,
+                "en",
+                "nearby",
+                new String[]{"ETHIOPIA"},
                 true,
-                "en"
+                new UUID[0],
+                new UUID[0],
+                null,
+                null,
+                new String[0]
         );
     }
 

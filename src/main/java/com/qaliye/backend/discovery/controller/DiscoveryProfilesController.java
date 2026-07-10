@@ -24,15 +24,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Set;
 import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/discovery")
 public class DiscoveryProfilesController {
-
-    private static final Set<String> VALID_LOCATION_FILTERS =
-            Set.of("NEARBY", "ETHIOPIA", "ERITREA", "DIASPORA", "ANYWHERE");
 
     private final DiscoveryFeedService feedService;
     private final SwipeActionService swipeService;
@@ -55,10 +51,9 @@ public class DiscoveryProfilesController {
     @GetMapping("/profiles")
     public DiscoveryProfilesResponse getProfiles(
             @AuthenticationPrincipal Jwt jwt,
-            @RequestParam(defaultValue = "NEARBY") String locationFilter,
             @RequestParam(required = false) String cursor) {
         UUID actorId = requireActorId(jwt);
-        return feedService.fetchProfiles(actorId, locationFilter, cursor);
+        return feedService.fetchProfiles(actorId, cursor);
     }
 
     @PostMapping("/actions/like")

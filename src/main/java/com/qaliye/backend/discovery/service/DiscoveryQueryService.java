@@ -2,6 +2,9 @@ package com.qaliye.backend.discovery.service;
 
 import com.qaliye.backend.activity.ActivityStatus;
 import com.qaliye.backend.activity.ActivityStatusService;
+import com.qaliye.backend.catalog.CatalogService;
+import com.qaliye.backend.catalog.EthnicityOption;
+import com.qaliye.backend.catalog.LanguageOption;
 import com.qaliye.backend.discovery.config.DiscoveryProperties;
 import com.qaliye.backend.discovery.dto.DiscoveryPhotoDto;
 import com.qaliye.backend.discovery.dto.DiscoveryProfileDto;
@@ -23,15 +26,18 @@ public class DiscoveryQueryService {
     private final StorageSigningService signingService;
     private final DiscoveryProperties props;
     private final ActivityStatusService activityStatusService;
+    private final CatalogService catalogService;
 
     public DiscoveryQueryService(NamedParameterJdbcTemplate jdbc,
                                  StorageSigningService signingService,
                                  DiscoveryProperties props,
-                                 ActivityStatusService activityStatusService) {
+                                 ActivityStatusService activityStatusService,
+                                 CatalogService catalogService) {
         this.jdbc = jdbc;
         this.signingService = signingService;
         this.props = props;
         this.activityStatusService = activityStatusService;
+        this.catalogService = catalogService;
     }
 
     public record ActorContext(
@@ -41,11 +47,23 @@ public class DiscoveryQueryService {
             int minAge,
             int maxAge,
             int maxDistanceKm,
-            String[] preferredResidencyTypes,
             boolean showVerifiedOnly,
-            boolean openToLongDistance,
-            String preferredLanguage
+            String preferredLanguage,
+            String locationMode,
+            String[] specificCountryCodes,
+            boolean expandSearchWhenLimited,
+            UUID[] languagePreferenceIds,
+            UUID[] ethnicityPreferenceIds,
+            String hasChildrenPreference,
+            String wantsChildrenPreference,
+            String[] religionPreferences
     ) {}
+
+    public record FetchCursor(Double score, UUID userId) {
+        public boolean isPresent() {
+            return score != null && userId != null;
+        }
+    }
 
     private static final String LOAD_ACTOR_CONTEXT_SQL = """
             SELECT au.address_id,
@@ -54,10 +72,16 @@ public class DiscoveryQueryService {
                    dp.min_age,
                    dp.max_age,
                    dp.max_distance_km,
-                   dp.preferred_residency_types,
                    dp.show_verified_only,
-                   dp.open_to_long_distance,
-                   au.preferred_language
+                   au.preferred_language,
+                   dp.location_mode,
+                   dp.specific_country_codes,
+                   dp.expand_search_when_limited,
+                   dp.language_preference_ids,
+                   dp.ethnicity_preference_ids,
+                   dp.has_children_preference,
+                   dp.wants_children_preference,
+                   dp.religion_preferences
             FROM app_users au
             JOIN discovery_preferences dp ON dp.user_id = au.id
             JOIN addresses a ON a.id = au.address_id
@@ -115,7 +139,8 @@ public class DiscoveryQueryService {
                     p.is_verified,
                     p.relationship_intention,
                     p.height_cm,
-                    p.ethnicity,
+                    p.ethnicity_ids,
+                    p.language_ids,
                     p.nationality,
                     p.religion,
                     p.education_level,
@@ -132,12 +157,31 @@ public class DiscoveryQueryService {
                         1,
                         ROUND(ST_Distance(:actorCoords::geography, a.coords::geography) / 1000.0)::INTEGER
                     )                                                             AS distance_km,
+                    au.last_active_at,
                     EXISTS (
                         SELECT 1 FROM active_boosts ab
                         WHERE ab.user_id = p.user_id
+                          AND ab.status = 'ACTIVE'
                           AND NOW() BETWEEN ab.started_at AND ab.expires_at
                     )                                                             AS is_boosted,
-                    a.coords                                                      AS candidate_coords
+                    a.coords                                                      AS candidate_coords,
+                    (
+                        CASE WHEN EXISTS (
+                            SELECT 1 FROM active_boosts ab
+                            WHERE ab.user_id = p.user_id
+                              AND ab.status = 'ACTIVE'
+                              AND NOW() BETWEEN ab.started_at AND ab.expires_at
+                        ) THEN 1000.0 ELSE 0.0 END
+                        + (EXTRACT(EPOCH FROM au.last_active_at) / 1e9)
+                        + CASE
+                            WHEN :locationMode = 'nearby' AND NOT :skipDistance
+                            THEN (1.0 - LEAST(GREATEST(
+                                1,
+                                ROUND(ST_Distance(:actorCoords::geography, a.coords::geography) / 1000.0)::INTEGER
+                            )::float / :maxDistanceKm, 1.0)) * 200.0
+                            ELSE 0.0
+                          END
+                    )                                                             AS discovery_score
                 FROM profiles p
                 JOIN app_users au    ON au.id = p.user_id
                 JOIN addresses a     ON a.id  = au.address_id
@@ -152,6 +196,18 @@ public class DiscoveryQueryService {
                   AND calculate_age(p.date_of_birth) BETWEEN :minAge AND :maxAge
                   AND (:showVerifiedOnly = FALSE OR p.is_verified = TRUE)
                   AND p.residency_type  = ANY(:residencyTypes::TEXT[])
+                  AND (:langPrefIds = '{}' OR p.language_ids && :langPrefIds::UUID[])
+                  AND (:ethPrefIds  = '{}' OR p.ethnicity_ids && :ethPrefIds::UUID[])
+                  AND (:hasChildrenPref = 'any' OR
+                       (:hasChildrenPref = 'yes' AND p.has_children = TRUE) OR
+                       (:hasChildrenPref = 'no'  AND p.has_children IS DISTINCT FROM TRUE))
+                  AND (:wantsChildrenPref = 'any' OR
+                       (:wantsChildrenPref = 'yes' AND p.wants_children = TRUE) OR
+                       (:wantsChildrenPref = 'no'  AND p.wants_children IS DISTINCT FROM TRUE) OR
+                       (:wantsChildrenPref = 'not_sure' AND p.wants_children IS NULL) OR
+                       (:wantsChildrenPref = 'open_to_discussion' AND p.wants_children IS DISTINCT FROM FALSE))
+                  AND (:religionPrefs = '{}' OR p.religion = ANY(:religionPrefs::TEXT[]))
+                  AND (:specificCountryCodes = '{}' OR a.country_code = ANY(:specificCountryCodes::TEXT[]))
                   AND EXISTS (
                       SELECT 1 FROM profile_photos pp
                       WHERE pp.user_id            = p.user_id
@@ -162,33 +218,25 @@ public class DiscoveryQueryService {
             )
             SELECT
                 cd.*,
-                au.last_active_at,
-                au.show_activity_status,
-                (
-                    CASE WHEN cd.is_boosted THEN 1000.0 ELSE 0.0 END
-                    + (EXTRACT(EPOCH FROM au.last_active_at) / 1e9)
-                    + CASE
-                        WHEN :locationFilter = 'NEARBY' AND cd.distance_km IS NOT NULL
-                        THEN (1.0 - LEAST(cd.distance_km::float / :maxDistanceKm, 1.0)) * 200.0
-                        ELSE 0.0
-                      END
-                )                                                                AS discovery_score
+                au.show_activity_status
             FROM candidate_distances cd
             JOIN app_users au ON au.id = cd.user_id
             WHERE (
-                :locationFilter <> 'NEARBY'
-                OR :openToLongDistance = TRUE
-                OR (
-                    ST_DWithin(
-                        :actorCoords::geography,
-                        cd.candidate_coords::geography,
-                        :maxDistanceKm * 1000.0
-                    )
+                :skipDistance
+                OR :locationMode <> 'nearby'
+                OR ST_DWithin(
+                    :actorCoords::geography,
+                    cd.candidate_coords::geography,
+                    :maxDistanceKm * 1000.0
                 )
             )
-            ORDER BY discovery_score DESC, cd.user_id ASC
+              AND (
+                  :noCursor
+                  OR cd.discovery_score < :cursorScore
+                  OR (cd.discovery_score = :cursorScore AND cd.user_id > :cursorUserId::uuid)
+              )
+            ORDER BY cd.discovery_score DESC, cd.user_id ASC
             LIMIT :limit
-            OFFSET :offset
             """;
 
     private static final String COUNT_DISCOVERY_SQL = """
@@ -237,6 +285,18 @@ public class DiscoveryQueryService {
               AND calculate_age(p.date_of_birth) BETWEEN :minAge AND :maxAge
               AND (:showVerifiedOnly = FALSE OR p.is_verified = TRUE)
               AND p.residency_type  = ANY(:residencyTypes::TEXT[])
+              AND (:langPrefIds = '{}' OR p.language_ids && :langPrefIds::UUID[])
+              AND (:ethPrefIds  = '{}' OR p.ethnicity_ids && :ethPrefIds::UUID[])
+              AND (:hasChildrenPref = 'any' OR
+                   (:hasChildrenPref = 'yes' AND p.has_children = TRUE) OR
+                   (:hasChildrenPref = 'no'  AND p.has_children IS DISTINCT FROM TRUE))
+              AND (:wantsChildrenPref = 'any' OR
+                   (:wantsChildrenPref = 'yes' AND p.wants_children = TRUE) OR
+                   (:wantsChildrenPref = 'no'  AND p.wants_children IS DISTINCT FROM TRUE) OR
+                   (:wantsChildrenPref = 'not_sure' AND p.wants_children IS NULL) OR
+                   (:wantsChildrenPref = 'open_to_discussion' AND p.wants_children IS DISTINCT FROM FALSE))
+              AND (:religionPrefs = '{}' OR p.religion = ANY(:religionPrefs::TEXT[]))
+              AND (:specificCountryCodes = '{}' OR a.country_code = ANY(:specificCountryCodes::TEXT[]))
               AND EXISTS (
                   SELECT 1 FROM profile_photos pp
                   WHERE pp.user_id            = p.user_id
@@ -245,14 +305,12 @@ public class DiscoveryQueryService {
                     AND pp.deleted_at         IS NULL
               )
               AND (
-                  :locationFilter <> 'NEARBY'
-                  OR :openToLongDistance = TRUE
-                  OR (
-                      ST_DWithin(
-                          :actorCoords::geography,
-                          a.coords::geography,
-                          :maxDistanceKm * 1000.0
-                      )
+                  :skipDistance
+                  OR :locationMode <> 'nearby'
+                  OR ST_DWithin(
+                      :actorCoords::geography,
+                      a.coords::geography,
+                      :maxDistanceKm * 1000.0
                   )
               )
             """;
@@ -287,7 +345,25 @@ public class DiscoveryQueryService {
             if (!rs.next()) return null;
             UUID addressId = rs.getObject("address_id", UUID.class);
             if (addressId == null) return null;
-            String[] residencyTypes = (String[]) rs.getArray("preferred_residency_types").getArray();
+
+            String locationMode = rs.getString("location_mode");
+            if (locationMode == null) locationMode = "anywhere";
+
+            java.sql.Array ccArr = rs.getArray("specific_country_codes");
+            String[] specificCountryCodes = ccArr != null ? (String[]) ccArr.getArray() : new String[0];
+
+            java.sql.Array langArr = rs.getArray("language_preference_ids");
+            UUID[] langPrefIds = langArr != null ? toUuidArray((Object[]) langArr.getArray()) : new UUID[0];
+
+            java.sql.Array ethArr = rs.getArray("ethnicity_preference_ids");
+            UUID[] ethPrefIds = ethArr != null ? toUuidArray((Object[]) ethArr.getArray()) : new UUID[0];
+
+            java.sql.Array relArr = rs.getArray("religion_preferences");
+            String[] religionPrefs = relArr != null ? (String[]) relArr.getArray() : new String[0];
+
+            UUID[] resolvedLangIds = catalogService.resolveLanguagePreferenceIdsToAllMatching(langPrefIds);
+            UUID[] resolvedEthIds = catalogService.resolveEthnicityPreferenceIdsToAllMatching(ethPrefIds);
+
             return new ActorContext(
                     addressId,
                     rs.getString("coords_ewkt"),
@@ -295,12 +371,27 @@ public class DiscoveryQueryService {
                     rs.getInt("min_age"),
                     rs.getInt("max_age"),
                     rs.getInt("max_distance_km"),
-                    residencyTypes,
                     rs.getBoolean("show_verified_only"),
-                    rs.getBoolean("open_to_long_distance"),
-                    rs.getString("preferred_language")
+                    rs.getString("preferred_language"),
+                    locationMode,
+                    specificCountryCodes,
+                    rs.getBoolean("expand_search_when_limited"),
+                    resolvedLangIds != null ? resolvedLangIds : new UUID[0],
+                    resolvedEthIds != null ? resolvedEthIds : new UUID[0],
+                    rs.getString("has_children_preference"),
+                    rs.getString("wants_children_preference"),
+                    religionPrefs
             );
         });
+    }
+
+    private static UUID[] toUuidArray(Object[] raw) {
+        if (raw == null) return new UUID[0];
+        UUID[] result = new UUID[raw.length];
+        for (int i = 0; i < raw.length; i++) {
+            result[i] = raw[i] instanceof UUID u ? u : UUID.fromString(raw[i].toString());
+        }
+        return result;
     }
 
     private static final String CHECK_ACTOR_ACCOUNT_SQL = """
@@ -348,35 +439,43 @@ public class DiscoveryQueryService {
     }
 
     public List<DiscoveryProfileDto> fetchProfiles(UUID actorId, ActorContext ctx,
-                                                    String locationFilter, int limit, int offset) {
-        String[] residencyTypes = resolveResidencyTypes(locationFilter, ctx);
+                                                    int limit,
+                                                    FetchCursor cursor, boolean skipDistance) {
+        String[] residencyTypes = resolveResidencyTypes(ctx);
         String residencyParam = buildArrayParam(residencyTypes);
 
-        var params = buildCoreParams(actorId, ctx, locationFilter, residencyParam, limit, offset);
+        var params = buildCoreParams(actorId, ctx, residencyParam, limit, cursor, skipDistance);
         Instant now = activityStatusService.now();
 
+        Map<UUID, UUID[]> rawLangIds = new LinkedHashMap<>();
+        Map<UUID, UUID[]> rawEthIds  = new LinkedHashMap<>();
+
         List<DiscoveryProfileDto> profiles = new ArrayList<>(
-                jdbc.query(CORE_DISCOVERY_SQL, params, (rs, rowNum) -> mapProfile(rs, rowNum, now)));
+                jdbc.query(CORE_DISCOVERY_SQL, params,
+                        (rs, rowNum) -> mapProfile(rs, rowNum, now, rawLangIds, rawEthIds)));
         if (profiles.isEmpty()) return profiles;
 
+        enrichWithCatalogData(profiles, rawLangIds, rawEthIds);
         enrichWithPhotos(profiles);
         enrichWithPrompts(profiles, ctx.preferredLanguage());
         return profiles;
     }
 
-    public int countEligible(UUID actorId, ActorContext ctx, String locationFilter) {
-        String[] residencyTypes = resolveResidencyTypes(locationFilter, ctx);
+    public int countEligible(UUID actorId, ActorContext ctx, boolean skipDistance) {
+        String[] residencyTypes = resolveResidencyTypes(ctx);
         String residencyParam = buildArrayParam(residencyTypes);
 
-        var params = buildCoreParams(actorId, ctx, locationFilter, residencyParam, 0, 0);
+        var params = buildCoreParams(actorId, ctx, residencyParam, 0,
+                new FetchCursor(null, null), skipDistance);
         Integer count = jdbc.queryForObject(COUNT_DISCOVERY_SQL, params, Integer.class);
         return count != null ? count : 0;
     }
 
     public DiscoveryProfileDto fetchSingleProfile(UUID actorId, UUID targetUserId,
-                                                   ActorContext ctx, String locationFilter) {
-        String residencyParam = buildArrayParam(resolveResidencyTypes(locationFilter, ctx));
-        var params = buildCoreParams(actorId, ctx, locationFilter, residencyParam, 1, 0);
+                                                   ActorContext ctx) {
+        String residencyParam = buildArrayParam(resolveResidencyTypes(ctx));
+        var params = buildCoreParams(actorId, ctx, residencyParam, 1,
+                new FetchCursor(null, null), false);
         params.addValue("targetUserId", targetUserId);
         Instant now = activityStatusService.now();
 
@@ -385,31 +484,48 @@ public class DiscoveryQueryService {
                 "AND p.user_id        NOT IN (SELECT user_id FROM excluded_targets)\n"
                         + "                  AND p.user_id        = :targetUserId");
 
+        Map<UUID, UUID[]> rawLangIds = new LinkedHashMap<>();
+        Map<UUID, UUID[]> rawEthIds  = new LinkedHashMap<>();
+
         List<DiscoveryProfileDto> results = new ArrayList<>(
-                jdbc.query(singleProfileSql, params, (rs, rowNum) -> mapProfile(rs, rowNum, now)));
+                jdbc.query(singleProfileSql, params,
+                        (rs, rowNum) -> mapProfile(rs, rowNum, now, rawLangIds, rawEthIds)));
         if (results.isEmpty()) return null;
 
+        enrichWithCatalogData(results, rawLangIds, rawEthIds);
         enrichWithPhotos(results);
         enrichWithPrompts(results, ctx.preferredLanguage());
         return results.get(0);
     }
 
     private MapSqlParameterSource buildCoreParams(UUID actorId, ActorContext ctx,
-                                                   String locationFilter, String residencyParam,
-                                                   int limit, int offset) {
+                                                   String residencyParam,
+                                                   int limit, FetchCursor cursor,
+                                                   boolean skipDistance) {
+        String langPref = buildUuidArrayParam(Arrays.asList(ctx.languagePreferenceIds()));
+        String ethPref  = buildUuidArrayParam(Arrays.asList(ctx.ethnicityPreferenceIds()));
+        boolean noCursor = cursor == null || !cursor.isPresent();
         return new MapSqlParameterSource()
                 .addValue("actorId", actorId)
-                .addValue("locationFilter", locationFilter)
+                .addValue("skipDistance", skipDistance)
                 .addValue("actorCoords", ctx.coordsEwkt())
                 .addValue("targetGender", ctx.interestedInGender())
                 .addValue("minAge", ctx.minAge())
-                .addValue("maxAge", ctx.maxAge())
-                .addValue("maxDistanceKm", ctx.maxDistanceKm())
+                .addValue("maxAge", ctx.maxAge() > 0 ? ctx.maxAge() : 120)
+                .addValue("maxDistanceKm", ctx.maxDistanceKm() > 0 ? ctx.maxDistanceKm() : 500)
                 .addValue("residencyTypes", residencyParam)
                 .addValue("showVerifiedOnly", ctx.showVerifiedOnly())
-                .addValue("openToLongDistance", ctx.openToLongDistance())
+                .addValue("locationMode", ctx.locationMode() != null ? ctx.locationMode() : "nearby")
+                .addValue("langPrefIds", langPref)
+                .addValue("ethPrefIds", ethPref)
+                .addValue("hasChildrenPref", ctx.hasChildrenPreference() != null ? ctx.hasChildrenPreference() : "any")
+                .addValue("wantsChildrenPref", ctx.wantsChildrenPreference() != null ? ctx.wantsChildrenPreference() : "any")
+                .addValue("religionPrefs", buildArrayParam(ctx.religionPreferences() != null ? ctx.religionPreferences() : new String[0]))
+                .addValue("specificCountryCodes", buildArrayParam(ctx.specificCountryCodes() != null ? ctx.specificCountryCodes() : new String[0]))
                 .addValue("limit", limit)
-                .addValue("offset", offset);
+                .addValue("noCursor", noCursor)
+                .addValue("cursorScore", noCursor ? 0.0 : cursor.score())
+                .addValue("cursorUserId", noCursor ? null : cursor.userId().toString());
     }
 
     private void enrichWithPhotos(List<DiscoveryProfileDto> profiles) {
@@ -461,13 +577,15 @@ public class DiscoveryQueryService {
 
     private static final String[] ALL_RESIDENCY_TYPES = {"ETHIOPIA", "ERITREA", "DIASPORA"};
 
-    private static String[] resolveResidencyTypes(String locationFilter, ActorContext ctx) {
-        return switch (locationFilter) {
-            case "ETHIOPIA" -> new String[]{"ETHIOPIA"};
-            case "ERITREA" -> new String[]{"ERITREA"};
-            case "DIASPORA" -> new String[]{"DIASPORA"};
-            case "ANYWHERE" -> ALL_RESIDENCY_TYPES;
-            default -> ctx.preferredResidencyTypes();
+    private static String[] resolveResidencyTypes(ActorContext ctx) {
+        return resolveFromLocationMode(ctx);
+    }
+
+    private static String[] resolveFromLocationMode(ActorContext ctx) {
+        return switch (ctx.locationMode()) {
+            case "diaspora" -> new String[]{"DIASPORA"};
+            case "specific_countries" -> ALL_RESIDENCY_TYPES;
+            default -> ALL_RESIDENCY_TYPES;
         };
     }
 
@@ -485,12 +603,21 @@ public class DiscoveryQueryService {
         return sb.toString();
     }
 
-    private DiscoveryProfileDto mapProfile(ResultSet rs, int rowNum, Instant now) throws SQLException {
+    private DiscoveryProfileDto mapProfile(ResultSet rs, int rowNum, Instant now,
+                                             Map<UUID, UUID[]> rawLangIds,
+                                             Map<UUID, UUID[]> rawEthIds) throws SQLException {
         OffsetDateTime lastActiveAt = rs.getObject("last_active_at", OffsetDateTime.class);
         boolean showActivity = rs.getBoolean("show_activity_status");
         ActivityStatus activityStatus = activityStatusService.resolve(showActivity, lastActiveAt, now);
+        UUID userId = rs.getObject("user_id", UUID.class);
+
+        java.sql.Array langArr = rs.getArray("language_ids");
+        java.sql.Array ethArr  = rs.getArray("ethnicity_ids");
+        if (langArr != null) rawLangIds.put(userId, toUuidArray((Object[]) langArr.getArray()));
+        if (ethArr  != null) rawEthIds.put(userId,  toUuidArray((Object[]) ethArr.getArray()));
+
         return new DiscoveryProfileDto(
-                rs.getObject("user_id", UUID.class),
+                userId,
                 rs.getString("display_name"),
                 rs.getInt("age"),
                 rs.getString("gender"),
@@ -503,7 +630,7 @@ public class DiscoveryQueryService {
                 rs.getBoolean("is_verified"),
                 rs.getString("relationship_intention"),
                 rs.getObject("height_cm") != null ? rs.getInt("height_cm") : null,
-                rs.getString("ethnicity"),
+                Collections.emptyList(),
                 rs.getString("nationality"),
                 rs.getString("religion"),
                 rs.getString("education_level"),
@@ -515,9 +642,38 @@ public class DiscoveryQueryService {
                 rs.getString("drinking"),
                 Collections.emptyList(),
                 Collections.emptyList(),
+                Collections.emptyList(),
                 rs.getBoolean("is_boosted"),
                 rs.getDouble("discovery_score"),
                 activityStatus
         );
+    }
+
+    private void enrichWithCatalogData(List<DiscoveryProfileDto> profiles,
+                                        Map<UUID, UUID[]> rawLangIds,
+                                        Map<UUID, UUID[]> rawEthIds) {
+        Set<UUID> allLangIds = new HashSet<>();
+        Set<UUID> allEthIds  = new HashSet<>();
+        rawLangIds.values().forEach(arr -> Collections.addAll(allLangIds, arr));
+        rawEthIds.values().forEach(arr -> Collections.addAll(allEthIds, arr));
+
+        Map<UUID, LanguageOption>  langMap = catalogService.getLanguagesAsMap(allLangIds);
+        Map<UUID, EthnicityOption> ethMap  = catalogService.getEthnicitiesAsMap(allEthIds);
+
+        for (int i = 0; i < profiles.size(); i++) {
+            DiscoveryProfileDto p = profiles.get(i);
+            UUID uid = p.userId();
+
+            List<LanguageOption> langs = rawLangIds.containsKey(uid)
+                    ? Arrays.stream(rawLangIds.get(uid)).map(langMap::get)
+                             .filter(Objects::nonNull).toList()
+                    : Collections.emptyList();
+            List<EthnicityOption> eths = rawEthIds.containsKey(uid)
+                    ? Arrays.stream(rawEthIds.get(uid)).map(ethMap::get)
+                             .filter(Objects::nonNull).toList()
+                    : Collections.emptyList();
+
+            profiles.set(i, p.withCatalogData(eths, langs));
+        }
     }
 }

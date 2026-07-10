@@ -6,5 +6,5 @@ import jakarta.validation.constraints.NotEmpty;
 import java.util.List;
 
 public record PhotoReorderRequest(
-        @NotEmpty @Valid List<PhotoReorderItem> photos
+        @NotEmpty List<@Valid PhotoReorderItem> photos
 ) {}

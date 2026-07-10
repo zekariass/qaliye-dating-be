@@ -56,7 +56,7 @@ public class RewindService {
         boolean usedCredit = false;
         if (ent.dailyRewindsLimit() != null && limits.rewindsUsed() >= ent.dailyRewindsLimit()) {
             if (ent.rewindCredits() <= 0) {
-                throw new DailyLimitExceededException("DAILY_REWINDS");
+                throw new DailyLimitExceededException("REWINDS");
             }
             usedCredit = true;
         }
@@ -115,7 +115,7 @@ public class RewindService {
     private DiscoveryProfileDto loadRestoredProfile(UUID actorId, UUID targetId,
                                                      DiscoveryQueryService.ActorContext ctx) {
         try {
-            return queryService.fetchSingleProfile(actorId, targetId, ctx, "NEARBY");
+            return queryService.fetchSingleProfile(actorId, targetId, ctx);
         } catch (Exception e) {
             return null;
         }

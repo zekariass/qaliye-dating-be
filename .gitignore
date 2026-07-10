@@ -40,3 +40,6 @@ application-local.yml
 .env.test
 .env.test.local
 .env.test.example
+
+
+notes.tx

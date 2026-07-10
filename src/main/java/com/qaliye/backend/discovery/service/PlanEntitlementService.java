@@ -33,13 +33,13 @@ public class PlanEntitlementService {
                   AND sp.is_active = TRUE
             ),
             free_limits AS (
-                SELECT sp.plan_code, sp.plan_kind, spl.limit_type, spl.limit_value
+                SELECT DISTINCT ON (spl.limit_type)
+                    sp.plan_code, sp.plan_kind, spl.limit_type, spl.limit_value
                 FROM subscription_plans sp
                 JOIN subscription_plan_limits spl ON spl.plan_id = sp.id
                 WHERE sp.plan_kind = 'FREE'
                   AND sp.is_active = TRUE
-                ORDER BY CASE WHEN sp.country_code = :countryCode THEN 0 ELSE 1 END
-                LIMIT 3
+                ORDER BY spl.limit_type, CASE WHEN sp.country_code = :countryCode THEN 0 ELSE 1 END
             ),
             resolved AS (
                 SELECT plan_code, plan_kind, limit_type, limit_value FROM paid_limits
@@ -50,7 +50,7 @@ public class PlanEntitlementService {
             )
             SELECT plan_code, plan_kind, limit_type, limit_value
             FROM resolved
-            WHERE limit_type IN ('DAILY_LIKES', 'DAILY_SUPERLIKES', 'DAILY_REWINDS')
+            WHERE limit_type IN ('LIKES', 'SUPERLIKES', 'REWINDS')
             """;
 
     private static final String GET_USER_COUNTRY_SQL = """
@@ -84,9 +84,9 @@ public class PlanEntitlementService {
             planCode = (String) row.get("plan_code");
             isPaid = "PAID".equals(row.get("plan_kind"));
             switch (limitType) {
-                case "DAILY_LIKES" -> dailyLikesLimit = limitValue;
-                case "DAILY_SUPERLIKES" -> dailySuperLikesLimit = limitValue;
-                case "DAILY_REWINDS" -> dailyRewindsLimit = limitValue;
+                case "LIKES" -> dailyLikesLimit = limitValue;
+                case "SUPERLIKES" -> dailySuperLikesLimit = limitValue;
+                case "REWINDS" -> dailyRewindsLimit = limitValue;
             }
         }
 

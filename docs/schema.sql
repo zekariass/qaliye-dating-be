@@ -114,9 +114,10 @@ CREATE TABLE public.subscription_plan_limits (
     plan_id UUID NOT NULL REFERENCES public.subscription_plans(id) ON DELETE CASCADE,
     limit_type VARCHAR(30) NOT NULL CHECK (
         limit_type IN (
-            'DAILY_LIKES',
-            'DAILY_SUPERLIKES',
-            'DAILY_REWINDS'
+            'LIKES',
+            'SUPERLIKES',
+            'REWINDS',
+            'BOOSTS'
         )
     ),
     limit_value INTEGER CHECK (
@@ -397,6 +398,8 @@ $$;
 CREATE OR REPLACE FUNCTION public.validate_visible_profile_dependencies()
 RETURNS TRIGGER
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth
 AS $$
 DECLARE
     v_user_id UUID;
@@ -917,10 +920,14 @@ CREATE TABLE public.user_reports (
         report_type IN (
             'FAKE_PROFILE',
             'HARASSMENT',
-            'INAPPROPRIATE_PHOTO',
+            'HATE_SPEECH',
+            'INAPPROPRIATE_CONTENT',
             'SCAM',
             'UNDERAGE',
+            'VIOLENCE_OR_THREATS',
+            'PRIVACY_VIOLATION',
             'OFF_PLATFORM_SOLICITATION',
+            'SPAM',
             'AUTO_FLAGGED',
             'OTHER'
         )
@@ -1357,6 +1364,10 @@ CREATE INDEX idx_user_daily_limits_date
 -- Blocks, matches, and messages.
 CREATE UNIQUE INDEX unique_active_block_per_direction
     ON public.user_blocks(blocker_user_id, blocked_user_id)
+    WHERE status = 'ACTIVE';
+
+CREATE INDEX idx_user_blocks_blocker_active_created
+    ON public.user_blocks(blocker_user_id, created_at DESC, id DESC)
     WHERE status = 'ACTIVE';
 
 CREATE INDEX idx_user_blocks_reverse_active
@@ -3302,3 +3313,1789 @@ ALTER TABLE public.notification_devices ENABLE ROW LEVEL SECURITY;
 
 REVOKE ALL ON TABLE public.notification_devices
 FROM anon, authenticated;
+
+
+--======================================================
+
+-- Fix: the deferred constraint trigger function public.validate_visible_profile_dependencies()
+-- runs as the invoker. When Supabase Auth modifies auth.users (or cascading app_users
+-- changes) the invoker is supabase_auth_admin, which lacks SELECT on public.profiles and
+-- the other related tables. Make the function SECURITY DEFINER so it executes with the
+-- privileges of its owner (the role that created the tables), matching the pattern used
+-- for public.handle_new_auth_user().
+
+CREATE OR REPLACE FUNCTION public.validate_visible_profile_dependencies()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+DECLARE
+    v_user_id UUID;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        CASE TG_TABLE_NAME
+            WHEN 'profiles' THEN v_user_id := OLD.user_id;
+            WHEN 'profile_photos' THEN v_user_id := OLD.user_id;
+            WHEN 'discovery_preferences' THEN v_user_id := OLD.user_id;
+            WHEN 'app_users' THEN v_user_id := OLD.id;
+            ELSE
+                RAISE EXCEPTION 'Unsupported table for visible-profile validation: %', TG_TABLE_NAME;
+        END CASE;
+    ELSE
+        CASE TG_TABLE_NAME
+            WHEN 'profiles' THEN v_user_id := NEW.user_id;
+            WHEN 'profile_photos' THEN v_user_id := NEW.user_id;
+            WHEN 'discovery_preferences' THEN v_user_id := NEW.user_id;
+            WHEN 'app_users' THEN v_user_id := NEW.id;
+            ELSE
+                RAISE EXCEPTION 'Unsupported table for visible-profile validation: %', TG_TABLE_NAME;
+        END CASE;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM public.profiles p
+        WHERE p.user_id = v_user_id
+          AND p.is_visible = TRUE
+          AND p.is_onboarded = TRUE
+    ) THEN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM public.app_users au
+            WHERE au.id = v_user_id
+              AND au.status = 'ACTIVE'
+              AND au.address_id IS NOT NULL
+        ) THEN
+            RAISE EXCEPTION
+                'A visible profile requires an active user account with one address.';
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1
+            FROM public.discovery_preferences dp
+            WHERE dp.user_id = v_user_id
+        ) THEN
+            RAISE EXCEPTION
+                'A visible profile requires discovery preferences.';
+        END IF;
+
+        IF NOT EXISTS (
+            SELECT 1
+            FROM public.profile_photos pp
+            WHERE pp.user_id = v_user_id
+              AND pp.deleted_at IS NULL
+              AND pp.is_primary = TRUE
+              AND pp.moderation_status = 'APPROVED'
+        ) THEN
+            RAISE EXCEPTION
+                'A visible profile requires an approved primary photo.';
+        END IF;
+    END IF;
+
+    RETURN NULL;
+END;
+$$;
+
+
+--=================================================
+
+
+-- When a primary photo is approved for an onboarded user whose profile is not
+-- yet visible, automatically make their profile visible so they can enter
+-- discovery without any extra API call.
+--
+-- Gap this closes:
+--   1. User completes onboarding with a PENDING primary photo.
+--      OnboardingService.complete() correctly sets is_onboarded=TRUE but
+--      keeps is_visible=FALSE (photo not yet approved).
+--   2. Admin approves the photo later via the moderation endpoint.
+--   3. Without this trigger is_visible stays FALSE permanently, causing the
+--      discovery service to return ACCOUNT_INELIGIBLE even though the user
+--      has fully satisfied all requirements.
+
+CREATE OR REPLACE FUNCTION public.auto_set_visible_on_primary_photo_approval()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    IF NEW.is_primary       = TRUE
+       AND NEW.moderation_status = 'APPROVED'
+       AND NEW.deleted_at        IS NULL
+       AND (
+           TG_OP = 'INSERT'
+           OR OLD.moderation_status IS DISTINCT FROM 'APPROVED'
+           OR OLD.is_primary        IS DISTINCT FROM TRUE
+       )
+    THEN
+        UPDATE public.profiles
+        SET is_visible  = TRUE,
+            updated_at  = CURRENT_TIMESTAMP
+        WHERE user_id    = NEW.user_id
+          AND is_onboarded = TRUE
+          AND is_visible   = FALSE;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER auto_set_visible_on_primary_photo_approval
+AFTER INSERT OR UPDATE OF moderation_status, is_primary, deleted_at
+ON public.profile_photos
+FOR EACH ROW
+EXECUTE FUNCTION public.auto_set_visible_on_primary_photo_approval();
+
+
+--============================================================
+
+
+
+-- =============================================================================
+-- V15: Language/Ethnicity Catalog, Profile Column Migration,
+--      and Discovery Preferences Extension
+-- =============================================================================
+--
+-- Changes in this migration:
+--
+-- 1. Create public.languages catalog (UUID PK, country-scoped code)
+-- 2. Create public.ethnicities catalog (UUID PK, country-scoped code)
+-- 3. Seed both catalogs with Habesha-first data
+-- 4. Add updated_at triggers on both catalog tables
+-- 5. Add profiles.language_ids (UUID[]), profiles.ethnicity_ids (UUID[]),
+--    profiles.ethnicity_other_text (TEXT)
+-- 6. Migrate existing profiles.ethnicity (VARCHAR) → ethnicity_ids
+-- 7. Migrate existing profiles.languages (TEXT[])  → language_ids
+--    Unmapped text values are silently dropped (reported via comment below).
+-- 8. Drop obsolete profiles.ethnicity and profiles.languages columns
+-- 9. Add GIN indexes on new UUID array columns in profiles
+-- 10.Extend discovery_preferences with:
+--      location_mode, specific_country_codes, expand_search_when_limited,
+--      has_children_preference, wants_children_preference, religion_preferences,
+--      language_preference_ids, ethnicity_preference_ids, preferences_version
+-- 11.Make discovery_preferences.max_age and max_distance_km nullable
+--
+-- Legacy-data migration notes:
+--   profiles.ethnicity values mapped to catalog codes (country_code = ET):
+--     AMHARA   → amhara   | OROMO    → oromo    | TIGRINYA → tigrayan
+--     SOMALI   → somali   | SIDAMA   → sidama   | GURAGE   → gurage
+--     WOLAYTA  → wolayta  | AFAR     → afar     | HADIYA   → hadiya
+--     GAMO     → gamo     | OTHER    → unmapped  (ethnicity_other_text stays null)
+--   profiles.languages text values mapped (case-insensitive, country_code = ET):
+--     amharic / amhara → am | english          → en
+--     oromo / afaan oromo → om | tigrinya / tigriniya → ti
+--     somali → so | arabic → ar
+--   Any text value not matching the above is silently dropped.
+-- =============================================================================
+
+
+-- =============================================================================
+-- 1. LANGUAGES CATALOG
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS public.languages (
+    id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    code         TEXT        NOT NULL,
+    country_code CHAR(2)     NOT NULL,
+    name         TEXT        NOT NULL,
+    native_name  TEXT,
+    is_active    BOOLEAN     NOT NULL DEFAULT TRUE,
+    sort_order   INTEGER     NOT NULL DEFAULT 0,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT languages_code_country_unique UNIQUE (code, country_code),
+    CONSTRAINT languages_code_lowercase_check
+        CHECK (code = lower(code)),
+    CONSTRAINT languages_country_code_uppercase_check
+        CHECK (country_code = upper(country_code))
+);
+
+CREATE OR REPLACE FUNCTION public.set_languages_updated_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN NEW.updated_at = NOW(); RETURN NEW; END; $$;
+
+CREATE TRIGGER set_languages_updated_at
+BEFORE UPDATE ON public.languages
+FOR EACH ROW EXECUTE FUNCTION public.set_languages_updated_at();
+
+CREATE INDEX IF NOT EXISTS languages_active_country_sort_idx
+    ON public.languages (is_active, country_code, sort_order, name);
+
+CREATE INDEX IF NOT EXISTS languages_code_idx
+    ON public.languages (code);
+
+
+-- =============================================================================
+-- 2. ETHNICITIES CATALOG
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS public.ethnicities (
+    id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    code         TEXT        NOT NULL,
+    country_code CHAR(2)     NOT NULL,
+    name         TEXT        NOT NULL,
+    region       TEXT,
+    is_active    BOOLEAN     NOT NULL DEFAULT TRUE,
+    sort_order   INTEGER     NOT NULL DEFAULT 0,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT ethnicities_code_country_unique UNIQUE (code, country_code),
+    CONSTRAINT ethnicities_code_lowercase_check
+        CHECK (code = lower(code)),
+    CONSTRAINT ethnicities_country_code_uppercase_check
+        CHECK (country_code = upper(country_code))
+);
+
+CREATE OR REPLACE FUNCTION public.set_ethnicities_updated_at()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN NEW.updated_at = NOW(); RETURN NEW; END; $$;
+
+CREATE TRIGGER set_ethnicities_updated_at
+BEFORE UPDATE ON public.ethnicities
+FOR EACH ROW EXECUTE FUNCTION public.set_ethnicities_updated_at();
+
+CREATE INDEX IF NOT EXISTS ethnicities_active_country_sort_idx
+    ON public.ethnicities (is_active, country_code, sort_order, name);
+
+CREATE INDEX IF NOT EXISTS ethnicities_code_idx
+    ON public.ethnicities (code);
+
+
+-- =============================================================================
+-- 3. SEED: LANGUAGES (Habesha-first)
+-- =============================================================================
+
+INSERT INTO public.languages (code, country_code, name, native_name, sort_order) VALUES
+    -- Amharic
+    ('am', 'ET', 'Amharic',        'አማርኛ',     1),
+    ('am', 'ER', 'Amharic',        'አማርኛ',     2),
+    ('am', 'GB', 'Amharic',        'አማርኛ',     3),
+    ('am', 'US', 'Amharic',        'አማርኛ',     4),
+    -- Afaan Oromo
+    ('om', 'ET', 'Afaan Oromo',    'Afaan Oromoo', 5),
+    ('om', 'KE', 'Afaan Oromo',    'Afaan Oromoo', 6),
+    -- Tigrinya
+    ('ti', 'ET', 'Tigrinya',       'ትግርኛ',     7),
+    ('ti', 'ER', 'Tigrinya',       'ትግርኛ',     8),
+    -- Somali
+    ('so', 'ET', 'Somali',         'Soomaali',  9),
+    ('so', 'SO', 'Somali',         'Soomaali',  10),
+    ('so', 'KE', 'Somali',         'Soomaali',  11),
+    ('so', 'GB', 'Somali',         'Soomaali',  12),
+    ('so', 'US', 'Somali',         'Soomaali',  13),
+    -- Arabic
+    ('ar', 'ET', 'Arabic',         'العربية',   14),
+    ('ar', 'ER', 'Arabic',         'العربية',   15),
+    ('ar', 'SA', 'Arabic',         'العربية',   16),
+    ('ar', 'AE', 'Arabic',         'العربية',   17),
+    -- English
+    ('en', 'ET', 'English',        'English',   18),
+    ('en', 'ER', 'English',        'English',   19),
+    ('en', 'GB', 'English',        'English',   20),
+    ('en', 'US', 'English',        'English',   21),
+    ('en', 'CA', 'English',        'English',   22),
+    ('en', 'AU', 'English',        'English',   23),
+    -- Afar
+    ('aa', 'ET', 'Afar',           'Qafaraf',   24),
+    ('aa', 'ER', 'Afar',           'Qafaraf',   25),
+    -- Sidama
+    ('sid','ET', 'Sidama',         'Sidaamu Afoo', 26),
+    -- Wolaytta
+    ('wal','ET', 'Wolaytta',       'Wolaitta',  27),
+    -- Harari
+    ('har','ET', 'Harari',         'ሐረሪ',       28),
+    -- Tigre (Eritrea)
+    ('tgr','ER', 'Tigre',          'ትግረ',       29)
+ON CONFLICT (code, country_code) DO NOTHING;
+
+
+-- =============================================================================
+-- 4. SEED: ETHNICITIES (Habesha-first)
+-- =============================================================================
+
+INSERT INTO public.ethnicities (code, country_code, name, region, sort_order) VALUES
+    -- Ethiopia
+    ('amhara',   'ET', 'Amhara',             'East Africa', 1),
+    ('oromo',    'ET', 'Oromo',              'East Africa', 2),
+    ('tigrayan', 'ET', 'Tigrayan',           'East Africa', 3),
+    ('gurage',   'ET', 'Gurage',             'East Africa', 4),
+    ('afar',     'ET', 'Afar',               'East Africa', 5),
+    ('sidama',   'ET', 'Sidama',             'East Africa', 6),
+    ('somali',   'ET', 'Somali',             'East Africa', 7),
+    ('harari',   'ET', 'Harari',             'East Africa', 8),
+    ('wolayta',  'ET', 'Wolayta',            'East Africa', 9),
+    ('hadiya',   'ET', 'Hadiya',             'East Africa', 10),
+    ('gamo',     'ET', 'Gamo',               'East Africa', 11),
+    -- Eritrea
+    ('tigrinya', 'ER', 'Eritrean Tigrinya',  'East Africa', 12),
+    ('tigre',    'ER', 'Tigre',              'East Africa', 13),
+    ('afar',     'ER', 'Afar',               'East Africa', 14),
+    -- Somalia
+    ('somali',   'SO', 'Somali',             'East Africa', 15),
+    -- Kenya
+    ('somali',   'KE', 'Somali',             'East Africa', 16),
+    ('oromo',    'KE', 'Oromo',              'East Africa', 17)
+ON CONFLICT (code, country_code) DO NOTHING;
+
+
+-- =============================================================================
+-- 5. ADD NEW COLUMNS TO profiles
+-- =============================================================================
+
+-- Flush deferred constraint triggers before DDL on profiles
+SET CONSTRAINTS ALL IMMEDIATE;
+
+ALTER TABLE public.profiles
+    ADD COLUMN IF NOT EXISTS language_ids     UUID[]  NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS ethnicity_ids    UUID[]  NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS ethnicity_other_text TEXT
+        CHECK (ethnicity_other_text IS NULL OR char_length(trim(ethnicity_other_text)) <= 200);
+
+
+-- =============================================================================
+-- 6. MIGRATE: profiles.ethnicity → ethnicity_ids
+-- =============================================================================
+
+UPDATE public.profiles p
+SET ethnicity_ids = ARRAY(
+    SELECT e.id
+    FROM public.ethnicities e
+    WHERE e.country_code = 'ET'
+      AND e.code = CASE upper(p.ethnicity)
+          WHEN 'AMHARA'   THEN 'amhara'
+          WHEN 'OROMO'    THEN 'oromo'
+          WHEN 'TIGRINYA' THEN 'tigrayan'
+          WHEN 'SOMALI'   THEN 'somali'
+          WHEN 'SIDAMA'   THEN 'sidama'
+          WHEN 'GURAGE'   THEN 'gurage'
+          WHEN 'WOLAYTA'  THEN 'wolayta'
+          WHEN 'AFAR'     THEN 'afar'
+          WHEN 'HADIYA'   THEN 'hadiya'
+          WHEN 'GAMO'     THEN 'gamo'
+          ELSE NULL
+      END
+    LIMIT 1
+)
+WHERE p.ethnicity IS NOT NULL
+  AND upper(p.ethnicity) != 'OTHER';
+
+
+-- =============================================================================
+-- 7. MIGRATE: profiles.languages (TEXT[]) → language_ids (UUID[])
+-- =============================================================================
+
+UPDATE public.profiles p
+SET language_ids = (
+    SELECT ARRAY_AGG(DISTINCT l.id ORDER BY l.id)
+    FROM unnest(p.languages) AS raw_lang
+    JOIN public.languages l
+        ON l.country_code = 'ET'
+       AND l.code = CASE lower(trim(raw_lang))
+           WHEN 'amharic'       THEN 'am'
+           WHEN 'amhara'        THEN 'am'
+           WHEN 'english'       THEN 'en'
+           WHEN 'oromo'         THEN 'om'
+           WHEN 'afaan oromo'   THEN 'om'
+           WHEN 'afaan_oromo'   THEN 'om'
+           WHEN 'tigrinya'      THEN 'ti'
+           WHEN 'tigriniya'     THEN 'ti'
+           WHEN 'somali'        THEN 'so'
+           WHEN 'arabic'        THEN 'ar'
+           ELSE NULL
+       END
+    WHERE l.id IS NOT NULL
+)
+WHERE array_length(p.languages, 1) > 0;
+
+-- Ensure no NULLs after the update (profile had languages but none mapped)
+UPDATE public.profiles SET language_ids = '{}' WHERE language_ids IS NULL;
+
+
+-- =============================================================================
+-- 8. DROP OLD COLUMNS
+-- =============================================================================
+
+-- Drop the array-cardinality constraint that references languages column
+ALTER TABLE public.profiles
+    DROP CONSTRAINT IF EXISTS chk_profiles_lifestyle_array_limits;
+
+-- Re-add constraint for interests only
+ALTER TABLE public.profiles
+    ADD CONSTRAINT chk_profiles_lifestyle_array_limits CHECK (
+        interests IS NULL OR cardinality(interests) <= 20
+    );
+
+-- Drop old columns
+ALTER TABLE public.profiles
+    DROP COLUMN IF EXISTS ethnicity,
+    DROP COLUMN IF EXISTS languages;
+
+-- Add cardinality constraints for the new UUID array columns
+ALTER TABLE public.profiles
+    ADD CONSTRAINT chk_profiles_language_ids_limit
+        CHECK (cardinality(language_ids) <= 20),
+    ADD CONSTRAINT chk_profiles_ethnicity_ids_limit
+        CHECK (cardinality(ethnicity_ids) <= 10);
+
+
+-- =============================================================================
+-- 9. GIN INDEXES ON NEW PROFILE ARRAYS
+-- =============================================================================
+
+CREATE INDEX IF NOT EXISTS profiles_language_ids_gin_idx
+    ON public.profiles USING GIN (language_ids);
+
+CREATE INDEX IF NOT EXISTS profiles_ethnicity_ids_gin_idx
+    ON public.profiles USING GIN (ethnicity_ids);
+
+
+-- =============================================================================
+-- 10. EXTEND discovery_preferences
+-- =============================================================================
+
+-- Make max_age and max_distance_km nullable
+ALTER TABLE public.discovery_preferences
+    DROP CONSTRAINT IF EXISTS check_discovery_age_range,
+    DROP CONSTRAINT IF EXISTS discovery_preferences_max_age_check,
+    DROP CONSTRAINT IF EXISTS discovery_preferences_max_distance_km_check;
+
+ALTER TABLE public.discovery_preferences
+    ALTER COLUMN max_age          DROP NOT NULL,
+    ALTER COLUMN max_distance_km  DROP NOT NULL;
+
+ALTER TABLE public.discovery_preferences
+    ADD CONSTRAINT check_discovery_age_range
+        CHECK (max_age IS NULL OR min_age <= max_age),
+    ADD CONSTRAINT discovery_preferences_max_age_check
+        CHECK (max_age IS NULL OR max_age <= 120),
+    ADD CONSTRAINT discovery_preferences_max_distance_km_check
+        CHECK (max_distance_km IS NULL OR max_distance_km > 0);
+
+-- New columns
+ALTER TABLE public.discovery_preferences
+    ADD COLUMN IF NOT EXISTS location_mode
+        TEXT NOT NULL DEFAULT 'anywhere'
+        CHECK (location_mode IN ('nearby', 'diaspora', 'specific_countries', 'anywhere')),
+    ADD COLUMN IF NOT EXISTS specific_country_codes  TEXT[],
+    ADD COLUMN IF NOT EXISTS expand_search_when_limited
+        BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS has_children_preference
+        TEXT NOT NULL DEFAULT 'any'
+        CHECK (has_children_preference IN ('any', 'yes', 'no')),
+    ADD COLUMN IF NOT EXISTS wants_children_preference
+        TEXT NOT NULL DEFAULT 'any'
+        CHECK (wants_children_preference IN ('any', 'yes', 'no', 'not_sure', 'open_to_discussion')),
+    ADD COLUMN IF NOT EXISTS religion_preferences    TEXT[],
+    ADD COLUMN IF NOT EXISTS language_preference_ids UUID[]  NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS ethnicity_preference_ids UUID[] NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS preferences_version     INTEGER NOT NULL DEFAULT 1;
+
+-- Migrate existing location intent from preferred_residency_types → location_mode
+UPDATE public.discovery_preferences
+SET location_mode = CASE
+    WHEN preferred_residency_types @> ARRAY['DIASPORA']::TEXT[]
+         AND NOT (preferred_residency_types @> ARRAY['ETHIOPIA']::TEXT[])
+         AND NOT (preferred_residency_types @> ARRAY['ERITREA']::TEXT[])
+        THEN 'diaspora'
+    ELSE 'anywhere'
+END;
+
+
+
+--=================================================
+
+
+-- =============================================================================
+-- V16: Remove open_to_long_distance and open_to_relocation from
+--      discovery_preferences. These fields are superseded by location_mode.
+-- =============================================================================
+
+ALTER TABLE public.discovery_preferences
+    DROP COLUMN IF EXISTS open_to_long_distance,
+    DROP COLUMN IF EXISTS open_to_relocation;
+
+
+
+--==============================================
+
+
+
+-- Fix constraint
+ALTER TABLE public.user_discovery_actions
+    DROP CONSTRAINT IF EXISTS user_discovery_actions_reversed_reason_check;
+
+ALTER TABLE public.user_discovery_actions
+    ADD CONSTRAINT user_discovery_actions_reversed_reason_check CHECK (
+        reversed_reason IN ('USER_REWIND', 'SYSTEM', 'ADMIN', 'REVISIT_PASSES', 'BLOCK')
+    );
+
+-- Performance index
+CREATE INDEX IF NOT EXISTS idx_discovery_actions_actor_pass_active
+    ON public.user_discovery_actions(actor_user_id, created_at DESC)
+    WHERE action_type = 'PASS' AND status = 'ACTIVE';
+
+
+--=========================================================
+
+-- =============================================================================
+-- V19: Allow BLOCK as a reversed_reason for user_discovery_actions.
+-- Needed so blocking a user can reverse the caller's active LIKE/SUPERLIKE
+-- actions on that target, letting the caller rediscover them after unblocking.
+-- =============================================================================
+
+ALTER TABLE public.user_discovery_actions
+    DROP CONSTRAINT IF EXISTS user_discovery_actions_reversed_reason_check;
+
+ALTER TABLE public.user_discovery_actions
+    ADD CONSTRAINT user_discovery_actions_reversed_reason_check CHECK (
+        reversed_reason IN ('USER_REWIND', 'SYSTEM', 'ADMIN', 'REVISIT_PASSES', 'BLOCK')
+    );
+
+
+
+--======================================================
+
+
+-- =============================================================================
+-- V20: Payment, Subscription, Entitlement, Quota, and Boost System
+--
+-- Implements the full billing architecture from payment-entitlement-design-new.md.
+-- Existing tables (subscription_plans, user_subscriptions, transactions,
+-- payment_events, user_entitlement_ledger, active_boosts, user_daily_limits)
+-- are preserved. New tables are added alongside them. Existing tables are
+-- altered only with additive, non-destructive changes.
+-- =============================================================================
+
+-- Required for EXCLUDE USING GIST on UUID + tstzrange
+CREATE EXTENSION IF NOT EXISTS "btree_gist";
+
+-- =============================================================================
+-- 1. NEW SUBSCRIPTION PRODUCTS TABLE
+-- Separates billing periods from plans. subscription_plans is preserved as-is;
+-- new code uses subscription_products + payment_offers for pricing/durations.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS public.subscription_products (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    plan_id UUID NOT NULL REFERENCES public.subscription_plans(id) ON DELETE RESTRICT,
+    product_code VARCHAR(100) NOT NULL,
+    billing_interval_unit VARCHAR(20) NOT NULL CHECK (
+        billing_interval_unit IN ('DAY', 'WEEK', 'MONTH', 'YEAR')
+    ),
+    billing_interval_count SMALLINT NOT NULL CHECK (billing_interval_count > 0),
+    auto_renew_supported BOOLEAN NOT NULL DEFAULT TRUE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT unique_subscription_product_code UNIQUE (product_code)
+);
+
+-- =============================================================================
+-- 2. CONSUMABLE PRODUCTS TABLE
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS public.consumable_products (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    product_code VARCHAR(100) NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    entitlement_type VARCHAR(30) NOT NULL CHECK (
+        entitlement_type IN ('BOOST_CREDIT', 'SUPERLIKE_CREDIT', 'REWIND_CREDIT')
+    ),
+    quantity_granted INTEGER NOT NULL CHECK (quantity_granted > 0),
+    expires_after_days INTEGER CHECK (expires_after_days IS NULL OR expires_after_days > 0),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT unique_consumable_product_code UNIQUE (product_code)
+);
+
+-- =============================================================================
+-- 3. PAYMENT OFFERS TABLE
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS public.payment_offers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    subscription_product_id UUID REFERENCES public.subscription_products(id) ON DELETE SET NULL,
+    consumable_product_id UUID REFERENCES public.consumable_products(id) ON DELETE SET NULL,
+    country_code VARCHAR(10) NOT NULL DEFAULT 'GLOBAL',
+    platform VARCHAR(20) NOT NULL CHECK (
+        platform IN ('ANDROID', 'IOS', 'WEB')
+    ),
+    payment_channel VARCHAR(50) NOT NULL CHECK (
+        payment_channel IN (
+            'REVENUECAT_APPLE', 'REVENUECAT_GOOGLE',
+            'CHAPA', 'MANUAL_TRANSFER', 'DIRECT_TELEBIRR'
+        )
+    ),
+    payment_method VARCHAR(50) NOT NULL CHECK (
+        payment_method IN (
+            'APPLE_IAP', 'GOOGLE_PLAY_BILLING',
+            'TELEBIRR', 'CBE_BIRR', 'BANK_TRANSFER', 'CARD'
+        )
+    ),
+    currency VARCHAR(3) NOT NULL,
+    price_minor_units INTEGER NOT NULL CHECK (price_minor_units >= 0),
+    external_product_id VARCHAR(255),
+    external_base_plan_id VARCHAR(255),
+    revenuecat_offering_id VARCHAR(100),
+    revenuecat_package_id VARCHAR(100),
+    auto_renew BOOLEAN NOT NULL DEFAULT FALSE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT check_offer_has_exactly_one_product CHECK (
+        (subscription_product_id IS NOT NULL AND consumable_product_id IS NULL)
+        OR
+        (subscription_product_id IS NULL AND consumable_product_id IS NOT NULL)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_offers_country_platform_active
+    ON public.payment_offers(country_code, platform)
+    WHERE is_active = TRUE;
+
+-- =============================================================================
+-- 4. BILLING CUSTOMERS TABLE (RevenueCat mapping)
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS public.billing_customers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.app_users(id) ON DELETE RESTRICT,
+    provider VARCHAR(50) NOT NULL,
+    external_customer_id VARCHAR(255) NOT NULL,
+    original_external_customer_id VARCHAR(255),
+    metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT unique_billing_customer_provider_external UNIQUE (provider, external_customer_id),
+    CONSTRAINT unique_billing_customer_user_provider UNIQUE (user_id, provider)
+);
+
+-- =============================================================================
+-- 5. PAYMENT ORDERS TABLE
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS public.payment_orders (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.app_users(id) ON DELETE RESTRICT,
+    payment_offer_id UUID NOT NULL REFERENCES public.payment_offers(id) ON DELETE RESTRICT,
+    order_reference VARCHAR(100) NOT NULL,
+    status VARCHAR(40) NOT NULL DEFAULT 'CREATED' CHECK (
+        status IN (
+            'CREATED', 'AWAITING_PAYMENT', 'RECEIPT_SUBMITTED',
+            'VERIFICATION_PENDING', 'MANUAL_REVIEW',
+            'VERIFIED', 'REJECTED', 'EXPIRED', 'CANCELLED'
+        )
+    ),
+    expected_amount_minor_units INTEGER NOT NULL CHECK (expected_amount_minor_units > 0),
+    expected_currency VARCHAR(3) NOT NULL,
+    payment_channel VARCHAR(50) NOT NULL,
+    payment_method VARCHAR(50) NOT NULL,
+    payment_instruction_snapshot JSONB NOT NULL DEFAULT '{}'::JSONB,
+    provider_checkout_url TEXT,
+    provider_order_reference VARCHAR(255),
+    expires_at TIMESTAMPTZ NOT NULL,
+    idempotency_key VARCHAR(255),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT unique_payment_order_reference UNIQUE (order_reference)
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_orders_user_status
+    ON public.payment_orders(user_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_payment_orders_status_created
+    ON public.payment_orders(status, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_orders_idempotency
+    ON public.payment_orders(user_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
+-- =============================================================================
+-- 6. PAYMENT PROOFS TABLE
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS public.payment_proofs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    payment_order_id UUID NOT NULL REFERENCES public.payment_orders(id) ON DELETE RESTRICT,
+    proof_type VARCHAR(30) NOT NULL CHECK (
+        proof_type IN ('TRANSACTION_REFERENCE', 'RECEIPT_UPLOAD')
+    ),
+    payment_network VARCHAR(50),
+    transaction_reference VARCHAR(255),
+    receipt_storage_bucket VARCHAR(100),
+    receipt_storage_path TEXT,
+    submitted_amount_minor_units INTEGER,
+    submitted_currency VARCHAR(3),
+    submitted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_proofs_order
+    ON public.payment_proofs(payment_order_id);
+
+-- =============================================================================
+-- 7. PAYMENT VERIFICATION ATTEMPTS TABLE
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS public.payment_verification_attempts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    payment_order_id UUID NOT NULL REFERENCES public.payment_orders(id) ON DELETE RESTRICT,
+    payment_proof_id UUID REFERENCES public.payment_proofs(id) ON DELETE SET NULL,
+    verification_method VARCHAR(50) NOT NULL CHECK (
+        verification_method IN ('CHAPA_API', 'VERIFY_ET', 'ADMIN_REVIEW')
+    ),
+    provider_request_id VARCHAR(255),
+    provider_verification_reference VARCHAR(255),
+    status VARCHAR(30) NOT NULL DEFAULT 'PENDING' CHECK (
+        status IN (
+            'PENDING', 'VERIFIED', 'NOT_FOUND',
+            'AMOUNT_MISMATCH', 'RECIPIENT_MISMATCH',
+            'DUPLICATE_PAYMENT', 'MANUAL_REVIEW', 'REJECTED', 'FAILED'
+        )
+    ),
+    verified_amount_minor_units INTEGER,
+    verified_currency VARCHAR(3),
+    verified_recipient_reference VARCHAR(255),
+    verified_paid_at TIMESTAMPTZ,
+    raw_response JSONB NOT NULL DEFAULT '{}'::JSONB,
+    verified_by_admin_id UUID REFERENCES public.app_users(id) ON DELETE SET NULL,
+    admin_decision_note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_verification_order
+    ON public.payment_verification_attempts(payment_order_id);
+
+-- Prevent re-use of a verified transfer reference
+CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_verified_provider_reference
+    ON public.payment_verification_attempts(verification_method, provider_verification_reference)
+    WHERE status = 'VERIFIED' AND provider_verification_reference IS NOT NULL;
+
+-- =============================================================================
+-- 8. ALTER user_subscriptions: add new columns for design-doc compatibility
+-- =============================================================================
+
+ALTER TABLE public.user_subscriptions
+    ADD COLUMN IF NOT EXISTS payment_offer_id UUID REFERENCES public.payment_offers(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS provider_subscription_reference VARCHAR(512),
+    ADD COLUMN IF NOT EXISTS auto_renew BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ;
+
+-- Add new statuses to user_subscriptions (drop old check and re-add expanded)
+ALTER TABLE public.user_subscriptions
+    DROP CONSTRAINT IF EXISTS user_subscriptions_status_check;
+
+ALTER TABLE public.user_subscriptions
+    ADD CONSTRAINT user_subscriptions_status_check CHECK (
+        status IN (
+            'ACTIVE', 'PAST_DUE', 'CANCELED', 'UNPAID',
+            'PENDING_VERIFICATION', 'GRACE_PERIOD', 'EXPIRED', 'REVOKED'
+        )
+    );
+
+-- =============================================================================
+-- 9. ALTER transactions: add new columns for design-doc compatibility
+-- =============================================================================
+
+ALTER TABLE public.transactions
+    ADD COLUMN IF NOT EXISTS payment_order_id UUID REFERENCES public.payment_orders(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS payment_offer_id UUID REFERENCES public.payment_offers(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS related_transaction_id UUID REFERENCES public.transactions(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS transaction_type VARCHAR(30) DEFAULT 'PURCHASE',
+    ADD COLUMN IF NOT EXISTS verification_provider VARCHAR(50),
+    ADD COLUMN IF NOT EXISTS country_code VARCHAR(10),
+    ADD COLUMN IF NOT EXISTS tax_amount_minor_units INTEGER,
+    ADD COLUMN IF NOT EXISTS provider_fee_minor_units INTEGER,
+    ADD COLUMN IF NOT EXISTS merchant_net_amount_minor_units INTEGER;
+
+-- Expand transaction status constraint
+ALTER TABLE public.transactions
+    DROP CONSTRAINT IF EXISTS transactions_status_check;
+
+ALTER TABLE public.transactions
+    ADD CONSTRAINT transactions_status_check CHECK (
+        status IN (
+            'PENDING', 'COMPLETED', 'FAILED', 'MANUAL_REVIEW',
+            'REFUNDED', 'PARTIALLY_REFUNDED', 'REVERSED'
+        )
+    );
+
+-- Expand payment_purpose constraint
+ALTER TABLE public.transactions
+    DROP CONSTRAINT IF EXISTS transactions_payment_purpose_check;
+
+ALTER TABLE public.transactions
+    ADD CONSTRAINT transactions_payment_purpose_check CHECK (
+        payment_purpose IN ('SUBSCRIPTION', 'CONSUMABLE_PACK', 'PROFILE_BOOST', 'CONSUMABLE')
+    );
+
+-- Expand provider constraint
+ALTER TABLE public.transactions
+    DROP CONSTRAINT IF EXISTS transactions_provider_check;
+
+ALTER TABLE public.transactions
+    ADD CONSTRAINT transactions_provider_check CHECK (
+        provider IN (
+            'STRIPE', 'APPLE_APP_STORE', 'GOOGLE_PLAY',
+            'TELEBIRR', 'CBE_BIRR', 'CHAPA', 'BANK_TRANSFER',
+            'REVENUECAT', 'ADMIN'
+        )
+    );
+
+-- =============================================================================
+-- 10. ALTER payment_events: add new columns
+-- =============================================================================
+
+ALTER TABLE public.payment_events
+    ADD COLUMN IF NOT EXISTS transaction_id UUID REFERENCES public.transactions(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS payment_order_id UUID REFERENCES public.payment_orders(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS processing_status VARCHAR(30) NOT NULL DEFAULT 'PROCESSED',
+    ADD COLUMN IF NOT EXISTS signature_verified_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS processed_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS processing_error TEXT;
+
+-- Expand provider constraint on payment_events
+ALTER TABLE public.payment_events
+    DROP CONSTRAINT IF EXISTS payment_events_provider_check;
+
+ALTER TABLE public.payment_events
+    ADD CONSTRAINT payment_events_provider_check CHECK (
+        provider IN (
+            'STRIPE', 'REVENUECAT', 'APPLE_APP_STORE', 'GOOGLE_PLAY',
+            'TELEBIRR', 'CBE_BIRR', 'CHAPA', 'BANK_TRANSFER', 'VERIFY_ET'
+        )
+    );
+
+-- =============================================================================
+-- 11. ALTER user_entitlement_ledger: add new columns
+-- =============================================================================
+
+ALTER TABLE public.user_entitlement_ledger
+    ADD COLUMN IF NOT EXISTS subscription_id UUID REFERENCES public.user_subscriptions(id) ON DELETE SET NULL;
+
+-- Expand reason constraint
+ALTER TABLE public.user_entitlement_ledger
+    DROP CONSTRAINT IF EXISTS user_entitlement_ledger_reason_check;
+
+ALTER TABLE public.user_entitlement_ledger
+    ADD CONSTRAINT user_entitlement_ledger_reason_check CHECK (
+        reason IN (
+            'PURCHASE', 'SUBSCRIPTION_ALLOWANCE', 'CONSUMPTION',
+            'REFUND', 'EXPIRY', 'ADMIN_GRANT', 'ADJUSTMENT', 'REVERSAL'
+        )
+    );
+
+-- Change idempotency_key from UUID to VARCHAR for flexible keys
+ALTER TABLE public.user_entitlement_ledger
+    ALTER COLUMN idempotency_key TYPE VARCHAR(255) USING idempotency_key::VARCHAR;
+
+-- =============================================================================
+-- 12. USER ENTITLEMENT CREDIT LOTS TABLE
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS public.user_entitlement_credit_lots (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.app_users(id) ON DELETE RESTRICT,
+    entitlement_type VARCHAR(30) NOT NULL CHECK (
+        entitlement_type IN ('BOOST_CREDIT', 'SUPERLIKE_CREDIT', 'REWIND_CREDIT')
+    ),
+    source_ledger_entry_id UUID NOT NULL REFERENCES public.user_entitlement_ledger(id) ON DELETE RESTRICT,
+    quantity_granted INTEGER NOT NULL CHECK (quantity_granted > 0),
+    quantity_remaining INTEGER NOT NULL CHECK (quantity_remaining >= 0),
+    expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT check_remaining_not_exceed_granted CHECK (quantity_remaining <= quantity_granted),
+    CONSTRAINT unique_credit_lot_source UNIQUE (source_ledger_entry_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_credit_lots_user_type_remaining
+    ON public.user_entitlement_credit_lots(user_id, entitlement_type, expires_at)
+    WHERE quantity_remaining > 0;
+
+-- =============================================================================
+-- 13. USER ENTITLEMENT CREDIT CONSUMPTIONS TABLE
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS public.user_entitlement_credit_consumptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    consumption_ledger_entry_id UUID NOT NULL REFERENCES public.user_entitlement_ledger(id) ON DELETE RESTRICT,
+    credit_lot_id UUID NOT NULL REFERENCES public.user_entitlement_credit_lots(id) ON DELETE RESTRICT,
+    quantity_consumed INTEGER NOT NULL CHECK (quantity_consumed > 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_credit_consumptions_lot
+    ON public.user_entitlement_credit_consumptions(credit_lot_id);
+
+-- =============================================================================
+-- 14. ALTER active_boosts: add new columns for design-doc compatibility
+-- =============================================================================
+
+ALTER TABLE public.active_boosts
+    ADD COLUMN IF NOT EXISTS consumption_ledger_entry_id UUID
+        REFERENCES public.user_entitlement_ledger(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    ADD COLUMN IF NOT EXISTS ended_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS end_reason VARCHAR(30);
+
+ALTER TABLE public.active_boosts
+    DROP CONSTRAINT IF EXISTS active_boosts_status_check;
+
+ALTER TABLE public.active_boosts
+    ADD CONSTRAINT active_boosts_status_check CHECK (
+        status IN ('ACTIVE', 'EXPIRED', 'CANCELLED', 'REVOKED')
+    );
+
+-- =============================================================================
+-- 15. USER QUOTA USAGE TABLE (new design-doc table, coexists with user_daily_limits)
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS public.user_quota_usage (
+    user_id UUID NOT NULL REFERENCES public.app_users(id) ON DELETE RESTRICT,
+    plan_id UUID NOT NULL REFERENCES public.subscription_plans(id) ON DELETE RESTRICT,
+    resource_type VARCHAR(30) NOT NULL CHECK (
+        resource_type IN ('LIKES', 'SUPERLIKES', 'REWINDS', 'BOOSTS')
+    ),
+    period_start TIMESTAMPTZ NOT NULL,
+    period_end TIMESTAMPTZ NOT NULL,
+    used_count INTEGER NOT NULL DEFAULT 0 CHECK (used_count >= 0),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (user_id, resource_type, period_start)
+);
+
+-- =============================================================================
+-- 16. EXPAND subscription_plan_limits to support new resource/period types
+-- =============================================================================
+
+ALTER TABLE public.subscription_plan_limits
+    DROP CONSTRAINT IF EXISTS subscription_plan_limits_limit_type_check;
+
+ALTER TABLE public.subscription_plan_limits
+    ADD CONSTRAINT subscription_plan_limits_limit_type_check CHECK (
+        limit_type IN (
+            'LIKES', 'SUPERLIKES', 'REWINDS', 'BOOSTS'
+        )
+    );
+
+-- Add period_type column (nullable for backwards compat with existing rows)
+ALTER TABLE public.subscription_plan_limits
+    ADD COLUMN IF NOT EXISTS period_type VARCHAR(30) DEFAULT 'DAILY';
+
+ALTER TABLE public.subscription_plan_limits
+    DROP CONSTRAINT IF EXISTS subscription_plan_limits_period_type_check;
+
+ALTER TABLE public.subscription_plan_limits
+    ADD CONSTRAINT subscription_plan_limits_period_type_check CHECK (
+        period_type IN (
+            'DAILY',
+            'SUBSCRIPTION_MONTH',
+            'BILLING_CYCLE'
+        )
+    );
+
+-- =============================================================================
+-- 17. SEED DATA
+-- =============================================================================
+
+-- Ensure FREE and PREMIUM plans exist with plan_kind
+-- (subscription_plans already exists with price/billing data; new code ignores those)
+INSERT INTO public.subscription_plans (id, name, plan_code, country_code, plan_kind, price_minor_units, currency, billing_interval, features, is_active)
+VALUES
+    ('a0000000-0000-0000-0000-000000000001', 'Free', 'FREE', 'GLOBAL', 'FREE', 0, 'USD', 'NONE',
+     '{"seeWhoLikedYou": false, "advancedFilters": false, "incognitoMode": false}'::jsonb, TRUE),
+    ('a0000000-0000-0000-0000-000000000002', 'Premium', 'PREMIUM', 'GLOBAL', 'PAID', 0, 'USD', 'MONTHLY',
+     '{"seeWhoLikedYou": true, "advancedFilters": true, "incognitoMode": false}'::jsonb, TRUE)
+ON CONFLICT (plan_code, country_code) DO UPDATE
+    SET features = EXCLUDED.features,
+        name = EXCLUDED.name,
+        updated_at = CURRENT_TIMESTAMP;
+
+-- Subscription products
+INSERT INTO public.subscription_products (id, plan_id, product_code, billing_interval_unit, billing_interval_count, auto_renew_supported, is_active)
+VALUES
+    ('b0000000-0000-0000-0000-000000000001',
+     (SELECT id FROM subscription_plans WHERE plan_code = 'PREMIUM' AND country_code = 'GLOBAL' LIMIT 1),
+     'PREMIUM_MONTHLY', 'MONTH', 1, TRUE, TRUE),
+    ('b0000000-0000-0000-0000-000000000002',
+     (SELECT id FROM subscription_plans WHERE plan_code = 'PREMIUM' AND country_code = 'GLOBAL' LIMIT 1),
+     'PREMIUM_3_MONTH', 'MONTH', 3, TRUE, TRUE),
+    ('b0000000-0000-0000-0000-000000000003',
+     (SELECT id FROM subscription_plans WHERE plan_code = 'PREMIUM' AND country_code = 'GLOBAL' LIMIT 1),
+     'PREMIUM_6_MONTH', 'MONTH', 6, TRUE, TRUE)
+ON CONFLICT (product_code) DO NOTHING;
+
+-- Consumable products
+-- Rename the earlier rewind seed when this script is re-run against a development database.
+UPDATE public.consumable_products
+SET product_code = 'REWIND_PACK_10',
+    name = '10 Rewinds',
+    quantity_granted = 10,
+    updated_at = CURRENT_TIMESTAMP
+WHERE product_code = 'REWIND_PACK_5'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM public.consumable_products
+      WHERE product_code = 'REWIND_PACK_10'
+  );
+
+INSERT INTO public.consumable_products (id, product_code, name, entitlement_type, quantity_granted, expires_after_days, is_active)
+VALUES
+    ('c0000000-0000-0000-0000-000000000001', 'BOOST_PACK_1', '1 Boost', 'BOOST_CREDIT', 1, NULL, TRUE),
+    ('c0000000-0000-0000-0000-000000000002', 'BOOST_PACK_5', '5 Boosts', 'BOOST_CREDIT', 5, NULL, TRUE),
+    ('c0000000-0000-0000-0000-000000000003', 'SUPERLIKE_PACK_5', '5 Super Likes', 'SUPERLIKE_CREDIT', 5, NULL, TRUE),
+    ('c0000000-0000-0000-0000-000000000004', 'SUPERLIKE_PACK_20', '20 Super Likes', 'SUPERLIKE_CREDIT', 20, NULL, TRUE),
+    ('c0000000-0000-0000-0000-000000000005', 'REWIND_PACK_10', '10 Rewinds', 'REWIND_CREDIT', 10, NULL, TRUE)
+ON CONFLICT (product_code) DO UPDATE
+SET name = EXCLUDED.name,
+    entitlement_type = EXCLUDED.entitlement_type,
+    quantity_granted = EXCLUDED.quantity_granted,
+    expires_after_days = EXCLUDED.expires_after_days,
+    is_active = EXCLUDED.is_active,
+    updated_at = CURRENT_TIMESTAMP;
+
+-- Plan limits for new resource types (coexist with existing DAILY_* rows)
+INSERT INTO public.subscription_plan_limits (plan_id, limit_type, limit_value, period_type)
+SELECT sp.id, lt.limit_type, lt.limit_value, lt.period_type
+FROM (SELECT id FROM subscription_plans WHERE plan_code = 'FREE' AND country_code = 'GLOBAL' LIMIT 1) sp
+CROSS JOIN (VALUES
+    ('LIKES', 50, 'DAILY'),
+    ('SUPERLIKES', 1, 'DAILY'),
+    ('REWINDS', 1, 'DAILY'),
+    ('BOOSTS', 0, 'SUBSCRIPTION_MONTH')
+) AS lt(limit_type, limit_value, period_type)
+ON CONFLICT (plan_id, limit_type) DO NOTHING;
+
+INSERT INTO public.subscription_plan_limits (plan_id, limit_type, limit_value, period_type)
+SELECT sp.id, lt.limit_type, lt.limit_value, lt.period_type
+FROM (SELECT id FROM subscription_plans WHERE plan_code = 'PREMIUM' AND country_code = 'GLOBAL' LIMIT 1) sp
+CROSS JOIN (VALUES
+    ('LIKES', 150, 'DAILY'),
+    ('SUPERLIKES', 5, 'DAILY'),
+    ('REWINDS', 10, 'DAILY'),
+    ('BOOSTS', 1, 'SUBSCRIPTION_MONTH')
+) AS lt(limit_type, limit_value, period_type)
+ON CONFLICT (plan_id, limit_type) DO NOTHING;
+
+-- Ethiopia / Android local payment offers. Prices for the added consumable packs are QA seed values.
+INSERT INTO public.payment_offers (
+    id, subscription_product_id, consumable_product_id, country_code, platform,
+    payment_channel, payment_method, currency, price_minor_units, auto_renew, is_active
+)
+VALUES
+    ('d0000000-0000-0000-0000-000000000001', 'b0000000-0000-0000-0000-000000000001', NULL, 'ET', 'ANDROID', 'CHAPA', 'TELEBIRR', 'ETB', 14900, FALSE, TRUE),
+    ('d0000000-0000-0000-0000-000000000002', 'b0000000-0000-0000-0000-000000000002', NULL, 'ET', 'ANDROID', 'CHAPA', 'TELEBIRR', 'ETB', 39900, FALSE, TRUE),
+    ('d0000000-0000-0000-0000-000000000003', 'b0000000-0000-0000-0000-000000000003', NULL, 'ET', 'ANDROID', 'CHAPA', 'TELEBIRR', 'ETB', 69900, FALSE, TRUE),
+    ('d0000000-0000-0000-0000-000000000004', 'b0000000-0000-0000-0000-000000000001', NULL, 'ET', 'ANDROID', 'MANUAL_TRANSFER', 'BANK_TRANSFER', 'ETB', 14900, FALSE, TRUE),
+    ('d0000000-0000-0000-0000-000000000005', NULL, 'c0000000-0000-0000-0000-000000000002', 'ET', 'ANDROID', 'CHAPA', 'TELEBIRR', 'ETB', 9900, FALSE, TRUE),
+    ('d0000000-0000-0000-0000-000000000006', NULL, 'c0000000-0000-0000-0000-000000000001', 'ET', 'ANDROID', 'CHAPA', 'TELEBIRR', 'ETB', 2900, FALSE, TRUE),
+    ('d0000000-0000-0000-0000-000000000007', NULL, 'c0000000-0000-0000-0000-000000000003', 'ET', 'ANDROID', 'CHAPA', 'TELEBIRR', 'ETB', 4900, FALSE, TRUE),
+    ('d0000000-0000-0000-0000-000000000008', NULL, 'c0000000-0000-0000-0000-000000000004', 'ET', 'ANDROID', 'CHAPA', 'TELEBIRR', 'ETB', 14900, FALSE, TRUE),
+    ('d0000000-0000-0000-0000-000000000009', NULL, 'c0000000-0000-0000-0000-000000000005', 'ET', 'ANDROID', 'CHAPA', 'TELEBIRR', 'ETB', 4900, FALSE, TRUE)
+ON CONFLICT (id) DO UPDATE
+SET subscription_product_id = EXCLUDED.subscription_product_id,
+    consumable_product_id = EXCLUDED.consumable_product_id,
+    country_code = EXCLUDED.country_code,
+    platform = EXCLUDED.platform,
+    payment_channel = EXCLUDED.payment_channel,
+    payment_method = EXCLUDED.payment_method,
+    currency = EXCLUDED.currency,
+    price_minor_units = EXCLUDED.price_minor_units,
+    external_product_id = NULL,
+    external_base_plan_id = NULL,
+    revenuecat_offering_id = NULL,
+    revenuecat_package_id = NULL,
+    auto_renew = EXCLUDED.auto_renew,
+    is_active = EXCLUDED.is_active,
+    updated_at = CURRENT_TIMESTAMP;
+
+-- QA/Test Store offers for iOS. Premium products use RevenueCat standard package identifiers.
+INSERT INTO public.payment_offers (
+    id, subscription_product_id, consumable_product_id, country_code, platform,
+    payment_channel, payment_method, currency, price_minor_units,
+    external_product_id, revenuecat_offering_id, revenuecat_package_id,
+    auto_renew, is_active
+)
+VALUES
+    ('d0000000-0000-0000-0000-000000000010', 'b0000000-0000-0000-0000-000000000001', NULL, 'GLOBAL', 'IOS', 'REVENUECAT_APPLE', 'APPLE_IAP', 'USD', 799, 'qaliye_premium_monthly_test', 'qaliye_test', '$rc_monthly', TRUE, TRUE),
+    ('d0000000-0000-0000-0000-000000000011', 'b0000000-0000-0000-0000-000000000002', NULL, 'GLOBAL', 'IOS', 'REVENUECAT_APPLE', 'APPLE_IAP', 'USD', 2199, 'qaliye_premium_3_month_test', 'qaliye_test', '$rc_three_month', TRUE, TRUE),
+    ('d0000000-0000-0000-0000-000000000012', 'b0000000-0000-0000-0000-000000000003', NULL, 'GLOBAL', 'IOS', 'REVENUECAT_APPLE', 'APPLE_IAP', 'USD', 3999, 'qaliye_premium_6_month_test', 'qaliye_test', '$rc_six_month', TRUE, TRUE),
+    ('d0000000-0000-0000-0000-000000000013', NULL, 'c0000000-0000-0000-0000-000000000001', 'GLOBAL', 'IOS', 'REVENUECAT_APPLE', 'APPLE_IAP', 'USD', 199, 'qaliye_boost_pack_1_test', 'qaliye_test', 'boost_1', FALSE, TRUE),
+    ('d0000000-0000-0000-0000-000000000014', NULL, 'c0000000-0000-0000-0000-000000000002', 'GLOBAL', 'IOS', 'REVENUECAT_APPLE', 'APPLE_IAP', 'USD', 799, 'qaliye_boost_pack_5_test', 'qaliye_test', 'boost_5', FALSE, TRUE),
+    ('d0000000-0000-0000-0000-000000000015', NULL, 'c0000000-0000-0000-0000-000000000003', 'GLOBAL', 'IOS', 'REVENUECAT_APPLE', 'APPLE_IAP', 'USD', 199, 'qaliye_superlike_pack_5_test', 'qaliye_test', 'superlike_5', FALSE, TRUE),
+    ('d0000000-0000-0000-0000-000000000016', NULL, 'c0000000-0000-0000-0000-000000000004', 'GLOBAL', 'IOS', 'REVENUECAT_APPLE', 'APPLE_IAP', 'USD', 599, 'qaliye_superlike_pack_20_test', 'qaliye_test', 'superlike_20', FALSE, TRUE),
+    ('d0000000-0000-0000-0000-000000000017', NULL, 'c0000000-0000-0000-0000-000000000005', 'GLOBAL', 'IOS', 'REVENUECAT_APPLE', 'APPLE_IAP', 'USD', 199, 'qaliye_rewind_pack_10_test', 'qaliye_test', 'rewind_10', FALSE, TRUE)
+ON CONFLICT (id) DO UPDATE
+SET subscription_product_id = EXCLUDED.subscription_product_id,
+    consumable_product_id = EXCLUDED.consumable_product_id,
+    country_code = EXCLUDED.country_code,
+    platform = EXCLUDED.platform,
+    payment_channel = EXCLUDED.payment_channel,
+    payment_method = EXCLUDED.payment_method,
+    currency = EXCLUDED.currency,
+    price_minor_units = EXCLUDED.price_minor_units,
+    external_product_id = EXCLUDED.external_product_id,
+    external_base_plan_id = NULL,
+    revenuecat_offering_id = EXCLUDED.revenuecat_offering_id,
+    revenuecat_package_id = EXCLUDED.revenuecat_package_id,
+    auto_renew = EXCLUDED.auto_renew,
+    is_active = EXCLUDED.is_active,
+    updated_at = CURRENT_TIMESTAMP;
+
+-- QA/Test Store offers for Android outside Ethiopia. Premium products use RevenueCat standard package identifiers.
+INSERT INTO public.payment_offers (
+    id, subscription_product_id, consumable_product_id, country_code, platform,
+    payment_channel, payment_method, currency, price_minor_units,
+    external_product_id, revenuecat_offering_id, revenuecat_package_id,
+    auto_renew, is_active
+)
+VALUES
+    ('d0000000-0000-0000-0000-000000000020', 'b0000000-0000-0000-0000-000000000001', NULL, 'GLOBAL', 'ANDROID', 'REVENUECAT_GOOGLE', 'GOOGLE_PLAY_BILLING', 'USD', 799, 'qaliye_premium_monthly_test', 'qaliye_test', '$rc_monthly', TRUE, TRUE),
+    ('d0000000-0000-0000-0000-000000000021', 'b0000000-0000-0000-0000-000000000002', NULL, 'GLOBAL', 'ANDROID', 'REVENUECAT_GOOGLE', 'GOOGLE_PLAY_BILLING', 'USD', 2199, 'qaliye_premium_3_month_test', 'qaliye_test', '$rc_three_month', TRUE, TRUE),
+    ('d0000000-0000-0000-0000-000000000022', 'b0000000-0000-0000-0000-000000000003', NULL, 'GLOBAL', 'ANDROID', 'REVENUECAT_GOOGLE', 'GOOGLE_PLAY_BILLING', 'USD', 3999, 'qaliye_premium_6_month_test', 'qaliye_test', '$rc_six_month', TRUE, TRUE),
+    ('d0000000-0000-0000-0000-000000000023', NULL, 'c0000000-0000-0000-0000-000000000001', 'GLOBAL', 'ANDROID', 'REVENUECAT_GOOGLE', 'GOOGLE_PLAY_BILLING', 'USD', 199, 'qaliye_boost_pack_1_test', 'qaliye_test', 'boost_1', FALSE, TRUE),
+    ('d0000000-0000-0000-0000-000000000024', NULL, 'c0000000-0000-0000-0000-000000000002', 'GLOBAL', 'ANDROID', 'REVENUECAT_GOOGLE', 'GOOGLE_PLAY_BILLING', 'USD', 799, 'qaliye_boost_pack_5_test', 'qaliye_test', 'boost_5', FALSE, TRUE),
+    ('d0000000-0000-0000-0000-000000000025', NULL, 'c0000000-0000-0000-0000-000000000003', 'GLOBAL', 'ANDROID', 'REVENUECAT_GOOGLE', 'GOOGLE_PLAY_BILLING', 'USD', 199, 'qaliye_superlike_pack_5_test', 'qaliye_test', 'superlike_5', FALSE, TRUE),
+    ('d0000000-0000-0000-0000-000000000026', NULL, 'c0000000-0000-0000-0000-000000000004', 'GLOBAL', 'ANDROID', 'REVENUECAT_GOOGLE', 'GOOGLE_PLAY_BILLING', 'USD', 599, 'qaliye_superlike_pack_20_test', 'qaliye_test', 'superlike_20', FALSE, TRUE),
+    ('d0000000-0000-0000-0000-000000000027', NULL, 'c0000000-0000-0000-0000-000000000005', 'GLOBAL', 'ANDROID', 'REVENUECAT_GOOGLE', 'GOOGLE_PLAY_BILLING', 'USD', 199, 'qaliye_rewind_pack_10_test', 'qaliye_test', 'rewind_10', FALSE, TRUE)
+ON CONFLICT (id) DO UPDATE
+SET subscription_product_id = EXCLUDED.subscription_product_id,
+    consumable_product_id = EXCLUDED.consumable_product_id,
+    country_code = EXCLUDED.country_code,
+    platform = EXCLUDED.platform,
+    payment_channel = EXCLUDED.payment_channel,
+    payment_method = EXCLUDED.payment_method,
+    currency = EXCLUDED.currency,
+    price_minor_units = EXCLUDED.price_minor_units,
+    external_product_id = EXCLUDED.external_product_id,
+    external_base_plan_id = NULL,
+    revenuecat_offering_id = EXCLUDED.revenuecat_offering_id,
+    revenuecat_package_id = EXCLUDED.revenuecat_package_id,
+    auto_renew = EXCLUDED.auto_renew,
+    is_active = EXCLUDED.is_active,
+    updated_at = CURRENT_TIMESTAMP;
+
+-- =============================================================================
+-- 18. TRIGGERS FOR NEW TABLES
+-- =============================================================================
+
+CREATE TRIGGER update_subscription_products_updated_at
+BEFORE UPDATE ON public.subscription_products
+FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+CREATE TRIGGER update_consumable_products_updated_at
+BEFORE UPDATE ON public.consumable_products
+FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+CREATE TRIGGER update_payment_offers_updated_at
+BEFORE UPDATE ON public.payment_offers
+FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+CREATE TRIGGER update_billing_customers_updated_at
+BEFORE UPDATE ON public.billing_customers
+FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+CREATE TRIGGER update_payment_orders_updated_at
+BEFORE UPDATE ON public.payment_orders
+FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+CREATE TRIGGER update_payment_verification_attempts_updated_at
+BEFORE UPDATE ON public.payment_verification_attempts
+FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+
+
+--=========================================
+
+-- =============================================================================
+-- V21: payment_methods table + market-based payment routing
+--
+-- Introduces a normalised payment_methods table so that a payment offer
+-- represents only WHAT is sold (product / country / platform / price) while
+-- payment_methods represent HOW users in a given market can pay.
+--
+-- Safe incremental steps:
+--   1. billing_country_code on app_users
+--   2. payment_methods table + trigger + index
+--   3. Seed GLOBAL and ET payment methods (+ legacy inactive back-fill rows)
+--   4. payment_method_id (nullable) added to payment_orders
+--   5. Remap orders that reference the duplicate ET offer (d...004)
+--   6. Deterministic back-fill of payment_method_id from old channel/method cols
+--   7. Remove duplicate ET offer
+--   8. Make payment_method_id NOT NULL
+--   9. Market-matching constraint trigger
+--  10. Drop legacy payment_channel / payment_method from payment_orders
+--  11. Drop legacy payment_channel / payment_method / external_base_plan_id
+--       from payment_offers + remove their CHECK constraints
+--  12. Unique partial indexes on payment_offers (one offer per product/market)
+--  13. Expand provider constraints to include ARIFPAY
+-- =============================================================================
+
+-- =============================================================================
+-- 1. billing_country_code on app_users
+-- =============================================================================
+
+ALTER TABLE public.app_users
+    ADD COLUMN IF NOT EXISTS billing_country_code VARCHAR(10);
+
+-- =============================================================================
+-- 2. payment_methods table
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS public.payment_methods (
+    id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    country_code    VARCHAR(10)  NOT NULL DEFAULT 'GLOBAL',
+
+    platform        VARCHAR(20)  NOT NULL CHECK (
+                        platform IN ('ANDROID', 'IOS', 'WEB')
+                    ),
+
+    method_code     VARCHAR(100) NOT NULL,
+    display_name    VARCHAR(150) NOT NULL,
+
+    payment_channel VARCHAR(50)  NOT NULL,
+    payment_method  VARCHAR(50)  NOT NULL,
+
+    payment_instructions TEXT,
+
+    is_active       BOOLEAN      NOT NULL DEFAULT TRUE,
+    display_order   SMALLINT     NOT NULL DEFAULT 0,
+
+    metadata        JSONB        NOT NULL DEFAULT '{}'::JSONB,
+
+    verification_params JSONB    NULL,
+
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT unique_payment_method_market
+        UNIQUE (country_code, platform, method_code)
+);
+
+CREATE TRIGGER update_payment_methods_updated_at
+    BEFORE UPDATE ON public.payment_methods
+    FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+CREATE INDEX IF NOT EXISTS idx_payment_methods_country_platform_active
+    ON public.payment_methods(country_code, platform)
+    WHERE is_active = TRUE;
+
+-- =============================================================================
+-- 3. Seed payment_methods
+-- =============================================================================
+
+-- ── GLOBAL IOS ───────────────────────────────────────────────────────────────
+INSERT INTO public.payment_methods (
+    id, country_code, platform, method_code, display_name,
+    payment_channel, payment_method, is_active, display_order
+) VALUES (
+    'e0000000-0000-0000-0000-000000000001', 'GLOBAL', 'IOS',
+    'APPLE_IAP', 'Apple App Store',
+    'REVENUECAT_APPLE', 'APPLE_IAP', TRUE, 0
+)
+ON CONFLICT (country_code, platform, method_code) DO UPDATE
+    SET display_name     = EXCLUDED.display_name,
+        payment_channel  = EXCLUDED.payment_channel,
+        payment_method   = EXCLUDED.payment_method,
+        is_active        = EXCLUDED.is_active,
+        updated_at       = CURRENT_TIMESTAMP;
+
+-- ── GLOBAL ANDROID ───────────────────────────────────────────────────────────
+INSERT INTO public.payment_methods (
+    id, country_code, platform, method_code, display_name,
+    payment_channel, payment_method, is_active, display_order
+) VALUES (
+    'e0000000-0000-0000-0000-000000000002', 'GLOBAL', 'ANDROID',
+    'GOOGLE_PLAY', 'Google Play',
+    'REVENUECAT_GOOGLE', 'GOOGLE_PLAY_BILLING', TRUE, 0
+)
+ON CONFLICT (country_code, platform, method_code) DO UPDATE
+    SET display_name     = EXCLUDED.display_name,
+        payment_channel  = EXCLUDED.payment_channel,
+        payment_method   = EXCLUDED.payment_method,
+        is_active        = EXCLUDED.is_active,
+        updated_at       = CURRENT_TIMESTAMP;
+
+-- ── GLOBAL WEB ───────────────────────────────────────────────────────────────
+INSERT INTO public.payment_methods (
+    id, country_code, platform, method_code, display_name,
+    payment_channel, payment_method, is_active, display_order
+) VALUES (
+    'e0000000-0000-0000-0000-000000000003', 'GLOBAL', 'WEB',
+    'STRIPE', 'Card',
+    'REVENUECAT_WEB', 'STRIPE', TRUE, 0
+)
+ON CONFLICT (country_code, platform, method_code) DO UPDATE
+    SET display_name     = EXCLUDED.display_name,
+        payment_channel  = EXCLUDED.payment_channel,
+        payment_method   = EXCLUDED.payment_method,
+        is_active        = EXCLUDED.is_active,
+        updated_at       = CURRENT_TIMESTAMP;
+
+-- ── ET ANDROID: Chapa (inactive until integration complete) ──────────────────
+INSERT INTO public.payment_methods (
+    id, country_code, platform, method_code, display_name,
+    payment_channel, payment_method, payment_instructions,
+    is_active, display_order
+) VALUES (
+    'e0000000-0000-0000-0000-000000000010', 'ET', 'ANDROID',
+    'CHAPA', 'Chapa',
+    'CHAPA', 'HOSTED_CHECKOUT', NULL,
+    FALSE, 10
+)
+ON CONFLICT (country_code, platform, method_code) DO UPDATE
+    SET display_name    = EXCLUDED.display_name,
+        payment_channel = EXCLUDED.payment_channel,
+        payment_method  = EXCLUDED.payment_method,
+        is_active       = EXCLUDED.is_active,
+        updated_at      = CURRENT_TIMESTAMP;
+
+-- ── ET ANDROID: ArifPay (inactive until integration complete) ────────────────
+INSERT INTO public.payment_methods (
+    id, country_code, platform, method_code, display_name,
+    payment_channel, payment_method, payment_instructions,
+    is_active, display_order
+) VALUES (
+    'e0000000-0000-0000-0000-000000000011', 'ET', 'ANDROID',
+    'ARIFPAY', 'ArifPay',
+    'ARIFPAY', 'HOSTED_CHECKOUT', NULL,
+    FALSE, 11
+)
+ON CONFLICT (country_code, platform, method_code) DO UPDATE
+    SET display_name    = EXCLUDED.display_name,
+        payment_channel = EXCLUDED.payment_channel,
+        payment_method  = EXCLUDED.payment_method,
+        is_active       = EXCLUDED.is_active,
+        updated_at      = CURRENT_TIMESTAMP;
+
+-- ── ET ANDROID: Telebirr manual transfer (active) ────────────────────────────
+INSERT INTO public.payment_methods (
+    id, country_code, platform, method_code, display_name,
+    payment_channel, payment_method, payment_instructions,
+    is_active, display_order
+) VALUES (
+    'e0000000-0000-0000-0000-000000000012', 'ET', 'ANDROID',
+    'TELEBIRR', 'Telebirr',
+    'MANUAL_TRANSFER', 'TELEBIRR',
+    'Send {{EXPECTED_AMOUNT}} {{CURRENCY}} to Telebirr account {{PAYMENT_ACCOUNT_NUMBER}} ({{PAYMENT_ACCOUNT_NAME}}). Use reference {{ORDER_REFERENCE}}. Payment expires {{ORDER_EXPIRY}}.',
+    TRUE, 1
+)
+ON CONFLICT (country_code, platform, method_code) DO UPDATE
+    SET display_name         = EXCLUDED.display_name,
+        payment_channel      = EXCLUDED.payment_channel,
+        payment_method       = EXCLUDED.payment_method,
+        payment_instructions = EXCLUDED.payment_instructions,
+        is_active            = EXCLUDED.is_active,
+        updated_at           = CURRENT_TIMESTAMP;
+
+-- ── ET ANDROID: CBE Bank Transfer manual (active) ────────────────────────────
+INSERT INTO public.payment_methods (
+    id, country_code, platform, method_code, display_name,
+    payment_channel, payment_method, payment_instructions,
+    is_active, display_order
+) VALUES (
+    'e0000000-0000-0000-0000-000000000013', 'ET', 'ANDROID',
+    'CBE', 'CBE Bank Transfer',
+    'MANUAL_TRANSFER', 'CBE_BANK_TRANSFER',
+    'Transfer {{EXPECTED_AMOUNT}} {{CURRENCY}} to CBE account {{PAYMENT_ACCOUNT_NUMBER}} ({{PAYMENT_ACCOUNT_NAME}}). Use reference {{ORDER_REFERENCE}}. Payment expires {{ORDER_EXPIRY}}.',
+    TRUE, 2
+)
+ON CONFLICT (country_code, platform, method_code) DO UPDATE
+    SET display_name         = EXCLUDED.display_name,
+        payment_channel      = EXCLUDED.payment_channel,
+        payment_method       = EXCLUDED.payment_method,
+        payment_instructions = EXCLUDED.payment_instructions,
+        is_active            = EXCLUDED.is_active,
+        updated_at           = CURRENT_TIMESTAMP;
+
+-- ── ET ANDROID: CBE Birr manual (active) ─────────────────────────────────────
+INSERT INTO public.payment_methods (
+    id, country_code, platform, method_code, display_name,
+    payment_channel, payment_method, payment_instructions,
+    is_active, display_order
+) VALUES (
+    'e0000000-0000-0000-0000-000000000014', 'ET', 'ANDROID',
+    'CBEBIRR', 'CBE Birr',
+    'MANUAL_TRANSFER', 'CBE_BIRR',
+    'Send {{EXPECTED_AMOUNT}} {{CURRENCY}} via CBE Birr to account {{PAYMENT_ACCOUNT_NUMBER}} ({{PAYMENT_ACCOUNT_NAME}}). Use reference {{ORDER_REFERENCE}}. Payment expires {{ORDER_EXPIRY}}.',
+    TRUE, 3
+)
+ON CONFLICT (country_code, platform, method_code) DO UPDATE
+    SET display_name         = EXCLUDED.display_name,
+        payment_channel      = EXCLUDED.payment_channel,
+        payment_method       = EXCLUDED.payment_method,
+        payment_instructions = EXCLUDED.payment_instructions,
+        is_active            = EXCLUDED.is_active,
+        updated_at           = CURRENT_TIMESTAMP;
+
+-- ── ET ANDROID: BOA manual transfer (active) ──────────────────────────────────
+INSERT INTO public.payment_methods (
+    id, country_code, platform, method_code, display_name,
+    payment_channel, payment_method, payment_instructions,
+    is_active, display_order
+) VALUES (
+    'e0000000-0000-0000-0000-000000000015', 'ET', 'ANDROID',
+    'BOA', 'Bank of Abyssinia',
+    'MANUAL_TRANSFER', 'BANK_TRANSFER',
+    'Transfer {{EXPECTED_AMOUNT}} {{CURRENCY}} to Bank of Abyssinia account {{PAYMENT_ACCOUNT_NUMBER}} ({{PAYMENT_ACCOUNT_NAME}}). Use reference {{ORDER_REFERENCE}}. Payment expires {{ORDER_EXPIRY}}.',
+    TRUE, 4
+)
+ON CONFLICT (country_code, platform, method_code) DO UPDATE
+    SET display_name         = EXCLUDED.display_name,
+        payment_channel      = EXCLUDED.payment_channel,
+        payment_method       = EXCLUDED.payment_method,
+        payment_instructions = EXCLUDED.payment_instructions,
+        is_active            = EXCLUDED.is_active,
+        updated_at           = CURRENT_TIMESTAMP;
+
+-- ── ET ANDROID: M-Pesa manual transfer (active) ───────────────────────────────
+INSERT INTO public.payment_methods (
+    id, country_code, platform, method_code, display_name,
+    payment_channel, payment_method, payment_instructions,
+    is_active, display_order
+) VALUES (
+    'e0000000-0000-0000-0000-000000000016', 'ET', 'ANDROID',
+    'MPESA', 'M-Pesa',
+    'MANUAL_TRANSFER', 'MOBILE_MONEY',
+    'Send {{EXPECTED_AMOUNT}} {{CURRENCY}} via M-Pesa to account {{PAYMENT_ACCOUNT_NUMBER}} ({{PAYMENT_ACCOUNT_NAME}}). Use reference {{ORDER_REFERENCE}}. Payment expires {{ORDER_EXPIRY}}.',
+    TRUE, 5
+)
+ON CONFLICT (country_code, platform, method_code) DO UPDATE
+    SET display_name         = EXCLUDED.display_name,
+        payment_channel      = EXCLUDED.payment_channel,
+        payment_method       = EXCLUDED.payment_method,
+        payment_instructions = EXCLUDED.payment_instructions,
+        is_active            = EXCLUDED.is_active,
+        updated_at           = CURRENT_TIMESTAMP;
+
+-- ── ET ANDROID: Dashen Bank manual transfer (active) ──────────────────────────
+INSERT INTO public.payment_methods (
+    id, country_code, platform, method_code, display_name,
+    payment_channel, payment_method, payment_instructions,
+    is_active, display_order
+) VALUES (
+    'e0000000-0000-0000-0000-000000000017', 'ET', 'ANDROID',
+    'DASHEN', 'Dashen Bank',
+    'MANUAL_TRANSFER', 'BANK_TRANSFER',
+    'Transfer {{EXPECTED_AMOUNT}} {{CURRENCY}} to Dashen Bank account {{PAYMENT_ACCOUNT_NUMBER}} ({{PAYMENT_ACCOUNT_NAME}}). Use reference {{ORDER_REFERENCE}}. Payment expires {{ORDER_EXPIRY}}.',
+    TRUE, 6
+)
+ON CONFLICT (country_code, platform, method_code) DO UPDATE
+    SET display_name         = EXCLUDED.display_name,
+        payment_channel      = EXCLUDED.payment_channel,
+        payment_method       = EXCLUDED.payment_method,
+        payment_instructions = EXCLUDED.payment_instructions,
+        is_active            = EXCLUDED.is_active,
+        updated_at           = CURRENT_TIMESTAMP;
+
+-- ── ET ANDROID: Awash Bank manual transfer (active) ───────────────────────────
+INSERT INTO public.payment_methods (
+    id, country_code, platform, method_code, display_name,
+    payment_channel, payment_method, payment_instructions,
+    is_active, display_order
+) VALUES (
+    'e0000000-0000-0000-0000-000000000018', 'ET', 'ANDROID',
+    'AWASH', 'Awash Bank',
+    'MANUAL_TRANSFER', 'BANK_TRANSFER',
+    'Transfer {{EXPECTED_AMOUNT}} {{CURRENCY}} to Awash Bank account {{PAYMENT_ACCOUNT_NUMBER}} ({{PAYMENT_ACCOUNT_NAME}}). Use reference {{ORDER_REFERENCE}}. Payment expires {{ORDER_EXPIRY}}.',
+    TRUE, 7
+)
+ON CONFLICT (country_code, platform, method_code) DO UPDATE
+    SET display_name         = EXCLUDED.display_name,
+        payment_channel      = EXCLUDED.payment_channel,
+        payment_method       = EXCLUDED.payment_method,
+        payment_instructions = EXCLUDED.payment_instructions,
+        is_active            = EXCLUDED.is_active,
+        updated_at           = CURRENT_TIMESTAMP;
+
+-- ── ET ANDROID: Siinqee Bank manual transfer (active) ─────────────────────────
+INSERT INTO public.payment_methods (
+    id, country_code, platform, method_code, display_name,
+    payment_channel, payment_method, payment_instructions,
+    is_active, display_order
+) VALUES (
+    'e0000000-0000-0000-0000-000000000019', 'ET', 'ANDROID',
+    'SIINQEE', 'Siinqee Bank',
+    'MANUAL_TRANSFER', 'BANK_TRANSFER',
+    'Transfer {{EXPECTED_AMOUNT}} {{CURRENCY}} to Siinqee Bank account {{PAYMENT_ACCOUNT_NUMBER}} ({{PAYMENT_ACCOUNT_NAME}}). Use reference {{ORDER_REFERENCE}}. Payment expires {{ORDER_EXPIRY}}.',
+    TRUE, 8
+)
+ON CONFLICT (country_code, platform, method_code) DO UPDATE
+    SET display_name         = EXCLUDED.display_name,
+        payment_channel      = EXCLUDED.payment_channel,
+        payment_method       = EXCLUDED.payment_method,
+        payment_instructions = EXCLUDED.payment_instructions,
+        is_active            = EXCLUDED.is_active,
+        updated_at           = CURRENT_TIMESTAMP;
+
+-- ── ET ANDROID: Kaafie Birr manual transfer (active) ──────────────────────────
+INSERT INTO public.payment_methods (
+    id, country_code, platform, method_code, display_name,
+    payment_channel, payment_method, payment_instructions,
+    is_active, display_order
+) VALUES (
+    'e0000000-0000-0000-0000-000000000020', 'ET', 'ANDROID',
+    'KAAFIEBIRR', 'Kaafie Birr',
+    'MANUAL_TRANSFER', 'KAAFIEBIRR',
+    'Send {{EXPECTED_AMOUNT}} {{CURRENCY}} via Kaafie Birr to account {{PAYMENT_ACCOUNT_NUMBER}} ({{PAYMENT_ACCOUNT_NAME}}). Use reference {{ORDER_REFERENCE}}. Payment expires {{ORDER_EXPIRY}}.',
+    TRUE, 9
+)
+ON CONFLICT (country_code, platform, method_code) DO UPDATE
+    SET display_name         = EXCLUDED.display_name,
+        payment_channel      = EXCLUDED.payment_channel,
+        payment_method       = EXCLUDED.payment_method,
+        payment_instructions = EXCLUDED.payment_instructions,
+        is_active            = EXCLUDED.is_active,
+        updated_at           = CURRENT_TIMESTAMP;
+
+-- ── ET ANDROID: Zemen Bank manual transfer (active) ───────────────────────────
+INSERT INTO public.payment_methods (
+    id, country_code, platform, method_code, display_name,
+    payment_channel, payment_method, payment_instructions,
+    is_active, display_order
+) VALUES (
+    'e0000000-0000-0000-0000-000000000021', 'ET', 'ANDROID',
+    'ZEMEN', 'Zemen Bank',
+    'MANUAL_TRANSFER', 'BANK_TRANSFER',
+    'Transfer {{EXPECTED_AMOUNT}} {{CURRENCY}} to Zemen Bank account {{PAYMENT_ACCOUNT_NUMBER}} ({{PAYMENT_ACCOUNT_NAME}}). Use reference {{ORDER_REFERENCE}}. Payment expires {{ORDER_EXPIRY}}.',
+    TRUE, 10
+)
+ON CONFLICT (country_code, platform, method_code) DO UPDATE
+    SET display_name         = EXCLUDED.display_name,
+        payment_channel      = EXCLUDED.payment_channel,
+        payment_method       = EXCLUDED.payment_method,
+        payment_instructions = EXCLUDED.payment_instructions,
+        is_active            = EXCLUDED.is_active,
+        updated_at           = CURRENT_TIMESTAMP;
+
+-- ── Legacy inactive back-fill rows (V20 payment_orders used different values) ─
+-- V20 payment_offers used payment_channel='CHAPA' with payment_method='TELEBIRR'
+INSERT INTO public.payment_methods (
+    id, country_code, platform, method_code, display_name,
+    payment_channel, payment_method, is_active, display_order
+) VALUES (
+    'e0000000-0000-0000-0000-000000000091', 'ET', 'ANDROID',
+    'LEGACY_CHAPA_TELEBIRR', 'Chapa (Legacy)',
+    'CHAPA', 'TELEBIRR', FALSE, 99
+)
+ON CONFLICT (country_code, platform, method_code) DO NOTHING;
+
+-- V20 payment_offers used payment_channel='MANUAL_TRANSFER' with payment_method='BANK_TRANSFER'
+INSERT INTO public.payment_methods (
+    id, country_code, platform, method_code, display_name,
+    payment_channel, payment_method, is_active, display_order
+) VALUES (
+    'e0000000-0000-0000-0000-000000000092', 'ET', 'ANDROID',
+    'LEGACY_BANK_TRANSFER', 'Bank Transfer (Legacy)',
+    'MANUAL_TRANSFER', 'BANK_TRANSFER', FALSE, 99
+)
+ON CONFLICT (country_code, platform, method_code) DO NOTHING;
+
+-- =============================================================================
+-- 4. Add payment_method_id (nullable) to payment_orders
+-- =============================================================================
+
+ALTER TABLE public.payment_orders
+    ADD COLUMN IF NOT EXISTS payment_method_id UUID
+        REFERENCES public.payment_methods(id) ON DELETE RESTRICT;
+
+CREATE INDEX IF NOT EXISTS idx_payment_orders_method_id
+    ON public.payment_orders(payment_method_id);
+
+-- =============================================================================
+-- 5. Remap orders referencing the duplicate ET PREMIUM_MONTHLY offer (d...004)
+--    That offer (MANUAL_TRANSFER / BANK_TRANSFER duplicate) is removed below.
+--    Any orders on it are remapped to the canonical CHAPA-seeded offer (d...001).
+-- =============================================================================
+
+UPDATE public.payment_orders
+    SET payment_offer_id = 'd0000000-0000-0000-0000-000000000001'
+    WHERE payment_offer_id = 'd0000000-0000-0000-0000-000000000004';
+
+UPDATE public.user_subscriptions
+    SET payment_offer_id = 'd0000000-0000-0000-0000-000000000001'
+    WHERE payment_offer_id = 'd0000000-0000-0000-0000-000000000004';
+
+UPDATE public.transactions
+    SET payment_offer_id = 'd0000000-0000-0000-0000-000000000001'
+    WHERE payment_offer_id = 'd0000000-0000-0000-0000-000000000004';
+
+-- =============================================================================
+-- 6. Deterministic back-fill: payment_orders.payment_method_id
+--    Match on payment_channel + payment_method from legacy order columns,
+--    scoped to the offer's country_code + platform.
+-- =============================================================================
+
+UPDATE public.payment_orders po
+    SET payment_method_id = pm.id
+    FROM public.payment_methods pm,
+         public.payment_offers  pof
+    WHERE pof.id              = po.payment_offer_id
+      AND pm.payment_channel  = po.payment_channel
+      AND pm.payment_method   = po.payment_method
+      AND pm.country_code     = pof.country_code
+      AND pm.platform         = pof.platform
+      AND po.payment_method_id IS NULL;
+
+-- =============================================================================
+-- 7. Delete the duplicate ET PREMIUM_MONTHLY offer
+-- =============================================================================
+
+DELETE FROM public.payment_offers
+    WHERE id = 'd0000000-0000-0000-0000-000000000004';
+
+-- =============================================================================
+-- 8. Make payment_method_id NOT NULL
+--    (All rows should be back-filled by step 6. Any NULL row would indicate a
+--    V20 order with a payment_channel/method combo not covered by the legacy
+--    seeds. Fail loudly here during migration to surface the issue.)
+-- =============================================================================
+
+ALTER TABLE public.payment_orders
+    ALTER COLUMN payment_method_id SET NOT NULL;
+
+-- =============================================================================
+-- 9. Market-matching constraint trigger
+--    Ensures every payment order pairs an offer and a payment method that
+--    belong to the same billing market (country_code + platform).
+--    Historical orders remain valid even when a payment method is later
+--    disabled because the trigger only checks country_code and platform, not
+--    is_active.
+-- =============================================================================
+
+CREATE OR REPLACE FUNCTION public.validate_payment_order_market()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_offer_country  VARCHAR(10);
+    v_offer_platform VARCHAR(20);
+    v_method_country VARCHAR(10);
+    v_method_platform VARCHAR(20);
+BEGIN
+    IF NEW.payment_method_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    SELECT country_code, platform
+        INTO v_offer_country, v_offer_platform
+        FROM public.payment_offers
+        WHERE id = NEW.payment_offer_id;
+
+    SELECT country_code, platform
+        INTO v_method_country, v_method_platform
+        FROM public.payment_methods
+        WHERE id = NEW.payment_method_id;
+
+    IF v_offer_country IS DISTINCT FROM v_method_country
+    OR v_offer_platform IS DISTINCT FROM v_method_platform THEN
+        RAISE EXCEPTION
+            'payment_order_market_mismatch: offer(country=%, platform=%) vs method(country=%, platform=%)',
+            v_offer_country, v_offer_platform,
+            v_method_country, v_method_platform;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_validate_payment_order_market
+    BEFORE INSERT OR UPDATE ON public.payment_orders
+    FOR EACH ROW EXECUTE FUNCTION public.validate_payment_order_market();
+
+-- =============================================================================
+-- 10. Drop legacy payment_channel / payment_method from payment_orders
+-- =============================================================================
+
+ALTER TABLE public.payment_orders
+    DROP COLUMN IF EXISTS payment_channel,
+    DROP COLUMN IF EXISTS payment_method;
+
+-- =============================================================================
+-- 11. Remove obsolete columns from payment_offers
+-- =============================================================================
+
+-- Drop CHECK constraints that reference the columns being removed
+ALTER TABLE public.payment_offers
+    DROP CONSTRAINT IF EXISTS payment_offers_payment_channel_check;
+
+ALTER TABLE public.payment_offers
+    DROP CONSTRAINT IF EXISTS payment_offers_payment_method_check;
+
+ALTER TABLE public.payment_offers
+    DROP COLUMN IF EXISTS payment_channel,
+    DROP COLUMN IF EXISTS payment_method,
+    DROP COLUMN IF EXISTS external_base_plan_id;
+
+-- =============================================================================
+-- 12. Unique partial indexes on payment_offers
+--     Enforce one offer per (country, platform, subscription_product)
+--     and one per (country, platform, consumable_product).
+-- =============================================================================
+
+CREATE UNIQUE INDEX IF NOT EXISTS unique_payment_offer_subscription
+    ON public.payment_offers(country_code, platform, subscription_product_id)
+    WHERE subscription_product_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS unique_payment_offer_consumable
+    ON public.payment_offers(country_code, platform, consumable_product_id)
+    WHERE consumable_product_id IS NOT NULL;
+
+-- =============================================================================
+-- 13. Expand provider constraints to include ARIFPAY
+-- =============================================================================
+
+ALTER TABLE public.transactions
+    DROP CONSTRAINT IF EXISTS transactions_provider_check;
+
+ALTER TABLE public.transactions
+    ADD CONSTRAINT transactions_provider_check CHECK (
+        provider IN (
+            'STRIPE', 'APPLE_APP_STORE', 'GOOGLE_PLAY',
+            'TELEBIRR', 'CBE_BIRR', 'CHAPA', 'ARIFPAY', 'BANK_TRANSFER',
+            'REVENUECAT', 'ADMIN'
+        )
+    );
+
+ALTER TABLE public.payment_events
+    DROP CONSTRAINT IF EXISTS payment_events_provider_check;
+
+ALTER TABLE public.payment_events
+    ADD CONSTRAINT payment_events_provider_check CHECK (
+        provider IN (
+            'STRIPE', 'REVENUECAT', 'APPLE_APP_STORE', 'GOOGLE_PLAY',
+            'TELEBIRR', 'CBE_BIRR', 'CHAPA', 'ARIFPAY', 'BANK_TRANSFER', 'VERIFY_ET'
+        )
+    );
+
+
+-- =============================================================================
+-- V22: Remove legacy DAILY_LIKES / DAILY_SUPERLIKES / DAILY_REWINDS limit types
+--
+-- The V20 migration introduced new-style limit types (LIKES, SUPERLIKES, REWINDS,
+-- BOOSTS) with a period_type column, but kept the old DAILY_* rows "for backwards
+-- compatibility".  Both sets duplicated the same data.  The application code has
+-- now been migrated to read only the new-style types, so the old rows and their
+-- CHECK constraint entries can be removed.
+-- =============================================================================
+
+-- 1. Delete legacy DAILY_* rows from subscription_plan_limits
+DELETE FROM public.subscription_plan_limits
+WHERE limit_type IN ('DAILY_LIKES', 'DAILY_SUPERLIKES', 'DAILY_REWINDS');
+
+-- 2. Update the CHECK constraint to only allow the new-style limit types
+ALTER TABLE public.subscription_plan_limits
+    DROP CONSTRAINT IF EXISTS subscription_plan_limits_limit_type_check;
+
+ALTER TABLE public.subscription_plan_limits
+    ADD CONSTRAINT subscription_plan_limits_limit_type_check CHECK (
+        limit_type IN ('LIKES', 'SUPERLIKES', 'REWINDS', 'BOOSTS')
+    );

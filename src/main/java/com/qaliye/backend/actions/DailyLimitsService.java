@@ -110,9 +110,9 @@ public class DailyLimitsService {
             Object limitValueObj = row.get("limit_value");
             int limitValue = limitValueObj == null ? Integer.MAX_VALUE : ((Number) limitValueObj).intValue();
             switch (limitType) {
-                case "DAILY_LIKES" -> likes = limitValue;
-                case "DAILY_SUPERLIKES" -> superLikes = limitValue;
-                case "DAILY_REWINDS" -> rewinds = limitValue;
+                case "LIKES" -> likes = limitValue;
+                case "SUPERLIKES" -> superLikes = limitValue;
+                case "REWINDS" -> rewinds = limitValue;
             }
         }
         return new TierLimits(likes, superLikes, rewinds);

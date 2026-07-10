@@ -3,12 +3,15 @@ package com.qaliye.backend.profile;
 import com.qaliye.backend.common.CallerUtils;
 import com.qaliye.backend.profile.dto.DiscoveryPreferencesDto;
 import com.qaliye.backend.profile.dto.OtherUserProfileDto;
+import com.qaliye.backend.profile.dto.BatchPhotoRegistrationRequest;
 import com.qaliye.backend.profile.dto.PhotoRegistrationRequest;
 import com.qaliye.backend.profile.dto.PhotoReorderRequest;
 import com.qaliye.backend.profile.dto.ProfileLocationDto;
 import com.qaliye.backend.profile.dto.ProfileMeDto;
 import com.qaliye.backend.profile.dto.ProfilePhotoDto;
 import com.qaliye.backend.profile.dto.ProfilePhotosResponse;
+import com.qaliye.backend.discovery.dto.UpdateDiscoveryPreferencesRequest;
+import com.qaliye.backend.profile.dto.CulturalDetailsRequest;
 import com.qaliye.backend.profile.dto.ProfileUpdateRequest;
 import com.qaliye.backend.profile.dto.VisibilityUpdateRequest;
 import com.qaliye.backend.profile.dto.VisibilityUpdateResponse;
@@ -46,6 +49,13 @@ public class ProfileController {
         return ResponseEntity.ok(profileService.getCurrentProfile(callerId));
     }
 
+    @PutMapping("/me/cultural-details")
+    public ResponseEntity<ProfileMeDto> updateCulturalDetails(
+            @Valid @RequestBody CulturalDetailsRequest request) {
+        UUID callerId = CallerUtils.callerId();
+        return ResponseEntity.ok(profileService.updateCulturalDetails(callerId, request));
+    }
+
     @PutMapping("/me")
     public ResponseEntity<ProfileMeDto> updateProfile(
             @Valid @RequestBody ProfileUpdateRequest request) {
@@ -65,6 +75,14 @@ public class ProfileController {
         UUID callerId = CallerUtils.callerId();
         ProfilePhotoDto photo = profilePhotoService.registerPhoto(callerId, request);
         return ResponseEntity.status(HttpStatus.CREATED).body(photo);
+    }
+
+    @PostMapping("/me/photos/batch")
+    public ResponseEntity<ProfilePhotosResponse> registerPhotos(
+            @Valid @RequestBody BatchPhotoRegistrationRequest request) {
+        UUID callerId = CallerUtils.callerId();
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(profilePhotoService.registerPhotos(callerId, request.photos()));
     }
 
     @PutMapping("/me/photos")
@@ -88,7 +106,7 @@ public class ProfileController {
 
     @PutMapping("/me/preferences")
     public ResponseEntity<DiscoveryPreferencesDto> updatePreferences(
-            @RequestBody DiscoveryPreferencesDto request) {
+            @Valid @RequestBody UpdateDiscoveryPreferencesRequest request) {
         UUID callerId = CallerUtils.callerId();
         return ResponseEntity.ok(profileService.updatePreferences(callerId, request));
     }

@@ -72,6 +72,11 @@ public class UserSocialService {
                     request != null ? request.reason() : null, Instant.now());
         }
 
+        // End active match and reverse active likes before creating the block so the
+        // caller can rediscover and re-like the profile after unblocking.
+        endActiveMatches(blockerId, blockedUserId);
+        reverseActiveLikes(blockerId, blockedUserId);
+
         UUID blockId = UUID.randomUUID();
         Instant now = Instant.now();
 
@@ -85,8 +90,6 @@ public class UserSocialService {
                         .addValue("blockerId", blockerId)
                         .addValue("blockedUserId", blockedUserId)
                         .addValue("reason", request != null ? request.reason() : null));
-
-        endActiveMatches(blockerId, blockedUserId);
 
         return new BlockResponse(blockId, blockedUserId, "ACTIVE",
                 request != null ? request.reason() : null, now);
@@ -123,5 +126,18 @@ public class UserSocialService {
                   AND ((user_one_id = :u1 AND user_two_id = :u2)
                        OR (user_one_id = :u2 AND user_two_id = :u1))
                 """, Map.of("u1", userId1, "u2", userId2));
+    }
+
+    private void reverseActiveLikes(UUID actorId, UUID targetId) {
+        jdbc.update("""
+                UPDATE user_discovery_actions
+                SET status = 'REVERSED',
+                    reversed_at = NOW(),
+                    reversed_reason = 'BLOCK'
+                WHERE actor_user_id = :actorId
+                  AND target_user_id = :targetId
+                  AND action_type IN ('LIKE', 'SUPERLIKE')
+                  AND status = 'ACTIVE'
+                """, Map.of("actorId", actorId, "targetId", targetId));
     }
 }

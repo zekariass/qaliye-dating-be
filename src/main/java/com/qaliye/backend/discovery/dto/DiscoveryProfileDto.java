@@ -1,6 +1,8 @@
 package com.qaliye.backend.discovery.dto;
 
 import com.qaliye.backend.activity.ActivityStatus;
+import com.qaliye.backend.catalog.EthnicityOption;
+import com.qaliye.backend.catalog.LanguageOption;
 
 import java.util.List;
 import java.util.UUID;
@@ -19,7 +21,7 @@ public record DiscoveryProfileDto(
         boolean isVerified,
         String relationshipIntention,
         Integer heightCm,
-        String ethnicity,
+        List<EthnicityOption> ethnicities,
         String nationality,
         String religion,
         String educationLevel,
@@ -29,6 +31,7 @@ public record DiscoveryProfileDto(
         Boolean wantsChildren,
         String smoking,
         String drinking,
+        List<LanguageOption> languages,
         List<DiscoveryPhotoDto> photos,
         List<DiscoveryPromptAnswerDto> promptAnswers,
         boolean isBoosted,
@@ -38,16 +41,24 @@ public record DiscoveryProfileDto(
     public DiscoveryProfileDto withPhotos(List<DiscoveryPhotoDto> photos) {
         return new DiscoveryProfileDto(userId, displayName, age, gender, bio, residencyType,
                 city, region, countryName, distanceKm, isVerified, relationshipIntention,
-                heightCm, ethnicity, nationality, religion, educationLevel, occupation,
+                heightCm, ethnicities, nationality, religion, educationLevel, occupation,
                 maritalStatus, hasChildren, wantsChildren, smoking, drinking,
-                photos, promptAnswers, isBoosted, discoveryScore, activityStatus);
+                languages, photos, promptAnswers, isBoosted, discoveryScore, activityStatus);
     }
 
     public DiscoveryProfileDto withPromptAnswers(List<DiscoveryPromptAnswerDto> answers) {
         return new DiscoveryProfileDto(userId, displayName, age, gender, bio, residencyType,
                 city, region, countryName, distanceKm, isVerified, relationshipIntention,
-                heightCm, ethnicity, nationality, religion, educationLevel, occupation,
+                heightCm, ethnicities, nationality, religion, educationLevel, occupation,
                 maritalStatus, hasChildren, wantsChildren, smoking, drinking,
-                photos, answers, isBoosted, discoveryScore, activityStatus);
+                languages, photos, answers, isBoosted, discoveryScore, activityStatus);
+    }
+
+    public DiscoveryProfileDto withCatalogData(List<EthnicityOption> eths, List<LanguageOption> langs) {
+        return new DiscoveryProfileDto(userId, displayName, age, gender, bio, residencyType,
+                city, region, countryName, distanceKm, isVerified, relationshipIntention,
+                heightCm, eths, nationality, religion, educationLevel, occupation,
+                maritalStatus, hasChildren, wantsChildren, smoking, drinking,
+                langs, photos, promptAnswers, isBoosted, discoveryScore, activityStatus);
     }
 }

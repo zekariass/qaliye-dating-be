@@ -4,11 +4,11 @@ import com.qaliye.backend.discovery.dto.MatchSummaryDto;
 import com.qaliye.backend.discovery.dto.SwipeActionResponse;
 import com.qaliye.backend.discovery.dto.UserPlanEntitlement;
 import com.qaliye.backend.discovery.exception.DailyLimitExceededException;
-import com.qaliye.backend.discovery.exception.DuplicateActiveActionException;
 import com.qaliye.backend.discovery.exception.TargetIneligibleException;
 import com.qaliye.backend.discovery.repository.DailyLimitRepository;
 import com.qaliye.backend.discovery.repository.DiscoveryActionRepository;
 import com.qaliye.backend.discovery.repository.EntitlementLedgerRepository;
+import com.qaliye.backend.chat.service.MatchLifecycleService;
 import com.qaliye.backend.notifications.NotificationDispatcher;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -28,6 +28,7 @@ public class SwipeActionService {
     private final MatchService matchService;
     private final PlanEntitlementService entitlementService;
     private final NotificationDispatcher notificationDispatcher;
+    private final MatchLifecycleService matchLifecycleService;
     private final NamedParameterJdbcTemplate jdbc;
 
     public SwipeActionService(DiscoveryActionRepository actionRepo,
@@ -36,6 +37,7 @@ public class SwipeActionService {
                                MatchService matchService,
                                PlanEntitlementService entitlementService,
                                NotificationDispatcher notificationDispatcher,
+                               MatchLifecycleService matchLifecycleService,
                                NamedParameterJdbcTemplate jdbc) {
         this.actionRepo = actionRepo;
         this.dailyLimitRepo = dailyLimitRepo;
@@ -43,6 +45,7 @@ public class SwipeActionService {
         this.matchService = matchService;
         this.entitlementService = entitlementService;
         this.notificationDispatcher = notificationDispatcher;
+        this.matchLifecycleService = matchLifecycleService;
         this.jdbc = jdbc;
     }
 
@@ -83,8 +86,13 @@ public class SwipeActionService {
 
         checkTargetEligibility(actorId, targetId);
 
-        if (actionRepo.findActiveByPair(actorId, targetId).isPresent()) {
-            throw new DuplicateActiveActionException();
+        Optional<DiscoveryActionRepository.ActionRow> existingAction =
+                actionRepo.findActiveByPair(actorId, targetId);
+        if (existingAction.isPresent()) {
+            if ("LIKE".equals(existingAction.get().actionType())) {
+                return buildIdempotentResponse(existingAction.get(), actorId, "LIKE");
+            }
+            reverseExistingAction(existingAction.get(), actorId);
         }
 
         UserPlanEntitlement ent = entitlementService.loadEntitlement(actorId);
@@ -93,7 +101,7 @@ public class SwipeActionService {
                 .orElseThrow(() -> new IllegalStateException("Daily limits row missing after upsert"));
 
         if (ent.dailyLikesLimit() != null && limits.likesUsed() >= ent.dailyLikesLimit()) {
-            throw new DailyLimitExceededException("DAILY_LIKES");
+            throw new DailyLimitExceededException("LIKES");
         }
 
         DiscoveryActionRepository.ActionRow action =
@@ -132,8 +140,13 @@ public class SwipeActionService {
 
         checkBasicTargetEligibility(actorId, targetId);
 
-        if (actionRepo.findActiveByPair(actorId, targetId).isPresent()) {
-            throw new DuplicateActiveActionException();
+        Optional<DiscoveryActionRepository.ActionRow> existingAction =
+                actionRepo.findActiveByPair(actorId, targetId);
+        if (existingAction.isPresent()) {
+            if ("PASS".equals(existingAction.get().actionType())) {
+                return buildIdempotentResponse(existingAction.get(), actorId, "PASS");
+            }
+            reverseExistingAction(existingAction.get(), actorId);
         }
 
         DiscoveryActionRepository.ActionRow action =
@@ -157,8 +170,13 @@ public class SwipeActionService {
 
         checkTargetEligibility(actorId, targetId);
 
-        if (actionRepo.findActiveByPair(actorId, targetId).isPresent()) {
-            throw new DuplicateActiveActionException();
+        Optional<DiscoveryActionRepository.ActionRow> existingAction =
+                actionRepo.findActiveByPair(actorId, targetId);
+        if (existingAction.isPresent()) {
+            if ("SUPERLIKE".equals(existingAction.get().actionType())) {
+                return buildIdempotentResponse(existingAction.get(), actorId, "SUPERLIKE");
+            }
+            reverseExistingAction(existingAction.get(), actorId);
         }
 
         UserPlanEntitlement ent = entitlementService.loadEntitlement(actorId);
@@ -169,7 +187,7 @@ public class SwipeActionService {
         boolean usedCredit = false;
         if (ent.dailySuperLikesLimit() != null && limits.superLikesUsed() >= ent.dailySuperLikesLimit()) {
             if (ent.superLikeCredits() <= 0) {
-                throw new DailyLimitExceededException("DAILY_SUPERLIKES");
+                throw new DailyLimitExceededException("SUPERLIKES");
             }
             usedCredit = true;
         }
@@ -238,6 +256,19 @@ public class SwipeActionService {
         var blockParams = new MapSqlParameterSource("actorId", actorId).addValue("targetId", targetId);
         boolean blocked = !jdbc.queryForList(BLOCK_CHECK_SQL, blockParams).isEmpty();
         if (blocked) throw new TargetIneligibleException();
+    }
+
+    private void reverseExistingAction(DiscoveryActionRepository.ActionRow existing, UUID actorId) {
+        actionRepo.reverseAction(existing.id());
+        if ("LIKE".equals(existing.actionType())) {
+            dailyLimitRepo.decrementLikes(actorId);
+            matchService.findActiveMatchByAction(existing.id()).ifPresent(match ->
+                    matchLifecycleService.endMatch(match.id(), "CANCELLED_BY_ACTION_CHANGE", actorId));
+        } else if ("SUPERLIKE".equals(existing.actionType())) {
+            dailyLimitRepo.decrementSuperLikes(actorId);
+            matchService.findActiveMatchByAction(existing.id()).ifPresent(match ->
+                    matchLifecycleService.endMatch(match.id(), "CANCELLED_BY_ACTION_CHANGE", actorId));
+        }
     }
 
     private SwipeActionResponse buildIdempotentResponse(DiscoveryActionRepository.ActionRow existing,

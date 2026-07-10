@@ -55,6 +55,20 @@ public class DailyLimitRepository {
               AND limit_date = (NOW() AT TIME ZONE 'UTC')::DATE
             """;
 
+    private static final String DECREMENT_LIKES = """
+            UPDATE user_daily_limits
+            SET likes_used = GREATEST(0, likes_used - 1)
+            WHERE user_id = :userId
+              AND limit_date = (NOW() AT TIME ZONE 'UTC')::DATE
+            """;
+
+    private static final String DECREMENT_SUPERLIKES = """
+            UPDATE user_daily_limits
+            SET super_likes_used = GREATEST(0, super_likes_used - 1)
+            WHERE user_id = :userId
+              AND limit_date = (NOW() AT TIME ZONE 'UTC')::DATE
+            """;
+
     public void ensureRowExists(UUID userId) {
         jdbc.update(UPSERT_FOR_TODAY, new MapSqlParameterSource("userId", userId));
     }
@@ -74,6 +88,14 @@ public class DailyLimitRepository {
 
     public void incrementRewinds(UUID userId) {
         jdbc.update(INCREMENT_REWINDS, new MapSqlParameterSource("userId", userId));
+    }
+
+    public void decrementLikes(UUID userId) {
+        jdbc.update(DECREMENT_LIKES, new MapSqlParameterSource("userId", userId));
+    }
+
+    public void decrementSuperLikes(UUID userId) {
+        jdbc.update(DECREMENT_SUPERLIKES, new MapSqlParameterSource("userId", userId));
     }
 
     private DailyLimitRow mapRow(ResultSet rs, int rowNum) throws SQLException {

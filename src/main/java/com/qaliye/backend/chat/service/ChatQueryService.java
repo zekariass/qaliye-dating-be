@@ -87,6 +87,15 @@ public class ChatQueryService {
                AND pp.deleted_at IS NULL
             WHERE (m.user_one_id = :userId OR m.user_two_id = :userId)
               AND m.status = 'ACTIVE'
+              AND NOT EXISTS (
+                  SELECT 1 FROM user_blocks ub
+                  WHERE ub.status = 'ACTIVE'
+                    AND (
+                        (ub.blocker_user_id = m.user_one_id AND ub.blocked_user_id = m.user_two_id)
+                        OR
+                        (ub.blocker_user_id = m.user_two_id AND ub.blocked_user_id = m.user_one_id)
+                    )
+              )
             """;
 
     private static final String UNREAD_FILTER_SQL = """

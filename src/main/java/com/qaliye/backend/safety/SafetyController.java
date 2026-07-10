@@ -4,7 +4,6 @@ import com.qaliye.backend.common.CallerUtils;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -27,13 +26,6 @@ public class SafetyController {
     public ResponseEntity<Void> blockLegacy(@Valid @RequestBody BlockRequest request) {
         UUID callerId = CallerUtils.callerId();
         blockService.block(callerId, request.getBlockedUserId());
-        return ResponseEntity.noContent().build();
-    }
-
-    @PostMapping("/users/{targetUserId}/block")
-    public ResponseEntity<Void> block(@PathVariable UUID targetUserId) {
-        UUID callerId = CallerUtils.callerId();
-        blockService.block(callerId, targetUserId);
         return ResponseEntity.noContent().build();
     }
 

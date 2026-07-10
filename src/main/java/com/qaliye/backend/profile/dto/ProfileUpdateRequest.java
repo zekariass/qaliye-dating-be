@@ -7,6 +7,7 @@ import jakarta.validation.constraints.Size;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.UUID;
 
 public record ProfileUpdateRequest(
         @Size(min = 2, max = 50) String displayName,
@@ -15,7 +16,6 @@ public record ProfileUpdateRequest(
         @Min(100) @Max(250) Integer heightCm,
         @Pattern(regexp = "ETHIOPIA|ERITREA|DIASPORA") String residencyType,
         @Size(max = 2000) String bio,
-        String ethnicity,
         String nationality,
         String religion,
         String educationLevel,
@@ -30,6 +30,8 @@ public record ProfileUpdateRequest(
         @Pattern(regexp = "NO|SOCIALLY|OCCASIONALLY|YES") String drinkingDetail,
         @Pattern(regexp = "SEDENTARY|LIGHT|MODERATE|ACTIVE|VERY_ACTIVE") String activityLevel,
         @Size(max = 20) List<String> interests,
-        @Size(max = 20) List<String> languages,
-        @Pattern(regexp = "PUBLIC|INCOGNITO") String discoveryMode
+        @Pattern(regexp = "PUBLIC|INCOGNITO") String discoveryMode,
+        @Size(max = 10) List<UUID> ethnicityIds,
+        @Size(max = 200) String ethnicityOtherText,
+        @Size(max = 20) List<UUID> languageIds
 ) {}

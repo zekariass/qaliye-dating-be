@@ -3,6 +3,7 @@ package com.qaliye.backend.config;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -11,6 +12,7 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 import java.util.Collections;
 
@@ -19,6 +21,21 @@ import java.util.Collections;
 public class SecurityConfig {
 
     @Bean
+    @Order(1)
+    public SecurityFilterChain revenueCatWebhookSecurityFilterChain(
+            HttpSecurity http,
+            RevenueCatWebhookAuthenticationFilter webhookAuthFilter) throws Exception {
+        http
+                .securityMatcher("/api/v1/payments/webhooks/revenuecat")
+                .csrf(AbstractHttpConfigurer::disable)
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
+                .addFilterBefore(webhookAuthFilter, UsernamePasswordAuthenticationFilter.class);
+        return http.build();
+    }
+
+    @Bean
+    @Order(2)
     public SecurityFilterChain filterChain(HttpSecurity http, UserStatusFilter userStatusFilter) throws Exception {
         http
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -27,6 +44,9 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/health").permitAll()
                         .requestMatchers("/api/v1/internal/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/payments/webhooks/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/billing/webhooks/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/catalog/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/auth/supabase/send-sms-hook").permitAll()
                         .anyRequest().authenticated()
                 )
                 .oauth2ResourceServer(oauth2 -> oauth2
@@ -39,6 +59,14 @@ public class SecurityConfig {
     @Bean
     public FilterRegistrationBean<UserStatusFilter> userStatusFilterRegistration(UserStatusFilter filter) {
         FilterRegistrationBean<UserStatusFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
+    }
+
+    @Bean
+    public FilterRegistrationBean<RevenueCatWebhookAuthenticationFilter> revenueCatWebhookFilterRegistration(
+            RevenueCatWebhookAuthenticationFilter filter) {
+        FilterRegistrationBean<RevenueCatWebhookAuthenticationFilter> registration = new FilterRegistrationBean<>(filter);
         registration.setEnabled(false);
         return registration;
     }

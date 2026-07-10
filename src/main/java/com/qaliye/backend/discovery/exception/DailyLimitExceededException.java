@@ -13,18 +13,18 @@ public class DailyLimitExceededException extends DiscoveryException {
 
     private static String toErrorCode(String limitType) {
         return switch (limitType) {
-            case "DAILY_LIKES" -> "DAILY_LIKE_LIMIT_EXCEEDED";
-            case "DAILY_SUPERLIKES" -> "DAILY_SUPERLIKE_LIMIT_EXCEEDED";
-            case "DAILY_REWINDS" -> "DAILY_REWIND_LIMIT_EXCEEDED";
+            case "LIKES" -> "DAILY_LIKE_LIMIT_EXCEEDED";
+            case "SUPERLIKES" -> "DAILY_SUPERLIKE_LIMIT_EXCEEDED";
+            case "REWINDS" -> "DAILY_REWIND_LIMIT_EXCEEDED";
             default -> "DAILY_LIMIT_EXCEEDED";
         };
     }
 
     private static String toMessage(String limitType) {
         return switch (limitType) {
-            case "DAILY_LIKES" -> "You have reached your daily like limit.";
-            case "DAILY_SUPERLIKES" -> "You have reached your daily super-like limit.";
-            case "DAILY_REWINDS" -> "You have reached your daily rewind limit.";
+            case "LIKES" -> "You have reached your daily like limit.";
+            case "SUPERLIKES" -> "You have reached your daily super-like limit.";
+            case "REWINDS" -> "You have reached your daily rewind limit.";
             default -> "You have reached your daily limit.";
         };
     }

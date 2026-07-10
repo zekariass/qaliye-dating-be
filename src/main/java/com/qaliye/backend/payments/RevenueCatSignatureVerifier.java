@@ -1,6 +1,7 @@
 package com.qaliye.backend.payments;
 
 import jakarta.servlet.http.HttpServletRequest;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -10,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
 @Component
+@Slf4j
 public class RevenueCatSignatureVerifier implements PaymentSignatureVerifier {
 
     @Value("${revenuecat.webhook-secret}")
@@ -17,6 +19,7 @@ public class RevenueCatSignatureVerifier implements PaymentSignatureVerifier {
 
     @Override
     public boolean verify(HttpServletRequest request, byte[] body) {
+        log.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>Verifying RevenueCat webhook signature");
         String sigHeader = request.getHeader("X-RevenueCat-Signature");
         if (sigHeader == null) return false;
 

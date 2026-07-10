@@ -86,6 +86,15 @@ public class LikesService {
                   WHERE (m.user_one_id = uda.actor_user_id AND m.user_two_id = :userId)
                      OR (m.user_one_id = :userId AND m.user_two_id = uda.actor_user_id)
               )
+              AND NOT EXISTS (
+                  SELECT 1 FROM user_blocks ub
+                  WHERE ub.status = 'ACTIVE'
+                    AND (
+                        (ub.blocker_user_id = :userId AND ub.blocked_user_id = uda.actor_user_id)
+                        OR
+                        (ub.blocker_user_id = uda.actor_user_id AND ub.blocked_user_id = :userId)
+                    )
+              )
             ORDER BY uda.created_at DESC
             LIMIT :limit OFFSET :offset
             """;
@@ -100,6 +109,15 @@ public class LikesService {
                   SELECT 1 FROM matches m
                   WHERE (m.user_one_id = actor_user_id AND m.user_two_id = :userId)
                      OR (m.user_one_id = :userId AND m.user_two_id = actor_user_id)
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM user_blocks ub
+                  WHERE ub.status = 'ACTIVE'
+                    AND (
+                        (ub.blocker_user_id = :userId AND ub.blocked_user_id = actor_user_id)
+                        OR
+                        (ub.blocker_user_id = actor_user_id AND ub.blocked_user_id = :userId)
+                    )
               )
             """;
 
@@ -148,6 +166,15 @@ public class LikesService {
                   WHERE (m.user_one_id = :userId AND m.user_two_id = uda.target_user_id)
                      OR (m.user_one_id = uda.target_user_id AND m.user_two_id = :userId)
               )
+              AND NOT EXISTS (
+                  SELECT 1 FROM user_blocks ub
+                  WHERE ub.status = 'ACTIVE'
+                    AND (
+                        (ub.blocker_user_id = :userId AND ub.blocked_user_id = uda.target_user_id)
+                        OR
+                        (ub.blocker_user_id = uda.target_user_id AND ub.blocked_user_id = :userId)
+                    )
+              )
             ORDER BY uda.created_at DESC
             LIMIT :limit OFFSET :offset
             """;
@@ -162,6 +189,15 @@ public class LikesService {
                   SELECT 1 FROM matches m
                   WHERE (m.user_one_id = :userId AND m.user_two_id = target_user_id)
                      OR (m.user_one_id = target_user_id AND m.user_two_id = :userId)
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM user_blocks ub
+                  WHERE ub.status = 'ACTIVE'
+                    AND (
+                        (ub.blocker_user_id = :userId AND ub.blocked_user_id = target_user_id)
+                        OR
+                        (ub.blocker_user_id = target_user_id AND ub.blocked_user_id = :userId)
+                    )
               )
             """;
 

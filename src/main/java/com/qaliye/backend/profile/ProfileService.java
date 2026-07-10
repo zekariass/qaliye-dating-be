@@ -2,6 +2,11 @@ package com.qaliye.backend.profile;
 
 import com.qaliye.backend.activity.ActivityStatus;
 import com.qaliye.backend.activity.ActivityStatusService;
+import com.qaliye.backend.catalog.CatalogService;
+import com.qaliye.backend.catalog.EthnicityOption;
+import com.qaliye.backend.catalog.LanguageOption;
+import com.qaliye.backend.discovery.dto.UpdateDiscoveryPreferencesRequest;
+import com.qaliye.backend.profile.dto.CulturalDetailsRequest;
 import com.qaliye.backend.profile.dto.DiscoveryPreferencesDto;
 import com.qaliye.backend.profile.dto.OtherUserProfileDto;
 import com.qaliye.backend.profile.dto.ProfileAddressDto;
@@ -20,6 +25,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -28,13 +34,20 @@ import java.util.UUID;
 @Service
 public class ProfileService {
 
+    private static final String PREFERENCES_SELECT_SQL = """
+            SELECT interested_in_gender, min_age, max_age, max_distance_km,
+                   show_verified_only,
+                   location_mode, specific_country_codes, expand_search_when_limited,
+                   has_children_preference, wants_children_preference,
+                   religion_preferences, language_preference_ids, ethnicity_preference_ids,
+                   preferences_version
+            FROM discovery_preferences WHERE user_id = :userId
+            """;
+
     private static final Set<String> VALID_MARITAL_STATUS =
             Set.of("NEVER_MARRIED", "DIVORCED", "WIDOWED", "SEPARATED");
     private static final Set<String> VALID_EDUCATION_LEVEL =
             Set.of("HIGH_SCHOOL", "DIPLOMA", "BACHELORS", "MASTERS", "DOCTORATE", "OTHER");
-    private static final Set<String> VALID_ETHNICITY =
-            Set.of("AMHARA", "OROMO", "TIGRINYA", "SOMALI", "SIDAMA", "GURAGE",
-                   "WOLAYTA", "AFAR", "HADIYA", "GAMO", "OTHER");
     private static final Set<String> VALID_NATIONALITY =
             Set.of("ETHIOPIAN", "ERITREAN", "DUAL_CITIZEN", "OTHER");
     private static final Set<String> VALID_RELIGION =
@@ -42,17 +55,26 @@ public class ProfileService {
                    "TRADITIONAL", "OTHER", "PREFER_NOT_TO_SAY");
     private static final Set<String> VALID_RESIDENCY_TYPES = Set.of("ETHIOPIA", "ERITREA", "DIASPORA");
     private static final Set<String> VALID_GENDERS = Set.of("MALE", "FEMALE");
+    private static final Set<String> VALID_RELATIONSHIP_INTENTION =
+            Set.of("MARRIAGE", "SERIOUS_RELATIONSHIP", "LONG_TERM", "FRIENDSHIP", "NOT_SURE_YET");
+    private static final Set<String> VALID_SMOKING_DETAIL =
+            Set.of("NO", "YES", "OCCASIONALLY", "TRYING_TO_QUIT");
+    private static final Set<String> VALID_DRINKING_DETAIL =
+            Set.of("NO", "SOCIALLY", "OCCASIONALLY", "YES");
 
     private final NamedParameterJdbcTemplate jdbc;
     private final ProfilePhotoService profilePhotoService;
     private final ActivityStatusService activityStatusService;
+    private final CatalogService catalogService;
 
     public ProfileService(NamedParameterJdbcTemplate jdbc,
                           ProfilePhotoService profilePhotoService,
-                          ActivityStatusService activityStatusService) {
+                          ActivityStatusService activityStatusService,
+                          CatalogService catalogService) {
         this.jdbc = jdbc;
         this.profilePhotoService = profilePhotoService;
         this.activityStatusService = activityStatusService;
+        this.catalogService = catalogService;
     }
 
     public ProfileMeDto getCurrentProfile(UUID userId) {
@@ -63,11 +85,12 @@ public class ProfileService {
                     p.user_id, p.display_name, p.gender, p.date_of_birth,
                     calculate_age(p.date_of_birth) AS age,
                     p.bio, p.height_cm, p.residency_type,
-                    p.ethnicity, p.nationality, p.religion, p.education_level, p.occupation,
+                    p.ethnicity_ids, p.ethnicity_other_text,
+                    p.nationality, p.religion, p.education_level, p.occupation,
                     p.relationship_intention, p.marital_status,
                     p.has_children, p.wants_children,
                     p.smoking, p.drinking, p.smoking_detail, p.drinking_detail,
-                    p.activity_level, p.interests, p.languages,
+                    p.activity_level, p.interests, p.language_ids,
                     p.discovery_mode, p.is_visible, p.is_onboarded, p.is_verified, p.profile_completion_score,
                     a.id AS address_id, a.city, a.region, a.country_code, a.country_name,
                     a.formatted_address, a.location_source
@@ -82,6 +105,11 @@ public class ProfileService {
         }
 
         Map<String, Object> r = rows.get(0);
+
+        List<EthnicityOption> ethnicities = catalogService.expandEthnicityIds(
+                toUuidArray(r.get("ethnicity_ids")));
+        List<LanguageOption> languages = catalogService.expandLanguageIds(
+                toUuidArray(r.get("language_ids")));
 
         DiscoveryPreferencesDto prefs = loadPreferences(userId);
         ProfilePhotosResponse photosResp = profilePhotoService.getPhotos(userId);
@@ -102,7 +130,8 @@ public class ProfileService {
                 r.get("height_cm") != null ? ((Number) r.get("height_cm")).intValue() : null,
                 (String) r.get("residency_type"),
                 buildAddressDto(r),
-                (String) r.get("ethnicity"),
+                ethnicities,
+                (String) r.get("ethnicity_other_text"),
                 (String) r.get("nationality"),
                 (String) r.get("religion"),
                 (String) r.get("education_level"),
@@ -117,7 +146,7 @@ public class ProfileService {
                 (String) r.get("drinking_detail"),
                 (String) r.get("activity_level"),
                 toStringList(r.get("interests")),
-                toStringList(r.get("languages")),
+                languages,
                 (Boolean) r.get("is_visible"),
                 (String) r.get("discovery_mode"),
                 (Boolean) r.get("is_onboarded"),
@@ -134,12 +163,7 @@ public class ProfileService {
     public ProfileMeDto updateProfile(UUID userId, ProfileUpdateRequest request) {
         checkActorEligibility(userId);
 
-        boolean profileExists = jdbc.queryForObject(
-                "SELECT EXISTS(SELECT 1 FROM profiles WHERE user_id = :userId)",
-                Map.of("userId", userId), Boolean.class);
-        if (!profileExists) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "PROFILE_NOT_FOUND");
-        }
+        ensureProfileExists(userId, request);
 
         if (request.dateOfBirth() != null) {
             LocalDate dob = request.dateOfBirth();
@@ -153,7 +177,6 @@ public class ProfileService {
 
         validateOptionalEnum("marital_status", request.maritalStatus(), VALID_MARITAL_STATUS);
         validateOptionalEnum("education_level", request.educationLevel(), VALID_EDUCATION_LEVEL);
-        validateOptionalEnum("ethnicity", request.ethnicity(), VALID_ETHNICITY);
         validateOptionalEnum("nationality", request.nationality(), VALID_NATIONALITY);
         validateOptionalEnum("religion", request.religion(), VALID_RELIGION);
 
@@ -171,8 +194,24 @@ public class ProfileService {
 
         String[] interestsArray = request.interests() != null
                 ? request.interests().toArray(String[]::new) : null;
-        String[] languagesArray = request.languages() != null
-                ? request.languages().toArray(String[]::new) : null;
+
+        boolean updateEthnicities = request.ethnicityIds() != null;
+        boolean updateEthOtherText = request.ethnicityOtherText() != null;
+        boolean updateLanguages = request.languageIds() != null;
+
+        if (updateEthnicities) {
+            catalogService.validateEthnicityIds(request.ethnicityIds());
+        }
+        if (updateLanguages) {
+            catalogService.validateLanguageIds(request.languageIds());
+        }
+
+        String ethArray = updateEthnicities
+                ? CatalogService.buildUuidArrayParam(request.ethnicityIds()) : null;
+        String langArray = updateLanguages
+                ? CatalogService.buildUuidArrayParam(request.languageIds()) : null;
+        String ethnicityOtherText = updateEthOtherText
+                ? (request.ethnicityOtherText().isBlank() ? null : request.ethnicityOtherText().trim()) : null;
 
         int newScore = profilePhotoService.computeScore(userId);
 
@@ -184,7 +223,6 @@ public class ProfileService {
                 .addValue("heightCm", request.heightCm())
                 .addValue("residencyType", request.residencyType())
                 .addValue("bio", request.bio())
-                .addValue("ethnicity", request.ethnicity())
                 .addValue("nationality", request.nationality())
                 .addValue("religion", request.religion())
                 .addValue("educationLevel", request.educationLevel())
@@ -199,8 +237,13 @@ public class ProfileService {
                 .addValue("drinkingDetail", drinkingDetail)
                 .addValue("activityLevel", request.activityLevel())
                 .addValue("interests", interestsArray)
-                .addValue("languages", languagesArray)
                 .addValue("discoveryMode", request.discoveryMode())
+                .addValue("updateEthnicities", updateEthnicities)
+                .addValue("ethIds", ethArray)
+                .addValue("updateEthOtherText", updateEthOtherText)
+                .addValue("otherText", ethnicityOtherText)
+                .addValue("updateLanguages", updateLanguages)
+                .addValue("langIds", langArray)
                 .addValue("score", newScore);
 
         jdbc.update("""
@@ -211,7 +254,6 @@ public class ProfileService {
                     height_cm              = COALESCE(:heightCm, height_cm),
                     residency_type         = COALESCE(:residencyType, residency_type),
                     bio                    = COALESCE(:bio, bio),
-                    ethnicity              = COALESCE(:ethnicity, ethnicity),
                     nationality            = COALESCE(:nationality, nationality),
                     religion               = COALESCE(:religion, religion),
                     education_level        = COALESCE(:educationLevel, education_level),
@@ -226,8 +268,10 @@ public class ProfileService {
                     drinking_detail        = COALESCE(:drinkingDetail, drinking_detail),
                     activity_level         = COALESCE(:activityLevel, activity_level),
                     interests              = COALESCE(:interests, interests),
-                    languages              = COALESCE(:languages, languages),
                     discovery_mode         = COALESCE(:discoveryMode, discovery_mode),
+                    ethnicity_ids          = CASE WHEN :updateEthnicities THEN :ethIds::UUID[] ELSE ethnicity_ids END,
+                    ethnicity_other_text   = CASE WHEN :updateEthOtherText THEN :otherText ELSE ethnicity_other_text END,
+                    language_ids           = CASE WHEN :updateLanguages THEN :langIds::UUID[] ELSE language_ids END,
                     profile_completion_score = :score
                 WHERE user_id = :userId
                 """, params);
@@ -242,63 +286,80 @@ public class ProfileService {
     }
 
     public DiscoveryPreferencesDto getPreferences(UUID userId) {
-        List<Map<String, Object>> rows = jdbc.queryForList("""
-                SELECT interested_in_gender, min_age, max_age, max_distance_km,
-                       preferred_residency_types, open_to_long_distance, open_to_relocation, show_verified_only
-                FROM discovery_preferences
-                WHERE user_id = :userId
-                """, Map.of("userId", userId));
-
+        List<Map<String, Object>> rows = jdbc.queryForList(PREFERENCES_SELECT_SQL,
+                Map.of("userId", userId));
         if (rows.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "PREFERENCES_NOT_FOUND");
         }
-
         return mapToPreferencesDto(rows.get(0));
     }
 
     @Transactional
-    public DiscoveryPreferencesDto updatePreferences(UUID userId, DiscoveryPreferencesDto request) {
+    public DiscoveryPreferencesDto updatePreferences(UUID userId, UpdateDiscoveryPreferencesRequest request) {
         if (request.interestedInGender() == null || !VALID_GENDERS.contains(request.interestedInGender())) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_ERROR");
         }
-        if (request.minAge() == null || request.maxAge() == null
-                || request.minAge() < 18 || request.maxAge() < 18 || request.minAge() > request.maxAge()) {
+        if (request.minAge() == null || request.minAge() < 18) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_ERROR");
         }
-        if (request.maxDistanceKm() == null || request.maxDistanceKm() < 1 || request.maxDistanceKm() > 500) {
+        if (request.maxAge() != null && (request.maxAge() < 18 || request.minAge() > request.maxAge())) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_ERROR");
+        }
+        if (request.maxDistanceKm() != null && request.maxDistanceKm() < 1) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_ERROR");
         }
 
-        List<String> residencyTypes = request.preferredResidencyTypes();
-        if (residencyTypes == null || residencyTypes.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_ERROR");
-        }
-        for (String rt : residencyTypes) {
-            if (!VALID_RESIDENCY_TYPES.contains(rt)) {
-                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_ERROR");
-            }
-        }
+        List<UUID> langPrefIds = request.languagePreferenceIds() != null
+                ? request.languagePreferenceIds() : Collections.emptyList();
+        List<UUID> ethPrefIds = request.ethnicityPreferenceIds() != null
+                ? request.ethnicityPreferenceIds() : Collections.emptyList();
 
-        String residencyArray = "{" + String.join(",", residencyTypes) + "}";
+        catalogService.validateLanguageIds(langPrefIds);
+        catalogService.validateEthnicityIds(ethPrefIds);
+
+        String locationMode = request.locationMode() != null ? request.locationMode() : "anywhere";
+        String hasChildrenPref = request.hasChildrenPreference() != null ? request.hasChildrenPreference() : "any";
+        String wantsChildrenPref = request.wantsChildrenPreference() != null ? request.wantsChildrenPreference() : "any";
+
+        String countryCodes = request.specificCountryCodes() != null && !request.specificCountryCodes().isEmpty()
+                ? "{" + String.join(",", request.specificCountryCodes()) + "}"
+                : null;
+        String religionPrefs = request.religionPreferences() != null && !request.religionPreferences().isEmpty()
+                ? "{" + String.join(",", request.religionPreferences()) + "}"
+                : null;
+        String langArray = CatalogService.buildUuidArrayParam(langPrefIds);
+        String ethArray  = CatalogService.buildUuidArrayParam(ethPrefIds);
 
         jdbc.update("""
                 INSERT INTO discovery_preferences
                     (user_id, interested_in_gender, min_age, max_age, max_distance_km,
-                     preferred_residency_types,
-                     open_to_long_distance, open_to_relocation, show_verified_only)
+                     show_verified_only,
+                     location_mode, specific_country_codes, expand_search_when_limited,
+                     has_children_preference, wants_children_preference,
+                     religion_preferences, language_preference_ids, ethnicity_preference_ids,
+                     preferences_version)
                 VALUES (:userId, :gender, :minAge, :maxAge, :maxDist,
-                        :residencyTypes::text[],
-                        :openToLongDistance, :openToRelocation, :showVerifiedOnly)
+                        :showVerifiedOnly,
+                        :locationMode, :countryCodes::text[], :expandSearch,
+                        :hasChildrenPref, :wantsChildrenPref,
+                        :religionPrefs::text[], :langIds::UUID[], :ethIds::UUID[],
+                        1)
                 ON CONFLICT (user_id) DO UPDATE SET
-                    interested_in_gender      = EXCLUDED.interested_in_gender,
-                    min_age                   = EXCLUDED.min_age,
-                    max_age                   = EXCLUDED.max_age,
-                    max_distance_km           = EXCLUDED.max_distance_km,
-                    preferred_residency_types = EXCLUDED.preferred_residency_types,
-                    open_to_long_distance     = EXCLUDED.open_to_long_distance,
-                    open_to_relocation        = EXCLUDED.open_to_relocation,
-                    show_verified_only        = EXCLUDED.show_verified_only,
-                    updated_at                = NOW()
+                    interested_in_gender       = EXCLUDED.interested_in_gender,
+                    min_age                    = EXCLUDED.min_age,
+                    max_age                    = EXCLUDED.max_age,
+                    max_distance_km            = EXCLUDED.max_distance_km,
+                    show_verified_only         = EXCLUDED.show_verified_only,
+                    location_mode              = EXCLUDED.location_mode,
+                    specific_country_codes     = EXCLUDED.specific_country_codes,
+                    expand_search_when_limited = EXCLUDED.expand_search_when_limited,
+                    has_children_preference    = EXCLUDED.has_children_preference,
+                    wants_children_preference  = EXCLUDED.wants_children_preference,
+                    religion_preferences       = EXCLUDED.religion_preferences,
+                    language_preference_ids    = EXCLUDED.language_preference_ids,
+                    ethnicity_preference_ids   = EXCLUDED.ethnicity_preference_ids,
+                    preferences_version        = discovery_preferences.preferences_version + 1,
+                    updated_at                 = NOW()
                 """,
                 new MapSqlParameterSource()
                         .addValue("userId", userId)
@@ -306,10 +367,15 @@ public class ProfileService {
                         .addValue("minAge", request.minAge())
                         .addValue("maxAge", request.maxAge())
                         .addValue("maxDist", request.maxDistanceKm())
-                        .addValue("residencyTypes", residencyArray)
-                        .addValue("openToLongDistance", Boolean.TRUE.equals(request.openToLongDistance()))
-                        .addValue("openToRelocation", Boolean.TRUE.equals(request.openToRelocation()))
-                        .addValue("showVerifiedOnly", Boolean.TRUE.equals(request.showVerifiedOnly())));
+                        .addValue("showVerifiedOnly", Boolean.TRUE.equals(request.showVerifiedOnly()))
+                        .addValue("locationMode", locationMode)
+                        .addValue("countryCodes", countryCodes)
+                        .addValue("expandSearch", Boolean.TRUE.equals(request.expandSearchWhenLimited()))
+                        .addValue("hasChildrenPref", hasChildrenPref)
+                        .addValue("wantsChildrenPref", wantsChildrenPref)
+                        .addValue("religionPrefs", religionPrefs)
+                        .addValue("langIds", langArray)
+                        .addValue("ethIds", ethArray));
 
         int score = profilePhotoService.computeScore(userId);
         jdbc.update("UPDATE profiles SET profile_completion_score = :score WHERE user_id = :userId",
@@ -497,25 +563,33 @@ public class ProfileService {
     }
 
     private DiscoveryPreferencesDto loadPreferences(UUID userId) {
-        List<Map<String, Object>> rows = jdbc.queryForList("""
-                SELECT interested_in_gender, min_age, max_age, max_distance_km,
-                       preferred_residency_types, open_to_long_distance, open_to_relocation, show_verified_only
-                FROM discovery_preferences WHERE user_id = :userId
-                """, Map.of("userId", userId));
+        List<Map<String, Object>> rows = jdbc.queryForList(PREFERENCES_SELECT_SQL,
+                Map.of("userId", userId));
         if (rows.isEmpty()) return null;
         return mapToPreferencesDto(rows.get(0));
     }
 
     private DiscoveryPreferencesDto mapToPreferencesDto(Map<String, Object> row) {
+        List<LanguageOption> langPrefs = catalogService.expandLanguageIds(
+                toUuidArray(row.get("language_preference_ids")));
+        List<EthnicityOption> ethPrefs = catalogService.expandEthnicityIds(
+                toUuidArray(row.get("ethnicity_preference_ids")));
         return new DiscoveryPreferencesDto(
                 (String) row.get("interested_in_gender"),
                 row.get("min_age") != null ? ((Number) row.get("min_age")).intValue() : null,
                 row.get("max_age") != null ? ((Number) row.get("max_age")).intValue() : null,
                 row.get("max_distance_km") != null ? ((Number) row.get("max_distance_km")).intValue() : null,
-                toStringList(row.get("preferred_residency_types")),
-                (Boolean) row.get("open_to_long_distance"),
-                (Boolean) row.get("open_to_relocation"),
-                (Boolean) row.get("show_verified_only")
+                (Boolean) row.get("show_verified_only"),
+                (String) row.get("location_mode"),
+                toStringList(row.get("specific_country_codes")),
+                (Boolean) row.get("expand_search_when_limited"),
+                (String) row.get("has_children_preference"),
+                (String) row.get("wants_children_preference"),
+                toStringList(row.get("religion_preferences")),
+                langPrefs,
+                ethPrefs,
+                row.get("preferences_version") != null
+                        ? ((Number) row.get("preferences_version")).intValue() : 1
         );
     }
 
@@ -561,6 +635,96 @@ public class ProfileService {
         return (value != null && !value.isBlank()) ? value.trim() : fallback;
     }
 
+    private void ensureProfileExists(UUID userId, ProfileUpdateRequest request) {
+        Boolean profileExists = jdbc.queryForObject(
+                "SELECT EXISTS(SELECT 1 FROM profiles WHERE user_id = :userId)",
+                Map.of("userId", userId), Boolean.class);
+        if (Boolean.TRUE.equals(profileExists)) {
+            return;
+        }
+
+        String displayName = trimOrNull(request.displayName());
+        if (displayName == null) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_ERROR");
+        }
+        String gender = request.gender();
+        if (gender == null || !VALID_GENDERS.contains(gender)) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_ERROR");
+        }
+        LocalDate dob = request.dateOfBirth();
+        if (dob == null || dob.isAfter(LocalDate.now().minusYears(18))
+                || dob.isBefore(LocalDate.now().minusYears(120))) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_ERROR");
+        }
+        String residencyType = request.residencyType();
+        if (residencyType == null || !VALID_RESIDENCY_TYPES.contains(residencyType)) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_ERROR");
+        }
+        String relationshipIntention = request.relationshipIntention();
+        if (relationshipIntention == null || !VALID_RELATIONSHIP_INTENTION.contains(relationshipIntention)) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_ERROR");
+        }
+
+        validateOptionalEnum("marital_status", request.maritalStatus(), VALID_MARITAL_STATUS);
+        validateOptionalEnum("education_level", request.educationLevel(), VALID_EDUCATION_LEVEL);
+        validateOptionalEnum("nationality", request.nationality(), VALID_NATIONALITY);
+        validateOptionalEnum("religion", request.religion(), VALID_RELIGION);
+
+        Boolean smoking = request.smoking();
+        Boolean drinking = request.drinking();
+        String smokingDetail = request.smokingDetail();
+        String drinkingDetail = request.drinkingDetail();
+        if (smokingDetail != null) {
+            validateOptionalEnum("smoking_detail", smokingDetail, VALID_SMOKING_DETAIL);
+            smoking = !"NO".equals(smokingDetail);
+        }
+        if (drinkingDetail != null) {
+            validateOptionalEnum("drinking_detail", drinkingDetail, VALID_DRINKING_DETAIL);
+            drinking = !"NO".equals(drinkingDetail);
+        }
+
+        String[] interestsArray = request.interests() != null
+                ? request.interests().toArray(String[]::new) : new String[0];
+
+        jdbc.update("""
+                INSERT INTO profiles (
+                    user_id, display_name, gender, date_of_birth, height_cm, residency_type,
+                    bio, nationality, religion, education_level, occupation,
+                    relationship_intention, marital_status, has_children, wants_children,
+                    smoking, drinking, smoking_detail, drinking_detail,
+                    activity_level, interests, profile_completion_score
+                ) VALUES (
+                    :userId, :displayName, :gender, :dateOfBirth, :heightCm, :residencyType,
+                    :bio, :nationality, :religion, :educationLevel, :occupation,
+                    :relationshipIntention, :maritalStatus, :hasChildren, :wantsChildren,
+                    :smoking, :drinking, :smokingDetail, :drinkingDetail,
+                    :activityLevel, :interests, 0
+                )
+                """,
+                new MapSqlParameterSource()
+                        .addValue("userId", userId)
+                        .addValue("displayName", displayName)
+                        .addValue("gender", gender)
+                        .addValue("dateOfBirth", dob)
+                        .addValue("heightCm", request.heightCm())
+                        .addValue("residencyType", residencyType)
+                        .addValue("bio", trimOrNull(request.bio()))
+                        .addValue("nationality", request.nationality())
+                        .addValue("religion", request.religion())
+                        .addValue("educationLevel", request.educationLevel())
+                        .addValue("occupation", trimOrNull(request.occupation()))
+                        .addValue("relationshipIntention", relationshipIntention)
+                        .addValue("maritalStatus", request.maritalStatus())
+                        .addValue("hasChildren", request.hasChildren())
+                        .addValue("wantsChildren", request.wantsChildren())
+                        .addValue("smoking", smoking)
+                        .addValue("drinking", drinking)
+                        .addValue("smokingDetail", smokingDetail)
+                        .addValue("drinkingDetail", drinkingDetail)
+                        .addValue("activityLevel", request.activityLevel())
+                        .addValue("interests", interestsArray));
+    }
+
     public OtherUserProfileDto getOtherUserProfile(UUID callerId, UUID targetUserId) {
         checkActorEligibility(callerId);
 
@@ -582,10 +746,11 @@ public class ProfileService {
                     p.user_id, p.display_name, p.gender,
                     calculate_age(p.date_of_birth) AS age,
                     p.bio, p.height_cm, p.residency_type,
-                    p.ethnicity, p.nationality, p.religion, p.education_level, p.occupation,
+                    p.ethnicity_ids, p.ethnicity_other_text,
+                    p.nationality, p.religion, p.education_level, p.occupation,
                     p.relationship_intention, p.marital_status,
                     p.has_children, p.wants_children,
-                    p.activity_level, p.interests, p.languages,
+                    p.activity_level, p.interests, p.language_ids,
                     p.is_visible, p.is_verified,
                     a.id AS address_id, a.city, a.region, a.country_code, a.country_name,
                     a.formatted_address, a.location_source,
@@ -601,6 +766,11 @@ public class ProfileService {
         }
 
         Map<String, Object> r = rows.get(0);
+
+        List<EthnicityOption> ethnicities = catalogService.expandEthnicityIds(
+                toUuidArray(r.get("ethnicity_ids")));
+        List<LanguageOption> languages = catalogService.expandLanguageIds(
+                toUuidArray(r.get("language_ids")));
 
         List<Map<String, Object>> photoRows = jdbc.queryForList("""
                 SELECT id, photo_order, is_primary, moderation_status, storage_bucket, storage_path
@@ -633,7 +803,8 @@ public class ProfileService {
                 r.get("height_cm") != null ? ((Number) r.get("height_cm")).intValue() : null,
                 (String) r.get("residency_type"),
                 buildAddressDto(r),
-                (String) r.get("ethnicity"),
+                ethnicities,
+                (String) r.get("ethnicity_other_text"),
                 (String) r.get("nationality"),
                 (String) r.get("religion"),
                 (String) r.get("education_level"),
@@ -644,7 +815,7 @@ public class ProfileService {
                 (Boolean) r.get("wants_children"),
                 (String) r.get("activity_level"),
                 toStringList(r.get("interests")),
-                toStringList(r.get("languages")),
+                languages,
                 (Boolean) r.get("is_verified"),
                 primaryPhotoUrl,
                 photos,
@@ -709,6 +880,62 @@ public class ProfileService {
         if (Boolean.TRUE.equals(targetLiked)) return new RelationInfo("LIKED_YOU", null);
 
         return new RelationInfo("NONE", null);
+    }
+
+    @Transactional
+    public ProfileMeDto updateCulturalDetails(UUID userId, CulturalDetailsRequest request) {
+        checkActorEligibility(userId);
+
+        List<UUID> ethIds = request.ethnicityIds() != null ? request.ethnicityIds() : Collections.emptyList();
+        List<UUID> langIds = request.languageIds() != null ? request.languageIds() : Collections.emptyList();
+        String otherText = request.ethnicityOtherText();
+
+        if (otherText != null && otherText.isBlank()) otherText = null;
+        if (otherText != null && otherText.length() > 200) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_ERROR");
+        }
+
+        catalogService.validateEthnicityIds(ethIds);
+        catalogService.validateLanguageIds(langIds);
+
+        String ethArray = CatalogService.buildUuidArrayParam(ethIds);
+        String langArray = CatalogService.buildUuidArrayParam(langIds);
+
+        jdbc.update("""
+                UPDATE profiles SET
+                    ethnicity_ids        = :ethIds::UUID[],
+                    ethnicity_other_text = :otherText,
+                    language_ids         = :langIds::UUID[]
+                WHERE user_id = :userId
+                """,
+                new MapSqlParameterSource()
+                        .addValue("userId", userId)
+                        .addValue("ethIds", ethArray)
+                        .addValue("otherText", otherText)
+                        .addValue("langIds", langArray));
+
+        int score = profilePhotoService.computeScore(userId);
+        jdbc.update("UPDATE profiles SET profile_completion_score = :score WHERE user_id = :userId",
+                Map.of("score", score, "userId", userId));
+
+        return getCurrentProfile(userId);
+    }
+
+    private UUID[] toUuidArray(Object obj) {
+        if (obj == null) return new UUID[0];
+        if (obj instanceof java.sql.Array sqlArr) {
+            try {
+                Object[] raw = (Object[]) sqlArr.getArray();
+                if (raw == null) return new UUID[0];
+                UUID[] result = new UUID[raw.length];
+                for (int i = 0; i < raw.length; i++) {
+                    result[i] = raw[i] instanceof UUID u ? u : UUID.fromString(raw[i].toString());
+                }
+                return result;
+            } catch (Exception ignored) {}
+        }
+        if (obj instanceof UUID[] arr) return arr;
+        return new UUID[0];
     }
 
     private record RelationInfo(String status, UUID matchId) {}

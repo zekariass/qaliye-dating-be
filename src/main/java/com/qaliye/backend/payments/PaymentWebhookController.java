@@ -1,6 +1,7 @@
 package com.qaliye.backend.payments;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.qaliye.backend.billing.service.RevenueCatWebhookHandler;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,15 +23,18 @@ public class PaymentWebhookController {
     private final StripeSignatureVerifier stripeVerifier;
     private final RevenueCatSignatureVerifier revenueCatVerifier;
     private final PaymentService paymentService;
+    private final RevenueCatWebhookHandler revenueCatHandler;
     private final ObjectMapper objectMapper;
 
     public PaymentWebhookController(StripeSignatureVerifier stripeVerifier,
                                     RevenueCatSignatureVerifier revenueCatVerifier,
                                     PaymentService paymentService,
+                                    RevenueCatWebhookHandler revenueCatHandler,
                                     ObjectMapper objectMapper) {
         this.stripeVerifier = stripeVerifier;
         this.revenueCatVerifier = revenueCatVerifier;
         this.paymentService = paymentService;
+        this.revenueCatHandler = revenueCatHandler;
         this.objectMapper = objectMapper;
     }
 
@@ -40,9 +44,19 @@ public class PaymentWebhookController {
             HttpServletRequest request,
             @RequestBody byte[] body) {
 
+        // RevenueCat: auth is handled by RevenueCatWebhookAuthenticationFilter (Bearer token).
+        // Delegate directly to RevenueCatWebhookHandler which does its own idempotency and entitlement fulfillment.
+        if ("revenuecat".equalsIgnoreCase(provider)) {
+            try {
+                revenueCatHandler.handle(body);
+            } catch (Exception e) {
+                log.error("RevenueCat webhook processing error: {}", e.getMessage(), e);
+            }
+            return ResponseEntity.ok().build();
+        }
+
         PaymentSignatureVerifier verifier = switch (provider.toLowerCase()) {
             case "stripe" -> stripeVerifier;
-            case "revenuecat" -> revenueCatVerifier;
             default -> null;
         };
 
@@ -57,11 +71,7 @@ public class PaymentWebhookController {
         }
 
         try {
-            String providerUpper = switch (provider.toLowerCase()) {
-                case "stripe" -> "STRIPE";
-                case "revenuecat" -> "REVENUECAT";
-                default -> provider.toUpperCase();
-            };
+            String providerUpper = provider.toUpperCase();
 
             // Extract event ID and type for idempotency before full parse
             String eventId = extractEventId(provider, body);
@@ -74,7 +84,6 @@ public class PaymentWebhookController {
 
             switch (provider.toLowerCase()) {
                 case "stripe" -> paymentService.handleStripeWebhook(body);
-                case "revenuecat" -> paymentService.handleRevenueCatWebhook(body);
                 default -> log.warn("No handler for provider: {}", provider);
             }
         } catch (Exception e) {
