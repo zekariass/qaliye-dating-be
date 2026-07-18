@@ -100,6 +100,20 @@ class NotificationEligibilityServiceTest {
     }
 
     @Test
+    void checkOutboxEligibility_superlikeReceived_prefDisabled_returnsSkip() {
+        OutboxRow row = buildSuperLikeRow();
+        when(jdbc.queryForObject(contains("app_users"), anyMap(), eq(Integer.class)))
+                .thenReturn(1);
+        when(jdbc.queryForObject(contains("user_notification_preferences"), anyMap(), eq(Integer.class)))
+                .thenReturn(0);
+
+        EligibilityResult result = service.checkOutboxEligibility(row);
+
+        assertThat(result.eligible()).isFalse();
+        assertThat(result.skipReason()).isEqualTo("SUPERLIKE_PREF_DISABLED");
+    }
+
+    @Test
     void checkOutboxEligibility_marketing_notOptedIn_returnsSkip() {
         OutboxRow row = buildMarketingRow();
         when(jdbc.queryForObject(contains("app_users"), anyMap(), eq(Integer.class)))
@@ -182,6 +196,13 @@ class NotificationEligibilityServiceTest {
 
     private OutboxRow buildLikeRow() {
         return new OutboxRow(UUID.randomUUID(), "LIKE_RECEIVED", recipientId, null,
+                null, null, actionId, null,
+                "dedupe", null, "{}", "PENDING", 1,
+                OffsetDateTime.now(), null, OffsetDateTime.now());
+    }
+
+    private OutboxRow buildSuperLikeRow() {
+        return new OutboxRow(UUID.randomUUID(), "SUPERLIKE_RECEIVED", recipientId, null,
                 null, null, actionId, null,
                 "dedupe", null, "{}", "PENDING", 1,
                 OffsetDateTime.now(), null, OffsetDateTime.now());

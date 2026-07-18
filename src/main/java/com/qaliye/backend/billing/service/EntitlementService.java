@@ -1,9 +1,11 @@
 package com.qaliye.backend.billing.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.qaliye.backend.billing.BillingProperties;
 import com.qaliye.backend.billing.dto.EntitlementResponse;
 import com.qaliye.backend.billing.repository.BillingRepository;
 import com.qaliye.backend.billing.repository.CreditLotRepository;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -22,26 +24,31 @@ public class EntitlementService {
     private final CreditLotRepository creditLotRepo;
     private final NamedParameterJdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
+    private final BillingProperties billingProps;
 
     public EntitlementService(BillingRepository billingRepo,
                               CreditLotRepository creditLotRepo,
                               NamedParameterJdbcTemplate jdbc,
-                              ObjectMapper objectMapper) {
+                              ObjectMapper objectMapper,
+                              BillingProperties billingProps) {
         this.billingRepo = billingRepo;
         this.creditLotRepo = creditLotRepo;
         this.jdbc = jdbc;
         this.objectMapper = objectMapper;
+        this.billingProps = billingProps;
     }
 
     private static final String PLAN_LIMITS_SQL = """
             SELECT spl.limit_type, spl.limit_value
             FROM subscription_plan_limits spl
             WHERE spl.plan_id = :planId
-              AND spl.limit_type IN ('LIKES', 'SUPERLIKES', 'REWINDS', 'BOOSTS')
+              AND spl.limit_type IN ('LIKES', 'SUPERLIKES', 'REWINDS', 'BOOSTS',
+                                     'VOICE_CHAT_MSGS', 'IMAGE_CHAT_MSGS')
             """;
 
     private static final String DAILY_USAGE_SQL = """
-            SELECT likes_used, super_likes_used, rewinds_used
+            SELECT likes_used, super_likes_used, rewinds_used,
+                   voice_chat_msgs_used, image_chat_msgs_used
             FROM user_daily_limits
             WHERE user_id = :userId AND limit_date = (NOW() AT TIME ZONE 'UTC')::DATE
             """;
@@ -52,7 +59,8 @@ public class EntitlementService {
             JOIN subscription_plans sp ON sp.id = spl.plan_id
             WHERE sp.plan_kind = 'PAID'
               AND sp.is_active = TRUE
-              AND spl.limit_type IN ('LIKES', 'SUPERLIKES', 'REWINDS', 'BOOSTS')
+              AND spl.limit_type IN ('LIKES', 'SUPERLIKES', 'REWINDS', 'BOOSTS',
+                                     'VOICE_CHAT_MSGS', 'IMAGE_CHAT_MSGS')
             ORDER BY CASE WHEN sp.country_code = :countryCode THEN 0 ELSE 1 END, spl.limit_type
             """;
 
@@ -78,12 +86,9 @@ public class EntitlementService {
             );
         } else {
             planCode = "FREE";
-            planId = getFreePlanId(userId);
-            features = Map.of(
-                    "seeWhoLikedYou", false,
-                    "advancedFilters", false,
-                    "incognitoMode", false
-            );
+            FreePlanInfo freePlan = getFreePlanInfo(userId);
+            planId = freePlan.planId();
+            features = freePlan.features();
         }
 
         // Load plan limits
@@ -99,12 +104,17 @@ public class EntitlementService {
 
         // Load daily usage
         int likesUsed = 0, superLikesUsed = 0, rewindsUsed = 0;
+        int voiceChatMsgsUsed = 0, imageChatMsgsUsed = 0;
         var usageRows = jdbc.queryForList(DAILY_USAGE_SQL, Map.of("userId", userId));
         if (!usageRows.isEmpty()) {
             var row = usageRows.get(0);
             likesUsed = ((Number) row.get("likes_used")).intValue();
             superLikesUsed = ((Number) row.get("super_likes_used")).intValue();
             rewindsUsed = ((Number) row.get("rewinds_used")).intValue();
+            if (row.get("voice_chat_msgs_used") != null)
+                voiceChatMsgsUsed = ((Number) row.get("voice_chat_msgs_used")).intValue();
+            if (row.get("image_chat_msgs_used") != null)
+                imageChatMsgsUsed = ((Number) row.get("image_chat_msgs_used")).intValue();
         }
 
         Instant tomorrowStart = LocalDate.now(ZoneOffset.UTC).plusDays(1)
@@ -115,12 +125,16 @@ public class EntitlementService {
         Integer superLikesLimit = limits.get("SUPERLIKES");
         Integer rewindsLimit = limits.get("REWINDS");
         Integer boostsLimit = limits.get("BOOSTS");
+        Integer voiceChatMsgLimit = limits.get("VOICE_CHAT_MSGS");
+        Integer imageChatMsgLimit = limits.get("IMAGE_CHAT_MSGS");
 
         Map<String, EntitlementResponse.QuotaInfo> quotaMap = new LinkedHashMap<>();
         quotaMap.put("likes", buildQuota(likesUsed, likesLimit, tomorrowStart));
         quotaMap.put("superLikes", buildQuota(superLikesUsed, superLikesLimit, tomorrowStart));
         quotaMap.put("rewinds", buildQuota(rewindsUsed, rewindsLimit, tomorrowStart));
         quotaMap.put("boosts", buildQuota(0, boostsLimit, null));
+        quotaMap.put("voiceChatMsgs", buildQuota(voiceChatMsgsUsed, voiceChatMsgLimit, tomorrowStart));
+        quotaMap.put("imageChatMsgs", buildQuota(imageChatMsgsUsed, imageChatMsgLimit, tomorrowStart));
 
         // Credits
         int boostCredits = creditLotRepo.getBalance(userId, "BOOST_CREDIT");
@@ -150,7 +164,8 @@ public class EntitlementService {
                     planLimits.putIfAbsent(type, limitVal);
                 });
 
-        return new EntitlementResponse(planCode, subInfo, quotaMap, credits, boostInfo, features, planLimits);
+        return new EntitlementResponse(planCode, subInfo, quotaMap, credits, boostInfo, features, planLimits,
+                billingProps.getBoostDurationMinutes());
     }
 
     private EntitlementResponse.QuotaInfo buildQuota(int used, Integer limit, Instant resetsAt) {
@@ -158,15 +173,37 @@ public class EntitlementService {
         return new EntitlementResponse.QuotaInfo(used, limit, remaining, resetsAt);
     }
 
-    private UUID getFreePlanId(UUID userId) {
+    private record FreePlanInfo(UUID planId, Map<String, Boolean> features) {}
+
+    @Cacheable(value = "subscriptionFeatures", key = "'free-plan-' + #userId")
+    public FreePlanInfo getFreePlanInfo(UUID userId) {
         String countryCode = billingRepo.getUserCountryCode(userId);
         var results = jdbc.queryForList("""
-                SELECT id FROM subscription_plans
+                SELECT id, features FROM subscription_plans
                 WHERE plan_kind = 'FREE' AND is_active = TRUE
                 ORDER BY CASE WHEN country_code = :cc THEN 0 ELSE 1 END
                 LIMIT 1
-                """, Map.of("cc", countryCode));
-        return results.isEmpty() ? null : (UUID) results.get(0).get("id");
+                """, Map.of("cc", countryCode != null ? countryCode : "GLOBAL"));
+        if (results.isEmpty()) {
+            return new FreePlanInfo(null, defaultFreeFeatures());
+        }
+        var row = results.get(0);
+        UUID planId = (UUID) row.get("id");
+        Object featuresVal = row.get("features");
+        String featuresJson = featuresVal != null ? featuresVal.toString() : null;
+        Map<String, Boolean> features = parseFeatures(featuresJson);
+        if (features.isEmpty()) {
+            features = defaultFreeFeatures();
+        }
+        return new FreePlanInfo(planId, features);
+    }
+
+    private Map<String, Boolean> defaultFreeFeatures() {
+        Map<String, Boolean> defaults = new LinkedHashMap<>();
+        defaults.put("seeWhoLikedYou", false);
+        defaults.put("advancedFilters", false);
+        defaults.put("incognitoMode", false);
+        return defaults;
     }
 
     @SuppressWarnings("unchecked")

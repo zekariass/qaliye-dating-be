@@ -10,6 +10,13 @@ spring:
     username: postgres.gjjvmkoxqvdptrqcbvsc
     password: Maedotzek@1621
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 8
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      leak-detection-threshold: 30000
 
   jpa:
     hibernate:

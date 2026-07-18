@@ -7,6 +7,7 @@ import com.qaliye.backend.discovery.exception.DuplicateActiveActionException;
 import com.qaliye.backend.discovery.exception.TargetIneligibleException;
 import com.qaliye.backend.discovery.repository.DailyLimitRepository;
 import com.qaliye.backend.discovery.repository.DiscoveryActionRepository;
+import com.qaliye.backend.chat.service.MatchLifecycleService;
 import com.qaliye.backend.notifications.NotificationDispatcher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,10 +15,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.jdbc.core.ResultSetExtractor;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -35,6 +40,7 @@ class SwipeActionServiceTest {
     @Mock MatchService matchService;
     @Mock PlanEntitlementService entitlementService;
     @Mock NotificationDispatcher notificationDispatcher;
+    @Mock MatchLifecycleService matchLifecycleService;
     @Mock NamedParameterJdbcTemplate jdbc;
 
     SwipeActionService service;
@@ -47,17 +53,24 @@ class SwipeActionServiceTest {
     void setUp() {
         service = new SwipeActionService(
                 actionRepo, dailyLimitRepo, null, matchService,
-                entitlementService, notificationDispatcher, jdbc);
+                entitlementService, notificationDispatcher, matchLifecycleService, jdbc);
+    }
+
+    private void mockTargetEligible() {
+        when(jdbc.query(anyString(), any(SqlParameterSource.class), any(ResultSetExtractor.class))).thenReturn(true);
+        when(jdbc.queryForList(contains("profile_photos"), any(SqlParameterSource.class))).thenReturn(List.of(Map.of()));
+        when(jdbc.queryForList(contains("user_blocks"), any(SqlParameterSource.class))).thenReturn(List.of());
     }
 
     @Test
     void recordLike_withMutualLike_dispatchesMatchNotification() {
+        mockTargetEligible();
         when(actionRepo.findByClientActionId(actorId, clientActionId)).thenReturn(Optional.empty());
         when(actionRepo.findActiveByPair(actorId, targetId)).thenReturn(Optional.empty());
         when(entitlementService.loadEntitlement(actorId)).thenReturn(
-                new UserPlanEntitlement(actorId, "FREE", false, 10, 3, 1, 0, 0));
+                new UserPlanEntitlement(actorId, "FREE", false, 10, 3, 1, 0, 0, 0, 0));
         when(dailyLimitRepo.lockForUpdate(actorId)).thenReturn(
-                Optional.of(new DailyLimitRepository.DailyLimitRow(actorId, 0, 0, 0)));
+                Optional.of(new DailyLimitRepository.DailyLimitRow(actorId, 0, 0, 0, 0, 0)));
         when(actionRepo.insertAction(actorId, targetId, "LIKE", clientActionId)).thenReturn(
                 new DiscoveryActionRepository.ActionRow(
                         UUID.randomUUID(), actorId, targetId, "LIKE", "ACTIVE", clientActionId,
@@ -67,8 +80,8 @@ class SwipeActionServiceTest {
                         UUID.randomUUID(), targetId, actorId, "LIKE", "ACTIVE", UUID.randomUUID(),
                         OffsetDateTime.now())));
         UUID matchId = UUID.randomUUID();
-        when(matchService.tryCreateMatch(actorId, targetId, any(UUID.class), any(UUID.class)))
-                .thenReturn(Optional.of(new MatchSummaryDto(matchId, Instant.now(), Instant.now().plusSeconds(300))));
+        when(matchService.tryCreateMatch(eq(actorId), eq(targetId), any(UUID.class), any(UUID.class)))
+                .thenReturn(Optional.of(new MatchSummaryDto(matchId, Instant.now(), Instant.now().plusSeconds(300), null)));
 
         service.recordLike(actorId, targetId, clientActionId);
 
@@ -81,16 +94,18 @@ class SwipeActionServiceTest {
         assertThat(userOneCaptor.getValue()).isEqualTo(actorId);
         assertThat(userTwoCaptor.getValue()).isEqualTo(targetId);
         assertThat(matchIdCaptor.getValue()).isEqualTo(matchId);
+        verify(notificationDispatcher).dispatchLikeNotification(eq(actorId), eq(targetId), any(UUID.class));
     }
 
     @Test
     void recordLike_withoutMutualLike_doesNotDispatchNotification() {
+        mockTargetEligible();
         when(actionRepo.findByClientActionId(actorId, clientActionId)).thenReturn(Optional.empty());
         when(actionRepo.findActiveByPair(actorId, targetId)).thenReturn(Optional.empty());
         when(entitlementService.loadEntitlement(actorId)).thenReturn(
-                new UserPlanEntitlement(actorId, "FREE", false, 10, 3, 1, 0, 0));
+                new UserPlanEntitlement(actorId, "FREE", false, 10, 3, 1, 0, 0, 0, 0));
         when(dailyLimitRepo.lockForUpdate(actorId)).thenReturn(
-                Optional.of(new DailyLimitRepository.DailyLimitRow(actorId, 0, 0, 0)));
+                Optional.of(new DailyLimitRepository.DailyLimitRow(actorId, 0, 0, 0, 0, 0)));
         when(actionRepo.insertAction(actorId, targetId, "LIKE", clientActionId)).thenReturn(
                 new DiscoveryActionRepository.ActionRow(
                         UUID.randomUUID(), actorId, targetId, "LIKE", "ACTIVE", clientActionId,
@@ -100,16 +115,18 @@ class SwipeActionServiceTest {
         service.recordLike(actorId, targetId, clientActionId);
 
         verify(notificationDispatcher, never()).dispatchMatchNotification(any(), any(), any());
+        verify(notificationDispatcher).dispatchLikeNotification(eq(actorId), eq(targetId), any(UUID.class));
     }
 
     @Test
     void recordSuperLike_withMutualLike_dispatchesMatchNotification() {
+        mockTargetEligible();
         when(actionRepo.findByClientActionId(actorId, clientActionId)).thenReturn(Optional.empty());
         when(actionRepo.findActiveByPair(actorId, targetId)).thenReturn(Optional.empty());
         when(entitlementService.loadEntitlement(actorId)).thenReturn(
-                new UserPlanEntitlement(actorId, "FREE", false, 10, 3, 1, 1, 0));
+                new UserPlanEntitlement(actorId, "FREE", false, 10, 3, 1, 1, 0, 0, 0));
         when(dailyLimitRepo.lockForUpdate(actorId)).thenReturn(
-                Optional.of(new DailyLimitRepository.DailyLimitRow(actorId, 0, 0, 0)));
+                Optional.of(new DailyLimitRepository.DailyLimitRow(actorId, 0, 0, 0, 0, 0)));
         when(actionRepo.insertAction(actorId, targetId, "SUPERLIKE", clientActionId)).thenReturn(
                 new DiscoveryActionRepository.ActionRow(
                         UUID.randomUUID(), actorId, targetId, "SUPERLIKE", "ACTIVE", clientActionId,
@@ -119,11 +136,12 @@ class SwipeActionServiceTest {
                         UUID.randomUUID(), targetId, actorId, "LIKE", "ACTIVE", UUID.randomUUID(),
                         OffsetDateTime.now())));
         UUID matchId = UUID.randomUUID();
-        when(matchService.tryCreateMatch(actorId, targetId, any(UUID.class), any(UUID.class)))
-                .thenReturn(Optional.of(new MatchSummaryDto(matchId, Instant.now(), Instant.now().plusSeconds(300))));
+        when(matchService.tryCreateMatch(eq(actorId), eq(targetId), any(UUID.class), any(UUID.class)))
+                .thenReturn(Optional.of(new MatchSummaryDto(matchId, Instant.now(), Instant.now().plusSeconds(300), null)));
 
         service.recordSuperLike(actorId, targetId, clientActionId);
 
         verify(notificationDispatcher).dispatchMatchNotification(eq(actorId), eq(targetId), eq(matchId));
+        verify(notificationDispatcher).dispatchSuperLikeNotification(eq(actorId), eq(targetId), any(UUID.class));
     }
 }

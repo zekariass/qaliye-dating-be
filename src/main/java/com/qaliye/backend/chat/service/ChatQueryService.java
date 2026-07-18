@@ -5,10 +5,16 @@ import com.qaliye.backend.activity.ActivityStatusService;
 import com.qaliye.backend.chat.cursor.ChatCursorCodec;
 import com.qaliye.backend.chat.cursor.ChatCursorCodec.CursorState;
 import com.qaliye.backend.chat.dto.*;
+import com.qaliye.backend.chat.repository.ChatAttachmentRepository;
+import com.qaliye.backend.chat.repository.ChatAttachmentRepository.AttachmentRow;
 import com.qaliye.backend.chat.repository.ChatMatchRepository;
 import com.qaliye.backend.chat.repository.ChatMessageRepository;
 import com.qaliye.backend.chat.repository.ChatNotificationSettingsRepository;
+import com.qaliye.backend.chat.exception.MatchAccessDeniedException;
+import com.qaliye.backend.chat.exception.MatchNotFoundException;
 import com.qaliye.backend.discovery.service.StorageSigningService;
+import com.qaliye.backend.storage.SupabaseStorageService;
+import com.qaliye.backend.chat.config.ChatProperties;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -19,6 +25,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -39,6 +46,9 @@ public class ChatQueryService {
     private final StorageSigningService signingService;
     private final NamedParameterJdbcTemplate jdbc;
     private final ActivityStatusService activityStatusService;
+    private final ChatAttachmentRepository attachmentRepository;
+    private final SupabaseStorageService storageService;
+    private final ChatProperties chatProps;
 
     public ChatQueryService(MatchAuthorizationService authorizationService,
                              ChatMatchRepository matchRepository,
@@ -48,7 +58,10 @@ public class ChatQueryService {
                              ChatDtoMapper mapper,
                              StorageSigningService signingService,
                              NamedParameterJdbcTemplate jdbc,
-                             ActivityStatusService activityStatusService) {
+                             ActivityStatusService activityStatusService,
+                             ChatAttachmentRepository attachmentRepository,
+                             SupabaseStorageService storageService,
+                             ChatProperties chatProps) {
         this.authorizationService = authorizationService;
         this.matchRepository = matchRepository;
         this.messageRepository = messageRepository;
@@ -58,6 +71,9 @@ public class ChatQueryService {
         this.signingService = signingService;
         this.jdbc = jdbc;
         this.activityStatusService = activityStatusService;
+        this.attachmentRepository = attachmentRepository;
+        this.storageService = storageService;
+        this.chatProps = chatProps;
     }
 
     private static final String INBOX_BASE_SQL = """
@@ -68,6 +84,8 @@ public class ChatQueryService {
                 CASE WHEN m.user_one_id = :userId THEN m.user_two_id ELSE m.user_one_id END AS other_user_id,
                 CASE WHEN m.user_one_id = :userId THEN m.user_one_last_read_sequence
                      ELSE m.user_two_last_read_sequence END          AS my_read_seq,
+                CASE WHEN m.user_one_id = :userId THEN m.user_one_cleared_sequence
+                     ELSE m.user_two_cleared_sequence END            AS my_cleared_seq,
                 p.display_name,
                 p.is_verified,
                 pp.storage_bucket,
@@ -106,6 +124,10 @@ public class ChatQueryService {
                     AND msg.sequence_number > (
                         CASE WHEN m.user_one_id = :userId THEN m.user_one_last_read_sequence
                              ELSE m.user_two_last_read_sequence END
+                    )
+                    AND msg.sequence_number > (
+                        CASE WHEN m.user_one_id = :userId THEN m.user_one_cleared_sequence
+                             ELSE m.user_two_cleared_sequence END
                     )
                     AND msg.deleted_at IS NULL
                     AND msg.moderation_status = 'APPROVED'
@@ -165,6 +187,7 @@ public class ChatQueryService {
             UUID matchId   = rs.getObject("match_id", UUID.class);
             UUID otherUserId = rs.getObject("other_user_id", UUID.class);
             long myReadSeq = rs.getLong("my_read_seq");
+            long myClearedSeq = rs.getLong("my_cleared_seq");
             OffsetDateTime matchedAt = rs.getObject("matched_at", OffsetDateTime.class);
             OffsetDateTime lastMsgAt = rs.getObject("last_message_at", OffsetDateTime.class);
 
@@ -183,10 +206,10 @@ public class ChatQueryService {
                     rs.getBoolean("is_verified"),
                     activityStatus);
 
-            ChatMessageRepository.MessageRow lastMsg = messageRepository.getLastMessage(matchId).orElse(null);
+            ChatMessageRepository.MessageRow lastMsg = messageRepository.getLastMessage(matchId, myClearedSeq).orElse(null);
             LastMessageDto lastMessageDto = lastMsg != null ? toLastMessageDto(lastMsg) : null;
 
-            int unread = (int) messageRepository.countUnread(matchId, callerId, myReadSeq);
+            int unread = (int) messageRepository.countUnread(matchId, callerId, myReadSeq, myClearedSeq);
 
             var muteSettings = notifSettingsRepo.find(matchId, callerId);
             OffsetDateTime mutedUntil = muteSettings.map(s -> s.mutedUntil()).orElse(null);
@@ -245,22 +268,28 @@ public class ChatQueryService {
         long theirDelivered = ctx.theirLastDeliveredSequence();
         long theirRead      = ctx.theirLastReadSequence();
 
+        long clearedSeq = ctx.myClearedSequence();
+
         List<ChatMessageRepository.MessageRow> rawRows;
         if (beforeSequence != null) {
             if (beforeSequence <= 0) throw new com.qaliye.backend.chat.exception.InvalidCursorException();
-            rawRows = messageRepository.getMessagesBefore(matchId, beforeSequence, limit);
+            rawRows = messageRepository.getMessagesBefore(matchId, beforeSequence, limit, clearedSeq);
         } else if (afterSequence != null) {
             if (afterSequence < 0) throw new com.qaliye.backend.chat.exception.InvalidCursorException();
-            rawRows = messageRepository.getMessagesAfter(matchId, afterSequence, limit);
+            rawRows = messageRepository.getMessagesAfter(matchId, afterSequence, limit, clearedSeq);
         } else {
-            rawRows = messageRepository.getLatestMessages(matchId, limit);
+            rawRows = messageRepository.getLatestMessages(matchId, limit, clearedSeq);
         }
 
         boolean hasMore = rawRows.size() > limit;
         List<ChatMessageRepository.MessageRow> page = hasMore ? rawRows.subList(0, limit) : rawRows;
 
+        List<UUID> messageIds = page.stream().map(ChatMessageRepository.MessageRow::id).toList();
+        Map<UUID, List<AttachmentRow>> attachmentsByMsgId = attachmentRepository.findByMessageIds(messageIds);
+
         List<ChatMessageDto> dtos = page.stream()
-                .map(r -> mapper.toMessageDto(r, theirRead, theirDelivered, callerId))
+                .map(r -> mapper.toMessageDto(r, theirRead, theirDelivered, callerId,
+                        attachmentsByMsgId.getOrDefault(r.id(), List.of())))
                 .toList();
 
         ActivityStatus participantActivityStatus = loadParticipantActivityStatus(ctx.otherUserId());
@@ -309,11 +338,57 @@ public class ChatQueryService {
     }
 
     private LastMessageDto toLastMessageDto(ChatMessageRepository.MessageRow row) {
-        String preview = row.body() != null && row.body().length() > 100
-                ? row.body().substring(0, 100) + "…" : row.body();
+        String preview;
+        if (row.body() != null && !row.body().isBlank()) {
+            preview = row.body().length() > 100
+                    ? row.body().substring(0, 100) + "\u2026" : row.body();
+        } else {
+            List<AttachmentRow> atts = attachmentRepository.findByMessageIds(List.of(row.id()))
+                    .getOrDefault(row.id(), List.of());
+            if (atts.isEmpty()) {
+                preview = "";
+            } else if (atts.stream().anyMatch(a -> "IMAGE".equals(a.attachmentType()))) {
+                preview = "Photo";
+            } else if (atts.stream().anyMatch(a -> "VOICE".equals(a.attachmentType()))) {
+                preview = "Voice message";
+            } else {
+                preview = "";
+            }
+        }
         return new LastMessageDto(
                 row.id(), row.sequenceNumber(), row.senderUserId(),
                 row.messageType(), preview, toInstant(row.createdAt()));
+    }
+
+    @Transactional(readOnly = true)
+    public ChatAttachmentDto refreshAttachmentSignedUrl(UUID callerId, UUID attachmentId) {
+        AttachmentRow att = attachmentRepository.findById(attachmentId)
+                .orElseThrow(() -> new com.qaliye.backend.chat.exception.InvalidMessageException(
+                        "Attachment not found."));
+
+        String sql = """
+                SELECT m.match_id
+                FROM messages m
+                WHERE m.id = :messageId
+                """;
+        UUID matchId = jdbc.query(sql,
+                new MapSqlParameterSource("messageId", att.messageId()),
+                rs -> rs.next() ? rs.getObject("match_id", UUID.class) : null);
+
+        if (matchId == null) {
+            throw new com.qaliye.backend.chat.exception.InvalidMessageException("Attachment not found.");
+        }
+
+        MatchAuthorizationService.MatchContext ctx = authorizationService.authorize(callerId, matchId);
+
+        String signedUrl = storageService.generateSignedUrl(
+                att.storageBucket(), att.storagePath(),
+                chatProps.getAttachment().getSignedUrlTtlSeconds());
+
+        return new ChatAttachmentDto(
+                att.id(), att.messageId(), att.attachmentType(),
+                att.fileName(), att.contentType(), att.fileSizeBytes(),
+                att.durationMs(), signedUrl, toInstant(att.createdAt()));
     }
 
     private Instant toInstant(OffsetDateTime odt) {

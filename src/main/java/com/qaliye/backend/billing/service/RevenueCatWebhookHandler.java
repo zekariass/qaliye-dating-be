@@ -5,6 +5,7 @@ import com.qaliye.backend.billing.repository.BillingRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.cache.CacheManager;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,15 +23,18 @@ public class RevenueCatWebhookHandler {
     private final FulfillmentService fulfillmentService;
     private final ObjectMapper objectMapper;
     private final CacheManager cacheManager;
+    private final NamedParameterJdbcTemplate jdbc;
 
     public RevenueCatWebhookHandler(BillingRepository billingRepo,
                                      FulfillmentService fulfillmentService,
                                      ObjectMapper objectMapper,
-                                     CacheManager cacheManager) {
+                                     CacheManager cacheManager,
+                                     NamedParameterJdbcTemplate jdbc) {
         this.billingRepo = billingRepo;
         this.fulfillmentService = fulfillmentService;
         this.objectMapper = objectMapper;
         this.cacheManager = cacheManager;
+        this.jdbc = jdbc;
     }
 
     @Transactional
@@ -208,6 +212,7 @@ public class RevenueCatWebhookHandler {
         if (stableSubId != null) {
             billingRepo.cancelSubscription(stableSubId);
         }
+        resetDiscoveryModeIfIncognito(userId);
         log.info("RevenueCat cancellation processed for user={}", userId);
     }
 
@@ -215,6 +220,7 @@ public class RevenueCatWebhookHandler {
         if (stableSubId != null) {
             billingRepo.updateSubscriptionStatus(stableSubId, "EXPIRED");
         }
+        resetDiscoveryModeIfIncognito(userId);
         log.info("RevenueCat expiration processed for user={}", userId);
     }
 
@@ -222,6 +228,7 @@ public class RevenueCatWebhookHandler {
         if (stableSubId != null) {
             billingRepo.updateSubscriptionStatus(stableSubId, "PAST_DUE");
         }
+        resetDiscoveryModeIfIncognito(userId);
         log.info("RevenueCat billing issue for user={}", userId);
     }
 
@@ -302,6 +309,16 @@ public class RevenueCatWebhookHandler {
             log.debug("Failed to parse timestamp for key={}: {}", key, val);
         }
         return null;
+    }
+
+    private void resetDiscoveryModeIfIncognito(UUID userId) {
+        int updated = jdbc.update(
+                "UPDATE profiles SET discovery_mode = 'PUBLIC', updated_at = NOW() " +
+                "WHERE user_id = :userId AND discovery_mode = 'INCOGNITO'",
+                java.util.Map.of("userId", userId));
+        if (updated > 0) {
+            log.info("Discovery mode reset from INCOGNITO to PUBLIC for user={}", userId);
+        }
     }
 
     private void evictSubscriptionCache(UUID userId) {

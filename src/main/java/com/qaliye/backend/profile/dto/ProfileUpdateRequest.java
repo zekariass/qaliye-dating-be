@@ -14,7 +14,6 @@ public record ProfileUpdateRequest(
         @Pattern(regexp = "MALE|FEMALE") String gender,
         LocalDate dateOfBirth,
         @Min(100) @Max(250) Integer heightCm,
-        @Pattern(regexp = "ETHIOPIA|ERITREA|DIASPORA") String residencyType,
         @Size(max = 2000) String bio,
         String nationality,
         String religion,

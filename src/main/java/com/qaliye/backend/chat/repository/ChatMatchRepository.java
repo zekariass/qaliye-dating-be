@@ -28,7 +28,8 @@ public class ChatMatchRepository {
             long userOneLastReadSequence, long userTwoLastReadSequence,
             OffsetDateTime userOneLastDeliveredAt, OffsetDateTime userTwoLastDeliveredAt,
             OffsetDateTime userOneLastReadAt, OffsetDateTime userTwoLastReadAt,
-            OffsetDateTime firstMessageAt, OffsetDateTime lastMessageAt
+            OffsetDateTime firstMessageAt, OffsetDateTime lastMessageAt,
+            long userOneClearedSequence, long userTwoClearedSequence
     ) {
         public boolean isParticipant(UUID userId) {
             return userOneId.equals(userId) || userTwoId.equals(userId);
@@ -49,7 +50,8 @@ public class ChatMatchRepository {
             m.user_one_last_read_sequence, m.user_two_last_read_sequence,
             m.user_one_last_delivered_at, m.user_two_last_delivered_at,
             m.user_one_last_read_at, m.user_two_last_read_at,
-            m.first_message_at, m.last_message_at
+            m.first_message_at, m.last_message_at,
+            m.user_one_cleared_sequence, m.user_two_cleared_sequence
             """;
 
     private static final String FIND_BY_ID_SQL =
@@ -180,6 +182,30 @@ public class ChatMatchRepository {
         return jdbc.update(sql, params);
     }
 
+    private static final String UPDATE_CLEARED_SEQUENCE_USER_ONE_SQL = """
+            UPDATE matches
+            SET user_one_cleared_sequence = :seq,
+                updated_at = NOW()
+            WHERE id = :matchId
+              AND user_one_cleared_sequence < :seq
+            """;
+
+    private static final String UPDATE_CLEARED_SEQUENCE_USER_TWO_SQL = """
+            UPDATE matches
+            SET user_two_cleared_sequence = :seq,
+                updated_at = NOW()
+            WHERE id = :matchId
+              AND user_two_cleared_sequence < :seq
+            """;
+
+    public int updateClearedSequence(UUID matchId, boolean isUserOne, long seq) {
+        var params = new MapSqlParameterSource()
+                .addValue("matchId", matchId)
+                .addValue("seq", seq);
+        String sql = isUserOne ? UPDATE_CLEARED_SEQUENCE_USER_ONE_SQL : UPDATE_CLEARED_SEQUENCE_USER_TWO_SQL;
+        return jdbc.update(sql, params);
+    }
+
     public int updateReadSequence(UUID matchId, boolean isUserOne, long readSeq, long deliveredSeq) {
         var params = new MapSqlParameterSource()
                 .addValue("matchId", matchId)
@@ -208,7 +234,9 @@ public class ChatMatchRepository {
                 rs.getObject("user_one_last_read_at", OffsetDateTime.class),
                 rs.getObject("user_two_last_read_at", OffsetDateTime.class),
                 rs.getObject("first_message_at", OffsetDateTime.class),
-                rs.getObject("last_message_at", OffsetDateTime.class)
+                rs.getObject("last_message_at", OffsetDateTime.class),
+                rs.getLong("user_one_cleared_sequence"),
+                rs.getLong("user_two_cleared_sequence")
         );
     }
 }

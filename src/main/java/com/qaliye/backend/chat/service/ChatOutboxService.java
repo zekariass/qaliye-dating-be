@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -24,6 +25,14 @@ public class ChatOutboxService {
     public void createMessageCreatedEvent(UUID matchId, UUID messageId, long sequenceNumber,
                                           UUID senderUserId, String messageType, String body,
                                           OffsetDateTime occurredAt) {
+        createMessageCreatedEvent(matchId, messageId, sequenceNumber,
+                senderUserId, messageType, body, occurredAt, List.of());
+    }
+
+    public void createMessageCreatedEvent(UUID matchId, UUID messageId, long sequenceNumber,
+                                          UUID senderUserId, String messageType, String body,
+                                          OffsetDateTime occurredAt,
+                                          List<AttachmentMetadata> attachments) {
         String topic = "match:" + matchId + ":events";
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("message_id", messageId.toString());
@@ -33,11 +42,34 @@ public class ChatOutboxService {
         data.put("body", body);
         data.put("created_at", occurredAt.toString());
 
+        if (attachments != null && !attachments.isEmpty()) {
+            List<Map<String, Object>> attList = attachments.stream()
+                    .map(a -> {
+                        Map<String, Object> am = new LinkedHashMap<>();
+                        am.put("id", a.id().toString());
+                        am.put("attachment_type", a.attachmentType());
+                        am.put("file_name", a.fileName());
+                        am.put("content_type", a.contentType());
+                        am.put("file_size_bytes", a.fileSizeBytes());
+                        am.put("duration_ms", a.durationMs());
+                        am.put("created_at", a.createdAt().toString());
+                        return am;
+                    })
+                    .toList();
+            data.put("attachments", attList);
+        }
+
         Map<String, Object> envelope = buildEnvelope(UUID.randomUUID(), "chat.message.created",
                 matchId, occurredAt, data);
         outboxRepo.insert(UUID.randomUUID(), "chat.message.created", matchId, null,
                 topic, toJson(envelope), occurredAt);
     }
+
+    public record AttachmentMetadata(
+            UUID id, String attachmentType, String fileName,
+            String contentType, long fileSizeBytes, Long durationMs,
+            OffsetDateTime createdAt
+    ) {}
 
     public void createReceiptUpdatedEvent(UUID matchId, UUID updaterUserId,
                                           long deliveredSequence, long readSequence,

@@ -1,12 +1,17 @@
 package com.qaliye.backend.chat;
 
+import com.qaliye.backend.chat.config.ChatProperties;
 import com.qaliye.backend.chat.dto.ChatMessageDto;
 import com.qaliye.backend.chat.dto.SendMessageRequest;
 import com.qaliye.backend.chat.exception.*;
+import com.qaliye.backend.chat.repository.ChatAttachmentRepository;
 import com.qaliye.backend.chat.repository.ChatMatchRepository;
 import com.qaliye.backend.chat.repository.ChatMessageRepository;
 import com.qaliye.backend.chat.service.*;
+import com.qaliye.backend.discovery.repository.DailyLimitRepository;
+import com.qaliye.backend.discovery.service.PlanEntitlementService;
 import com.qaliye.backend.notifications.service.NotificationOutboxService;
+import com.qaliye.backend.storage.SupabaseStorageService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -14,6 +19,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -28,9 +34,14 @@ class MessageCommandServiceTest {
     @Mock ChatMessageRepository messageRepository;
     @Mock MatchAuthorizationService authorizationService;
     @Mock ChatOutboxService outboxService;
-    @Mock ChatRateLimitService rateLimitService;  // interface — implementation swappable
+    @Mock ChatRateLimitService rateLimitService;
     @Mock ChatDtoMapper mapper;
     @Mock NotificationOutboxService notificationOutboxService;
+    @Mock ChatAttachmentRepository attachmentRepository;
+    @Mock SupabaseStorageService storageService;
+    @Mock ChatProperties chatProperties;
+    @Mock PlanEntitlementService entitlementService;
+    @Mock DailyLimitRepository dailyLimitRepo;
 
     MessageCommandService service;
 
@@ -43,7 +54,9 @@ class MessageCommandServiceTest {
     void setUp() {
         service = new MessageCommandService(
                 matchRepository, messageRepository, authorizationService,
-                outboxService, rateLimitService, mapper, notificationOutboxService);
+                outboxService, rateLimitService, mapper, notificationOutboxService,
+                attachmentRepository, storageService, chatProperties,
+                entitlementService, dailyLimitRepo);
     }
 
     @Test
@@ -125,7 +138,7 @@ class MessageCommandServiceTest {
     void sendMessage_notParticipant_throwsAccessDenied() {
         ChatMatchRepository.MatchRow matchWithOthers = new ChatMatchRepository.MatchRow(
                 matchId, UUID.randomUUID(), UUID.randomUUID(), "ACTIVE",
-                null, null, null, 1L, 0L, 0L, 0L, 0L, null, null, null, null, null, null);
+                null, null, null, 1L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, 0L, 0L);
         when(messageRepository.findByIdempotencyKey(callerId, clientMsgId)).thenReturn(Optional.empty());
         when(matchRepository.findByIdForUpdate(matchId)).thenReturn(Optional.of(matchWithOthers));
 
@@ -168,12 +181,12 @@ class MessageCommandServiceTest {
 
     private ChatMatchRepository.MatchRow buildActiveMatch() {
         return new ChatMatchRepository.MatchRow(matchId, callerId, otherUser, "ACTIVE",
-                null, null, null, 2L, 0L, 0L, 0L, 0L, null, null, null, null, null, null);
+                null, null, null, 2L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, 0L, 0L);
     }
 
     private ChatMatchRepository.MatchRow buildEndedMatch() {
         return new ChatMatchRepository.MatchRow(matchId, callerId, otherUser, "ENDED",
-                null, null, "USER_UNMATCH", 1L, 0L, 0L, 0L, 0L, null, null, null, null, null, null);
+                null, null, "USER_UNMATCH", 1L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, 0L, 0L);
     }
 
     private ChatMessageRepository.MessageRow buildMessageRow(long seq) {
@@ -183,7 +196,8 @@ class MessageCommandServiceTest {
 
     private ChatMessageDto buildDto(ChatMessageRepository.MessageRow row) {
         return new ChatMessageDto(row.id(), row.matchId(), row.sequenceNumber(),
-                row.senderUserId(), row.messageType(), row.body(), "SENT", row.createdAt().toInstant());
+                row.senderUserId(), row.messageType(), row.body(), "SENT", row.createdAt().toInstant(),
+                List.of());
     }
 
     private SendMessageRequest buildRequest(String type, String body) {

@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -25,9 +26,12 @@ public class ModerationController {
     private String webhookSecret;
 
     private final PhotoModerationService photoModerationService;
+    private final NamedParameterJdbcTemplate jdbc;
 
-    public ModerationController(PhotoModerationService photoModerationService) {
+    public ModerationController(PhotoModerationService photoModerationService,
+                                NamedParameterJdbcTemplate jdbc) {
         this.photoModerationService = photoModerationService;
+        this.jdbc = jdbc;
     }
 
     @PostMapping("/api/v1/internal/moderation/photo")
@@ -41,15 +45,24 @@ public class ModerationController {
 
         WebhookPayload.PhotoRecord rec = payload.getRecord();
         if (rec != null) {
+            boolean isPrimary = resolveIsPrimary(rec.getId());
             photoModerationService.processPhotoModeration(
                     rec.getId(),
                     rec.getUserId(),
                     rec.getStoragePath(),
-                    rec.getModerationStatus()
+                    rec.getModerationStatus(),
+                    isPrimary
             );
         }
 
         return ResponseEntity.accepted().build();
+    }
+
+    private boolean resolveIsPrimary(UUID photoId) {
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT is_primary FROM profile_photos WHERE id = :id AND deleted_at IS NULL",
+                Map.of("id", photoId));
+        return !rows.isEmpty() && Boolean.TRUE.equals(rows.get(0).get("is_primary"));
     }
 
     @GetMapping("/api/v1/admin/moderation/photos")

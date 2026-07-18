@@ -52,6 +52,7 @@ public class ChatMessageRepository {
             FROM messages
             WHERE match_id = :matchId
               AND sequence_number < :beforeSequence
+              AND sequence_number > :clearedSequence
               AND deleted_at IS NULL
               AND moderation_status = 'APPROVED'
             ORDER BY sequence_number ASC
@@ -63,6 +64,7 @@ public class ChatMessageRepository {
             FROM messages
             WHERE match_id = :matchId
               AND sequence_number > :afterSequence
+              AND sequence_number > :clearedSequence
               AND deleted_at IS NULL
               AND moderation_status = 'APPROVED'
             ORDER BY sequence_number ASC
@@ -73,6 +75,7 @@ public class ChatMessageRepository {
             "SELECT " + SELECT_COLS + """
             FROM messages
             WHERE match_id = :matchId
+              AND sequence_number > :clearedSequence
               AND deleted_at IS NULL
               AND moderation_status = 'APPROVED'
             ORDER BY sequence_number DESC
@@ -83,6 +86,7 @@ public class ChatMessageRepository {
             "SELECT " + SELECT_COLS + """
             FROM messages
             WHERE match_id = :matchId
+              AND sequence_number > :clearedSequence
               AND deleted_at IS NULL
               AND moderation_status = 'APPROVED'
             ORDER BY sequence_number DESC
@@ -94,6 +98,7 @@ public class ChatMessageRepository {
             WHERE match_id = :matchId
               AND sender_user_id <> :userId
               AND sequence_number > :afterSequence
+              AND sequence_number > :clearedSequence
               AND deleted_at IS NULL
               AND moderation_status = 'APPROVED'
             """;
@@ -117,25 +122,28 @@ public class ChatMessageRepository {
         return jdbc.queryForObject(INSERT_MESSAGE_SQL, params, this::mapRow);
     }
 
-    public List<MessageRow> getMessagesBefore(UUID matchId, long beforeSequence, int limit) {
+    public List<MessageRow> getMessagesBefore(UUID matchId, long beforeSequence, int limit, long clearedSequence) {
         var params = new MapSqlParameterSource()
                 .addValue("matchId", matchId)
                 .addValue("beforeSequence", beforeSequence)
+                .addValue("clearedSequence", clearedSequence)
                 .addValue("limit", limit + 1);
         return jdbc.query(GET_MESSAGES_BEFORE_SQL, params, this::mapRow);
     }
 
-    public List<MessageRow> getMessagesAfter(UUID matchId, long afterSequence, int limit) {
+    public List<MessageRow> getMessagesAfter(UUID matchId, long afterSequence, int limit, long clearedSequence) {
         var params = new MapSqlParameterSource()
                 .addValue("matchId", matchId)
                 .addValue("afterSequence", afterSequence)
+                .addValue("clearedSequence", clearedSequence)
                 .addValue("limit", limit + 1);
         return jdbc.query(GET_MESSAGES_AFTER_SQL, params, this::mapRow);
     }
 
-    public List<MessageRow> getLatestMessages(UUID matchId, int limit) {
+    public List<MessageRow> getLatestMessages(UUID matchId, int limit, long clearedSequence) {
         var params = new MapSqlParameterSource()
                 .addValue("matchId", matchId)
+                .addValue("clearedSequence", clearedSequence)
                 .addValue("limit", limit + 1);
         List<MessageRow> rows = jdbc.query(GET_LATEST_MESSAGES_SQL, params, this::mapRow);
         rows = new java.util.ArrayList<>(rows);
@@ -143,16 +151,19 @@ public class ChatMessageRepository {
         return rows;
     }
 
-    public Optional<MessageRow> getLastMessage(UUID matchId) {
-        var params = new MapSqlParameterSource("matchId", matchId);
+    public Optional<MessageRow> getLastMessage(UUID matchId, long clearedSequence) {
+        var params = new MapSqlParameterSource()
+                .addValue("matchId", matchId)
+                .addValue("clearedSequence", clearedSequence);
         return jdbc.query(GET_LAST_MESSAGE_SQL, params, this::mapRow).stream().findFirst();
     }
 
-    public int countUnread(UUID matchId, UUID userId, long afterSequence) {
+    public int countUnread(UUID matchId, UUID userId, long afterSequence, long clearedSequence) {
         var params = new MapSqlParameterSource()
                 .addValue("matchId", matchId)
                 .addValue("userId", userId)
-                .addValue("afterSequence", afterSequence);
+                .addValue("afterSequence", afterSequence)
+                .addValue("clearedSequence", clearedSequence);
         Integer count = jdbc.queryForObject(COUNT_UNREAD_SQL, params, Integer.class);
         return count != null ? count : 0;
     }

@@ -42,7 +42,9 @@ public class MatchAuthorizationService {
             long userOneLastDeliveredSequence,
             long userTwoLastDeliveredSequence,
             long userOneLastReadSequence,
-            long userTwoLastReadSequence
+            long userTwoLastReadSequence,
+            long userOneClearedSequence,
+            long userTwoClearedSequence
     ) {
         public UUID otherUserId() { return isUserOne ? userTwoId : userOneId; }
         public UUID callerId()    { return isUserOne ? userOneId : userTwoId; }
@@ -57,6 +59,9 @@ public class MatchAuthorizationService {
         }
         public long theirLastReadSequence() {
             return isUserOne ? userTwoLastReadSequence : userOneLastReadSequence;
+        }
+        public long myClearedSequence() {
+            return isUserOne ? userOneClearedSequence : userTwoClearedSequence;
         }
     }
 
@@ -116,7 +121,9 @@ public class MatchAuthorizationService {
                 match.userOneLastDeliveredSequence(),
                 match.userTwoLastDeliveredSequence(),
                 match.userOneLastReadSequence(),
-                match.userTwoLastReadSequence()
+                match.userTwoLastReadSequence(),
+                match.userOneClearedSequence(),
+                match.userTwoClearedSequence()
         );
     }
 }

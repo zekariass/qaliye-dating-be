@@ -6,11 +6,13 @@ import com.qaliye.backend.billing.repository.CreditLotRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -20,14 +22,25 @@ public class BoostService {
 
     private final CreditLotRepository creditLotRepo;
     private final BillingProperties billingProps;
+    private final NamedParameterJdbcTemplate jdbc;
 
-    public BoostService(CreditLotRepository creditLotRepo, BillingProperties billingProps) {
+    public BoostService(CreditLotRepository creditLotRepo, BillingProperties billingProps,
+                        NamedParameterJdbcTemplate jdbc) {
         this.creditLotRepo = creditLotRepo;
         this.billingProps = billingProps;
+        this.jdbc = jdbc;
     }
 
     @Transactional
     public BoostActivationResponse activateBoost(UUID userId, String idempotencyKey) {
+        // Reject if user is in incognito mode — boosting while hidden is pointless
+        String discoveryMode = jdbc.queryForObject(
+                "SELECT discovery_mode FROM profiles WHERE user_id = :userId",
+                Map.of("userId", userId), String.class);
+        if ("INCOGNITO".equals(discoveryMode)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "cannot_boost_while_incognito");
+        }
+
         // Check for existing active boost
         List<CreditLotRepository.ActiveBoostRow> active = creditLotRepo.findActiveBoost(userId);
         if (!active.isEmpty()) {

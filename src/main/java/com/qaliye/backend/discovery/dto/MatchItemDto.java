@@ -18,6 +18,7 @@ public record MatchItemDto(
         Instant lastMessageAt,
         boolean hasConversation,
         boolean isUnread,
+        boolean isNew,
         Integer distanceKm,
         String city,
         String region,

@@ -56,7 +56,14 @@ public class RevisitPassesService {
               AND p.is_onboarded    = TRUE
               AND au.status         = 'ACTIVE'
               AND au.deleted_at     IS NULL
-              AND p.discovery_mode <> 'INCOGNITO'
+              AND (p.discovery_mode <> 'INCOGNITO'
+                   OR EXISTS (
+                       SELECT 1 FROM user_discovery_actions uda_inc
+                       WHERE uda_inc.actor_user_id  = p.user_id
+                         AND uda_inc.target_user_id = :actorId
+                         AND uda_inc.action_type   IN ('LIKE', 'SUPERLIKE')
+                         AND uda_inc.status         = 'ACTIVE'
+                   ))
               AND p.gender          = :targetGender
               AND calculate_age(p.date_of_birth) BETWEEN :minAge AND :maxAge
               AND (:showVerifiedOnly = FALSE OR p.is_verified = TRUE)

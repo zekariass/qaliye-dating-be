@@ -35,6 +35,26 @@ public class NotificationDispatcher {
 
     @Async
     @Transactional
+    public void dispatchLikeNotification(UUID actorId, UUID targetId, UUID discoveryActionId) {
+        try {
+            outboxService.createLikeReceivedEvent(discoveryActionId, targetId, actorId, OffsetDateTime.now());
+        } catch (Exception e) {
+            log.error("dispatchLikeNotification failed for action {}: {}", discoveryActionId, e.getMessage());
+        }
+    }
+
+    @Async
+    @Transactional
+    public void dispatchSuperLikeNotification(UUID actorId, UUID targetId, UUID discoveryActionId) {
+        try {
+            outboxService.createSuperLikeReceivedEvent(discoveryActionId, targetId, actorId, OffsetDateTime.now());
+        } catch (Exception e) {
+            log.error("dispatchSuperLikeNotification failed for action {}: {}", discoveryActionId, e.getMessage());
+        }
+    }
+
+    @Async
+    @Transactional
     public void dispatchMessageNotification(UUID recipientId, UUID matchId,
                                             String senderDisplayName) {
         log.debug("dispatchMessageNotification: use MessageCommandService outbox integration instead; "

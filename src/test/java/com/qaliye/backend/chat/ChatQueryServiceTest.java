@@ -1,7 +1,9 @@
 package com.qaliye.backend.chat;
 
 import com.qaliye.backend.activity.ActivityStatusService;
+import com.qaliye.backend.chat.config.ChatProperties;
 import com.qaliye.backend.chat.cursor.ChatCursorCodec;
+import com.qaliye.backend.chat.repository.ChatAttachmentRepository;
 import com.qaliye.backend.chat.repository.ChatMatchRepository;
 import com.qaliye.backend.chat.repository.ChatMessageRepository;
 import com.qaliye.backend.chat.repository.ChatNotificationSettingsRepository;
@@ -9,6 +11,7 @@ import com.qaliye.backend.chat.service.ChatDtoMapper;
 import com.qaliye.backend.chat.service.ChatQueryService;
 import com.qaliye.backend.chat.service.MatchAuthorizationService;
 import com.qaliye.backend.discovery.service.StorageSigningService;
+import com.qaliye.backend.storage.SupabaseStorageService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -40,6 +43,9 @@ class ChatQueryServiceTest {
     @Mock StorageSigningService signingService;
     @Mock NamedParameterJdbcTemplate jdbc;
     @Mock ActivityStatusService activityStatusService;
+    @Mock ChatAttachmentRepository attachmentRepository;
+    @Mock SupabaseStorageService storageService;
+    @Mock ChatProperties chatProperties;
 
     ChatQueryService service;
 
@@ -49,7 +55,8 @@ class ChatQueryServiceTest {
     void setUp() {
         service = new ChatQueryService(
                 authorizationService, matchRepository, messageRepository, notifSettingsRepo,
-                cursorCodec, mapper, signingService, jdbc, activityStatusService);
+                cursorCodec, mapper, signingService, jdbc, activityStatusService,
+                attachmentRepository, storageService, chatProperties);
     }
 
     @Test

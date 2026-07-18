@@ -9,6 +9,8 @@ public record UserPlanEntitlement(
         Integer dailyLikesLimit,
         Integer dailySuperLikesLimit,
         Integer dailyRewindsLimit,
+        Integer dailyVoiceChatMsgLimit,
+        Integer dailyImageChatMsgLimit,
         int superLikeCredits,
         int rewindCredits
 ) {}

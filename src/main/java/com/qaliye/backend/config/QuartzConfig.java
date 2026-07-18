@@ -1,6 +1,7 @@
 package com.qaliye.backend.config;
 
 import com.qaliye.backend.moderation.MessageModerationJob;
+import com.qaliye.backend.moderation.ModerationRetryWorker;
 import com.qaliye.backend.notifications.worker.ExpoDeliveryWorker;
 import com.qaliye.backend.notifications.worker.ExpoReceiptWorker;
 import com.qaliye.backend.notifications.worker.NotificationOutboxFanoutWorker;
@@ -159,6 +160,25 @@ public class QuartzConfig {
                 .withIdentity("notificationRecoveryTrigger")
                 .withSchedule(SimpleScheduleBuilder.simpleSchedule()
                         .withIntervalInMinutes(2)
+                        .repeatForever())
+                .build();
+    }
+
+    @Bean
+    public JobDetail moderationRetryJobDetail() {
+        return JobBuilder.newJob(ModerationRetryWorker.class)
+                .withIdentity("moderationRetryJob")
+                .storeDurably()
+                .build();
+    }
+
+    @Bean
+    public Trigger moderationRetryTrigger(JobDetail moderationRetryJobDetail) {
+        return TriggerBuilder.newTrigger()
+                .forJob(moderationRetryJobDetail)
+                .withIdentity("moderationRetryTrigger")
+                .withSchedule(SimpleScheduleBuilder.simpleSchedule()
+                        .withIntervalInMinutes(5)
                         .repeatForever())
                 .build();
     }

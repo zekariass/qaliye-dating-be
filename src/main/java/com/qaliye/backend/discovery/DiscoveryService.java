@@ -110,7 +110,14 @@ public class DiscoveryService {
                     p.is_visible = TRUE
                     AND p.is_onboarded = TRUE
                     AND au.status = 'ACTIVE'
-                    AND p.discovery_mode <> 'INCOGNITO'
+                    AND (p.discovery_mode <> 'INCOGNITO'
+                         OR EXISTS (
+                             SELECT 1 FROM user_discovery_actions uda_inc
+                             WHERE uda_inc.actor_user_id  = p.user_id
+                               AND uda_inc.target_user_id = :callerId
+                               AND uda_inc.action_type   IN ('LIKE', 'SUPERLIKE')
+                               AND uda_inc.status         = 'ACTIVE'
+                         ))
                     AND p.gender = :genderFilter
                     AND p.date_of_birth BETWEEN :maxDobBound AND :minDobBound
                     AND (COALESCE(ARRAY_LENGTH(:residencyFilter::text[], 1), 0) = 0

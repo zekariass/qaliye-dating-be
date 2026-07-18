@@ -10,7 +10,8 @@ public record EntitlementResponse(
         CreditsInfo credits,
         ActiveBoostInfo activeBoost,
         Map<String, Boolean> features,
-        Map<String, Integer> planLimits
+        Map<String, Integer> planLimits,
+        int boostDurationMinutes
 ) {
     public record SubscriptionInfo(
             String status,

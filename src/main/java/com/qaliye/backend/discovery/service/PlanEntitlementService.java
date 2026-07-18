@@ -50,7 +50,8 @@ public class PlanEntitlementService {
             )
             SELECT plan_code, plan_kind, limit_type, limit_value
             FROM resolved
-            WHERE limit_type IN ('LIKES', 'SUPERLIKES', 'REWINDS')
+            WHERE limit_type IN ('LIKES', 'SUPERLIKES', 'REWINDS',
+                                'VOICE_CHAT_MSGS', 'IMAGE_CHAT_MSGS')
             """;
 
     private static final String GET_USER_COUNTRY_SQL = """
@@ -76,6 +77,8 @@ public class PlanEntitlementService {
         Integer dailyLikesLimit = 50;
         Integer dailySuperLikesLimit = 1;
         Integer dailyRewindsLimit = 1;
+        Integer dailyVoiceChatMsgLimit = 0;
+        Integer dailyImageChatMsgLimit = 0;
 
         for (Map<String, Object> row : rows) {
             String limitType = (String) row.get("limit_type");
@@ -87,6 +90,8 @@ public class PlanEntitlementService {
                 case "LIKES" -> dailyLikesLimit = limitValue;
                 case "SUPERLIKES" -> dailySuperLikesLimit = limitValue;
                 case "REWINDS" -> dailyRewindsLimit = limitValue;
+                case "VOICE_CHAT_MSGS" -> dailyVoiceChatMsgLimit = limitValue;
+                case "IMAGE_CHAT_MSGS" -> dailyImageChatMsgLimit = limitValue;
             }
         }
 
@@ -95,6 +100,7 @@ public class PlanEntitlementService {
 
         return new UserPlanEntitlement(userId, planCode, isPaid,
                 dailyLikesLimit, dailySuperLikesLimit, dailyRewindsLimit,
+                dailyVoiceChatMsgLimit, dailyImageChatMsgLimit,
                 superLikeCredits, rewindCredits);
     }
 }

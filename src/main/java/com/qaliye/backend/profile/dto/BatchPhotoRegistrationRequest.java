@@ -7,5 +7,5 @@ import jakarta.validation.constraints.Size;
 import java.util.List;
 
 public record BatchPhotoRegistrationRequest(
-        @NotEmpty @Size(max = 6) @Valid List<PhotoRegistrationRequest> photos
+        @NotEmpty @Size(max = 7) List<@Valid PhotoRegistrationRequest> photos
 ) {}

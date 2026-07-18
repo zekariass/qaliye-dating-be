@@ -1,5 +1,8 @@
 package com.qaliye.backend.profile;
 
+import com.qaliye.backend.moderation.PhotoModerationService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import com.qaliye.backend.profile.dto.PhotoRegistrationRequest;
 import com.qaliye.backend.profile.dto.PhotoReorderItem;
 import com.qaliye.backend.profile.dto.PhotoReorderRequest;
@@ -22,23 +25,28 @@ import java.util.UUID;
 @Service
 public class ProfilePhotoService {
 
-    private static final int MAX_PHOTOS = 6;
+    private static final Logger log = LoggerFactory.getLogger(ProfilePhotoService.class);
+
+    private static final int MAX_PHOTOS = 7;
     private static final int SIGNED_URL_TTL_SECONDS = 3600;
 
     private final NamedParameterJdbcTemplate jdbc;
     private final SupabaseStorageService storageService;
+    private final PhotoModerationService photoModerationService;
 
     public ProfilePhotoService(NamedParameterJdbcTemplate jdbc,
-                               SupabaseStorageService storageService) {
+                               SupabaseStorageService storageService,
+                               PhotoModerationService photoModerationService) {
         this.jdbc = jdbc;
         this.storageService = storageService;
+        this.photoModerationService = photoModerationService;
     }
 
     public ProfilePhotosResponse getPhotos(UUID userId) {
         List<Map<String, Object>> rows = jdbc.queryForList("""
                 SELECT id, photo_order, is_primary, moderation_status, rejection_reason, storage_bucket, storage_path, created_at
                 FROM profile_photos
-                WHERE user_id = :userId AND deleted_at IS NULL
+                WHERE user_id = :userId AND deleted_at IS NULL AND moderation_status <> 'REJECTED'
                 ORDER BY photo_order ASC
                 """, Map.of("userId", userId));
 
@@ -64,7 +72,10 @@ public class ProfilePhotoService {
         }
 
         UUID photoId = UUID.randomUUID();
-        int order = request.photoOrder() != null ? request.photoOrder() : (int) activeCount;
+        Integer maxOrder = jdbc.queryForObject(
+                "SELECT COALESCE(MAX(photo_order), -1) FROM profile_photos WHERE user_id = :userId AND deleted_at IS NULL",
+                Map.of("userId", userId), Integer.class);
+        int order = (maxOrder != null ? maxOrder : -1) + 1;
 
         jdbc.update("""
                 INSERT INTO profile_photos
@@ -81,9 +92,19 @@ public class ProfilePhotoService {
 
         recomputeCompletionScore(userId);
 
+        String fullStoragePath = request.storageBucket() + "/" + request.storagePath();
+        PhotoModerationService.SyncModerationOutcome outcome =
+                photoModerationService.processPhotoModerationSync(photoId, userId, fullStoragePath, isPrimary);
+
+        if ("REJECTED".equals(outcome.status())) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    outcome.rejectionReason() != null ? outcome.rejectionReason()
+                            : "This photo could not be approved. Please upload a different photo.");
+        }
+
         String signedUrl = storageService.generateSignedUrl(request.storageBucket(), request.storagePath(), SIGNED_URL_TTL_SECONDS);
         return new ProfilePhotoDto(photoId, order, isPrimary, signedUrl,
-                Instant.now().plusSeconds(SIGNED_URL_TTL_SECONDS), "PENDING", null);
+                Instant.now().plusSeconds(SIGNED_URL_TTL_SECONDS), outcome.status(), null);
     }
 
     @Transactional
@@ -103,15 +124,23 @@ public class ProfilePhotoService {
         List<PhotoReorderItem> items = request.photos();
 
         for (PhotoReorderItem item : items) {
-            List<Map<String, Object>> existing = jdbc.queryForList(
-                    "SELECT moderation_status FROM profile_photos WHERE id = :id AND user_id = :userId AND deleted_at IS NULL",
-                    Map.of("id", item.id(), "userId", userId));
+            List<Map<String, Object>> existing = jdbc.queryForList("""
+                    SELECT pp.moderation_status, imr.face_detection_enabled, imr.face_count
+                    FROM profile_photos pp
+                    LEFT JOIN image_moderation_results imr ON imr.image_id = pp.id
+                    WHERE pp.id = :id AND pp.user_id = :userId AND pp.deleted_at IS NULL
+                    """, Map.of("id", item.id(), "userId", userId));
             if (existing.isEmpty()) {
                 throw new ResponseStatusException(HttpStatus.NOT_FOUND, "PHOTO_NOT_FOUND");
             }
             if (Boolean.TRUE.equals(item.isPrimary())) {
                 String status = (String) existing.get(0).get("moderation_status");
-                if (!"APPROVED".equals(status)) {
+                Boolean faceEnabled = (Boolean) existing.get(0).get("face_detection_enabled");
+                Number faceCountNum = (Number) existing.get(0).get("face_count");
+                int faceCount = faceCountNum != null ? faceCountNum.intValue() : 0;
+                boolean faceVerified = faceEnabled == null
+                        || (Boolean.TRUE.equals(faceEnabled) && faceCount > 0);
+                if (!"APPROVED".equals(status) || !faceVerified) {
                     throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_PRIMARY_PHOTO");
                 }
             }
@@ -158,53 +187,96 @@ public class ProfilePhotoService {
                             .addValue("userId", userId));
         }
 
-        ensureExactlyOnePrimary(userId);
+        promoteQualifiedPrimary(userId);
         return getPhotos(userId);
     }
 
     @Transactional
     public ProfilePhotosResponse deletePhoto(UUID userId, UUID photoId) {
-        List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT id, is_primary, moderation_status FROM profile_photos WHERE id = :photoId AND user_id = :userId AND deleted_at IS NULL",
-                Map.of("photoId", photoId, "userId", userId));
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+                SELECT id, is_primary, moderation_status, storage_bucket, storage_path
+                FROM profile_photos
+                WHERE id = :photoId AND user_id = :userId AND deleted_at IS NULL
+                """, Map.of("photoId", photoId, "userId", userId));
 
         if (rows.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "PHOTO_NOT_FOUND");
         }
 
-        boolean wasPrimary = Boolean.TRUE.equals(rows.get(0).get("is_primary"));
+        boolean wasPrimary     = Boolean.TRUE.equals(rows.get(0).get("is_primary"));
         String moderationStatus = (String) rows.get(0).get("moderation_status");
+        String bucket           = (String) rows.get(0).get("storage_bucket");
+        String path             = (String) rows.get(0).get("storage_path");
 
-        Boolean isVisible = jdbc.queryForObject(
-                "SELECT is_visible FROM profiles WHERE user_id = :userId",
-                Map.of("userId", userId), Boolean.class);
-
-        if (Boolean.TRUE.equals(isVisible) && wasPrimary && "APPROVED".equals(moderationStatus)) {
-            long approvedCount = countApprovedPhotosExcluding(userId, photoId);
-            if (approvedCount == 0) {
-                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "CANNOT_DELETE_ONLY_PHOTO");
+        if (wasPrimary) {
+            Boolean isVisible = jdbc.queryForObject(
+                    "SELECT is_visible FROM profiles WHERE user_id = :userId",
+                    Map.of("userId", userId), Boolean.class);
+            UUID candidate = findQualifiedPrimaryCandidate(userId, photoId);
+            if (Boolean.TRUE.equals(isVisible) && "APPROVED".equals(moderationStatus) && candidate == null) {
+                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "NO_QUALIFIED_PRIMARY_PHOTO");
             }
         }
 
         jdbc.update("UPDATE profile_photos SET deleted_at = NOW() WHERE id = :photoId AND user_id = :userId",
                 Map.of("photoId", photoId, "userId", userId));
 
+        try {
+            storageService.deleteObject(bucket, path);
+        } catch (Exception ex) {
+            log.warn("Could not delete photo {} from Supabase Storage: {}", photoId, ex.getMessage());
+        }
+
         if (wasPrimary) {
-            ensureExactlyOnePrimary(userId);
+            promoteQualifiedPrimary(userId);
         }
 
         recomputeCompletionScore(userId);
         return getPhotos(userId);
     }
 
-    private void ensureExactlyOnePrimary(UUID userId) {
+    /**
+     * Returns the id of the best candidate to become the new primary photo:
+     * must be APPROVED and have passed face detection (face_detection_enabled = TRUE
+     * in image_moderation_results), or have no moderation record at all (moderation
+     * was globally disabled when the photo was uploaded).
+     */
+    private UUID findQualifiedPrimaryCandidate(UUID userId, UUID excludePhotoId) {
+        List<UUID> candidates = jdbc.queryForList("""
+                SELECT pp.id
+                FROM profile_photos pp
+                LEFT JOIN image_moderation_results imr ON imr.image_id = pp.id
+                WHERE pp.user_id = :userId
+                  AND pp.deleted_at IS NULL
+                  AND pp.id <> :excludeId
+                  AND pp.moderation_status = 'APPROVED'
+                  AND (
+                      imr.id IS NULL
+                      OR (imr.face_detection_enabled = TRUE AND COALESCE(imr.face_count, 0) > 0)
+                  )
+                ORDER BY pp.photo_order ASC
+                LIMIT 1
+                """, Map.of("userId", userId, "excludeId", excludePhotoId), UUID.class);
+        return candidates.isEmpty() ? null : candidates.get(0);
+    }
+
+    private void promoteQualifiedPrimary(UUID userId) {
         jdbc.update("""
                 UPDATE profile_photos
-                SET is_primary = TRUE
+                SET is_primary = TRUE, updated_at = NOW()
                 WHERE id = (
-                    SELECT id FROM profile_photos
-                    WHERE user_id = :userId AND deleted_at IS NULL
-                    ORDER BY photo_order ASC
+                    SELECT pp.id
+                    FROM profile_photos pp
+                    LEFT JOIN image_moderation_results imr ON imr.image_id = pp.id
+                    WHERE pp.user_id = :userId
+                      AND pp.deleted_at IS NULL
+                      AND pp.moderation_status = 'APPROVED'
+                      AND (
+                          imr.id IS NULL
+                          OR (imr.face_detection_enabled = TRUE AND COALESCE(imr.face_count, 0) > 0)
+                      )
+                    ORDER BY pp.photo_order ASC
                     LIMIT 1
                 )
                 AND NOT EXISTS (
@@ -216,7 +288,7 @@ public class ProfilePhotoService {
 
     private long countActivePhotos(UUID userId) {
         Long count = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM profile_photos WHERE user_id = :userId AND deleted_at IS NULL",
+                "SELECT COUNT(*) FROM profile_photos WHERE user_id = :userId AND deleted_at IS NULL AND moderation_status <> 'REJECTED'",
                 Map.of("userId", userId), Long.class);
         return count != null ? count : 0L;
     }

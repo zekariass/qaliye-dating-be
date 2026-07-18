@@ -2,6 +2,7 @@ package com.qaliye.backend.discovery.service;
 
 import com.qaliye.backend.activity.ActivityStatus;
 import com.qaliye.backend.activity.ActivityStatusService;
+import com.qaliye.backend.discovery.config.DiscoveryProperties;
 import com.qaliye.backend.discovery.dto.MatchItemDto;
 import com.qaliye.backend.discovery.dto.MatchesPageResponse;
 import org.slf4j.Logger;
@@ -28,13 +29,16 @@ public class MatchesService {
     private final NamedParameterJdbcTemplate jdbc;
     private final StorageSigningService signingService;
     private final ActivityStatusService activityStatusService;
+    private final DiscoveryProperties discoveryProps;
 
     public MatchesService(NamedParameterJdbcTemplate jdbc,
                           StorageSigningService signingService,
-                          ActivityStatusService activityStatusService) {
+                          ActivityStatusService activityStatusService,
+                          DiscoveryProperties discoveryProps) {
         this.jdbc = jdbc;
         this.signingService = signingService;
         this.activityStatusService = activityStatusService;
+        this.discoveryProps = discoveryProps;
     }
 
     /**
@@ -172,6 +176,11 @@ public class MatchesService {
             Instant firstMessageAt = toInstant(rs.getObject("first_message_at"));
             Instant lastMessageAt = toInstant(rs.getObject("last_message_at"));
 
+            boolean hasConversation = firstMessageAt != null;
+            boolean isNew = !hasConversation && matchedAt != null
+                    && matchedAt.isAfter(Instant.now().minusSeconds(
+                            discoveryProps.getNewMatchThresholdHours() * 3600L));
+
             Integer distanceKm = getIntOrNull(rs, "distance_km");
             OffsetDateTime lastActiveAt = rs.getObject("last_active_at", OffsetDateTime.class);
             boolean showActivity = rs.getBoolean("show_activity_status");
@@ -190,6 +199,7 @@ public class MatchesService {
                     lastMessageAt,
                     firstMessageAt != null,
                     rs.getBoolean("is_unread"),
+                    isNew,
                     distanceKm,
                     rs.getString("city"),
                     rs.getString("region"),

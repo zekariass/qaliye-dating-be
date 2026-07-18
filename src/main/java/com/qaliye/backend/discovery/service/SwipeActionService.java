@@ -108,6 +108,8 @@ public class SwipeActionService {
                 actionRepo.insertAction(actorId, targetId, "LIKE", clientActionId);
         dailyLimitRepo.incrementLikes(actorId);
 
+        notificationDispatcher.dispatchLikeNotification(actorId, targetId, action.id());
+
         Optional<DiscoveryActionRepository.ActionRow> mutualAction =
                 actionRepo.findMutualActiveLike(actorId, targetId);
         Optional<MatchSummaryDto> match = Optional.empty();
@@ -194,6 +196,8 @@ public class SwipeActionService {
 
         DiscoveryActionRepository.ActionRow action =
                 actionRepo.insertAction(actorId, targetId, "SUPERLIKE", clientActionId);
+
+        notificationDispatcher.dispatchSuperLikeNotification(actorId, targetId, action.id());
 
         if (!usedCredit) {
             dailyLimitRepo.incrementSuperLikes(actorId);

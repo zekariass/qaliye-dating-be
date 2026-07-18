@@ -60,7 +60,7 @@ class ChatControllerTest {
     @Test
     void sendMessage_newMessage_returns201() throws Exception {
         ChatMessageDto dto = new ChatMessageDto(UUID.randomUUID(), matchId, 1L,
-                callerId, "TEXT", "hi", "SENT", Instant.now());
+                callerId, "TEXT", "hi", "SENT", Instant.now(), List.of());
         when(messageCommandService.sendMessage(any(), eq(matchId), any()))
                 .thenReturn(new MessageCommandService.SendResult(dto, true));
 
@@ -79,7 +79,7 @@ class ChatControllerTest {
     @Test
     void sendMessage_duplicate_returns200() throws Exception {
         ChatMessageDto dto = new ChatMessageDto(UUID.randomUUID(), matchId, 1L,
-                callerId, "TEXT", "hi", "SENT", Instant.now());
+                callerId, "TEXT", "hi", "SENT", Instant.now(), List.of());
         when(messageCommandService.sendMessage(any(), eq(matchId), any()))
                 .thenReturn(new MessageCommandService.SendResult(dto, false));
 

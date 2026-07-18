@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
@@ -23,6 +24,7 @@ import static org.mockito.Mockito.*;
 class BoostCreditExpiryTest {
 
     @Mock CreditLotRepository creditLotRepo;
+    @Mock NamedParameterJdbcTemplate jdbc;
     BillingProperties billingProps;
     BoostService boostService;
 
@@ -32,7 +34,8 @@ class BoostCreditExpiryTest {
     void setUp() {
         billingProps = new BillingProperties();
         billingProps.setBoostDurationMinutes(30);
-        boostService = new BoostService(creditLotRepo, billingProps);
+        boostService = new BoostService(creditLotRepo, billingProps, jdbc);
+        lenient().when(jdbc.queryForObject(anyString(), anyMap(), eq(String.class))).thenReturn("PUBLIC");
     }
 
     // ── 1. Purchased Boost pack: expires_at = NULL, credits never expire ──────

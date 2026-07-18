@@ -98,6 +98,29 @@ public class NotificationOutboxService {
         );
     }
 
+    public void createSuperLikeReceivedEvent(UUID discoveryActionId, UUID recipientUserId,
+                                             UUID actorUserId, OffsetDateTime occurredAt) {
+        String dedupeKey = "superlike:" + discoveryActionId + ":" + recipientUserId;
+
+        if (outboxRepo.existsByDedupeKey(dedupeKey)) {
+            return;
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("notification_type", "SUPERLIKE_RECEIVED");
+        payload.put("notification_id", UUID.randomUUID().toString());
+        payload.put("discovery_action_id", discoveryActionId.toString());
+
+        outboxRepo.insert(
+                UUID.randomUUID(), "SUPERLIKE_RECEIVED",
+                recipientUserId, actorUserId,
+                null, null,
+                discoveryActionId, null,
+                dedupeKey, null,
+                toJson(payload), null, occurredAt
+        );
+    }
+
     public void createAccountAlertEvent(UUID recipientUserId, String alertCode,
                                         UUID businessEventId, OffsetDateTime occurredAt) {
         String dedupeKey = "account-alert:" + alertCode + ":" + recipientUserId

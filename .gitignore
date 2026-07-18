@@ -43,3 +43,4 @@ application-local.yml
 
 
 notes.tx
+aws-rootkey.csv

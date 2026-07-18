@@ -10,6 +10,13 @@ spring:
     username: ${SUPABASE_DB_USERNAME}
     password: ${SUPABASE_DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:8}
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}
+      connection-timeout: ${DB_POOL_CONNECTION_TIMEOUT:30000}
+      idle-timeout: ${DB_POOL_IDLE_TIMEOUT:600000}
+      max-lifetime: ${DB_POOL_MAX_LIFETIME:1800000}
+      leak-detection-threshold: ${DB_POOL_LEAK_DETECTION:30000}
 
   jpa:
     hibernate:
@@ -84,6 +91,39 @@ chat:
     window-millis: ${CHAT_RATE_LIMIT_WINDOW_MILLIS:60000}
   cursor:
     hmac-secret: ${CHAT_CURSOR_HMAC_SECRET:change-me-in-production}
+  attachment:
+    bucket: ${CHAT_ATTACHMENTS_BUCKET:chat-attachments}
+    signed-url-ttl-seconds: ${CHAT_ATTACHMENT_SIGNED_URL_TTL_SECONDS:300}
+    image-max-file-size-bytes: ${CHAT_IMAGE_MAX_FILE_SIZE_BYTES:26214400}
+    voice-max-file-size-bytes: ${CHAT_VOICE_MAX_FILE_SIZE_BYTES:26214400}
+    voice-max-duration-seconds: ${CHAT_VOICE_MAX_DURATION_SECONDS:300}
+    max-image-attachments: ${CHAT_MAX_IMAGE_ATTACHMENTS:5}
+    max-voice-attachments: ${CHAT_MAX_VOICE_ATTACHMENTS:1}
+    max-total-attachments: ${CHAT_MAX_TOTAL_ATTACHMENTS:5}
+    allowed-image-content-types:
+      - image/jpeg
+      - image/png
+      - image/webp
+      - image/gif
+      - image/bmp
+      - image/heic
+      - image/heif
+      - image/avif
+      - image/tiff
+    allowed-voice-content-types:
+      - audio/m4a
+      - audio/mp4
+      - audio/aac
+      - audio/mpeg
+      - audio/x-m4a
+      - audio/mp3
+      - audio/ogg
+      - audio/wav
+      - audio/x-wav
+      - audio/webm
+      - audio/flac
+      - audio/3gpp
+      - audio/amr
 
 stripe:
   webhook-secret: ${STRIPE_WEBHOOK_SECRET:whsec_dummy}
@@ -93,7 +133,7 @@ revenuecat:
   webhook-authorization: ${REVENUECAT_WEBHOOK_AUTHORIZATION:Bearer 81681740bf621b2e857dac2d658fc83ab2b4e17d3e08252573fa5e99061cc7b4}
 
 billing:
-  boost-duration-minutes: ${BILLING_BOOST_DURATION_MINUTES:30}
+  boost-duration-minutes: ${BILLING_BOOST_DURATION_MINUTES:60}
   payment-order-expiry-hours: ${BILLING_ORDER_EXPIRY_HOURS:72}
   receipt-signed-url-ttl-seconds: ${BILLING_RECEIPT_URL_TTL:300}
   manual-transfer-max-age-hours: ${BILLING_MANUAL_TRANSFER_MAX_AGE_HOURS:48000}
@@ -126,6 +166,8 @@ app:
     webhook-secret: ${INTERNAL_WEBHOOK_SECRET:dkdkdkdk}
 
 discovery:
+  primary-placement-weight: ${DISCOVERY_PRIMARY_PLACEMENT_WEIGHT:100}
+  new-match-threshold-hours: ${DISCOVERY_NEW_MATCH_THRESHOLD_HOURS:168}
   rewind:
     match-grace-period-minutes: 10
   queue:
@@ -137,7 +179,29 @@ discovery:
 
 storage:
   signed-url:
-    ttl-seconds: 3600
+    ttl-seconds: 7200
+
+support:
+  attachments-bucket: ${SUPPORT_ATTACHMENTS_BUCKET:support-attachments}
+  attachment-signed-url-ttl-seconds: ${SUPPORT_ATTACHMENT_SIGNED_URL_TTL_SECONDS:300}
+  max-file-size-bytes: ${SUPPORT_MAX_FILE_SIZE_BYTES:52428800}
+  max-files-per-message: ${SUPPORT_MAX_FILES_PER_MESSAGE:10}
+  allowed-content-types:
+    - image/jpeg
+    - image/png
+    - image/webp
+    - application/pdf
+    - text/plain
+  voice-max-duration-seconds: ${SUPPORT_VOICE_MAX_DURATION_SECONDS:300}
+  voice-max-file-size-bytes: ${SUPPORT_VOICE_MAX_FILE_SIZE_BYTES:52428800}
+  voice-allowed-content-types:
+    - audio/m4a
+    - audio/mp4
+    - audio/aac
+    - audio/mpeg
+    - audio/wav
+    - audio/webm
+    - audio/x-m4a
 
 activity-status:
   online-window-seconds: ${ACTIVITY_STATUS_ONLINE_WINDOW_SECONDS:180}
@@ -176,6 +240,30 @@ push:
   marketing:
     min-interval-days: ${PUSH_MARKETING_MIN_INTERVAL_DAYS:7}
     reservation-minutes: ${PUSH_MARKETING_RESERVATION_MINUTES:30}
+
+aws:
+  region: ${AWS_REGION:eu-central-1}
+  credentials:
+    access-key-id: ${AWS_ACCESS_KEY_ID:}
+    secret-access-key: ${AWS_SECRET_ACCESS_KEY:}
+    session-token: ${AWS_SESSION_TOKEN:}
+
+image:
+  moderation:
+    enabled: ${IMAGE_MODERATION_ENABLED:true}
+    max-retries: ${IMAGE_MODERATION_MAX_RETRIES:3}
+    retry-initial-delay-ms: ${IMAGE_MODERATION_RETRY_INITIAL_DELAY_MS:1000}
+    face-detection:
+      enabled: ${IMAGE_FACE_DETECTION_ENABLED:true}
+      min-confidence: ${IMAGE_FACE_MIN_CONFIDENCE:95.0}
+      min-brightness: ${IMAGE_FACE_MIN_BRIGHTNESS:3.0}
+      min-sharpness: ${IMAGE_FACE_MIN_SHARPNESS:3.0}
+      min-size-percent: ${IMAGE_FACE_MIN_SIZE_PERCENT:0.0}
+      occlusion-check-enabled: ${IMAGE_FACE_OCCLUSION_CHECK_ENABLED:false}
+    nudity-moderation:
+      enabled: ${IMAGE_NUDITY_MODERATION_ENABLED:true}
+      min-confidence: ${IMAGE_NUDITY_MIN_CONFIDENCE:90.0}
+      suggestive-content-action: ${IMAGE_SUGGESTIVE_CONTENT_ACTION:MANUAL_REVIEW} # MANUAL_REVIEW, APPROVE or REJECT
 
 logging:
   level:

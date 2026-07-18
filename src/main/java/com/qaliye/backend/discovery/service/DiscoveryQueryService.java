@@ -164,6 +164,7 @@ public class DiscoveryQueryService {
                           AND ab.status = 'ACTIVE'
                           AND NOW() BETWEEN ab.started_at AND ab.expires_at
                     )                                                             AS is_boosted,
+                    COALESCE(ups.is_paid, FALSE)                                   AS is_paid,
                     a.coords                                                      AS candidate_coords,
                     (
                         CASE WHEN EXISTS (
@@ -172,6 +173,8 @@ public class DiscoveryQueryService {
                               AND ab.status = 'ACTIVE'
                               AND NOW() BETWEEN ab.started_at AND ab.expires_at
                         ) THEN 1000.0 ELSE 0.0 END
+                        + CASE WHEN COALESCE(ups.is_paid, FALSE)
+                               THEN :primaryPlacementWeight ELSE 0 END
                         + (EXTRACT(EPOCH FROM au.last_active_at) / 1e9)
                         + CASE
                             WHEN :locationMode = 'nearby' AND NOT :skipDistance
@@ -185,12 +188,30 @@ public class DiscoveryQueryService {
                 FROM profiles p
                 JOIN app_users au    ON au.id = p.user_id
                 JOIN addresses a     ON a.id  = au.address_id
+                LEFT JOIN LATERAL (
+                    SELECT sp.plan_kind = 'PAID' AS is_paid
+                    FROM user_subscriptions us
+                    JOIN subscription_plans sp ON sp.id = us.plan_id
+                    WHERE us.user_id = p.user_id
+                      AND us.status IN ('ACTIVE', 'PENDING_VERIFICATION')
+                      AND sp.is_active = TRUE
+                    ORDER BY CASE WHEN sp.plan_kind = 'PAID' THEN 0 ELSE 1 END,
+                             us.current_period_end DESC NULLS LAST
+                    LIMIT 1
+                ) ups ON TRUE
                 WHERE p.is_visible      = TRUE
                   AND p.is_onboarded    = TRUE
                   AND au.status         = 'ACTIVE'
                   AND au.deleted_at     IS NULL
                   AND p.user_id        <> :actorId
-                  AND p.discovery_mode <> 'INCOGNITO'
+                  AND (p.discovery_mode <> 'INCOGNITO'
+                       OR EXISTS (
+                           SELECT 1 FROM user_discovery_actions uda_inc
+                           WHERE uda_inc.actor_user_id  = p.user_id
+                             AND uda_inc.target_user_id = :actorId
+                             AND uda_inc.action_type   IN ('LIKE', 'SUPERLIKE')
+                             AND uda_inc.status         = 'ACTIVE'
+                       ))
                   AND p.gender          = :targetGender
                   AND p.user_id        NOT IN (SELECT user_id FROM excluded_targets)
                   AND calculate_age(p.date_of_birth) BETWEEN :minAge AND :maxAge
@@ -280,6 +301,14 @@ public class DiscoveryQueryService {
               AND au.status         = 'ACTIVE'
               AND au.deleted_at     IS NULL
               AND p.user_id        <> :actorId
+              AND (p.discovery_mode <> 'INCOGNITO'
+                   OR EXISTS (
+                       SELECT 1 FROM user_discovery_actions uda_inc
+                       WHERE uda_inc.actor_user_id  = p.user_id
+                         AND uda_inc.target_user_id = :actorId
+                         AND uda_inc.action_type   IN ('LIKE', 'SUPERLIKE')
+                         AND uda_inc.status         = 'ACTIVE'
+                   ))
               AND p.gender          = :targetGender
               AND p.user_id        NOT IN (SELECT user_id FROM excluded_targets)
               AND calculate_age(p.date_of_birth) BETWEEN :minAge AND :maxAge
@@ -525,7 +554,8 @@ public class DiscoveryQueryService {
                 .addValue("limit", limit)
                 .addValue("noCursor", noCursor)
                 .addValue("cursorScore", noCursor ? 0.0 : cursor.score())
-                .addValue("cursorUserId", noCursor ? null : cursor.userId().toString());
+                .addValue("cursorUserId", noCursor ? null : cursor.userId().toString())
+                .addValue("primaryPlacementWeight", props.getPrimaryPlacementWeight());
     }
 
     private void enrichWithPhotos(List<DiscoveryProfileDto> profiles) {

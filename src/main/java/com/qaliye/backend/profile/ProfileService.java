@@ -48,8 +48,6 @@ public class ProfileService {
             Set.of("NEVER_MARRIED", "DIVORCED", "WIDOWED", "SEPARATED");
     private static final Set<String> VALID_EDUCATION_LEVEL =
             Set.of("HIGH_SCHOOL", "DIPLOMA", "BACHELORS", "MASTERS", "DOCTORATE", "OTHER");
-    private static final Set<String> VALID_NATIONALITY =
-            Set.of("ETHIOPIAN", "ERITREAN", "DUAL_CITIZEN", "OTHER");
     private static final Set<String> VALID_RELIGION =
             Set.of("ORTHODOX_CHRISTIAN", "PROTESTANT", "CATHOLIC", "MUSLIM",
                    "TRADITIONAL", "OTHER", "PREFER_NOT_TO_SAY");
@@ -93,7 +91,8 @@ public class ProfileService {
                     p.activity_level, p.interests, p.language_ids,
                     p.discovery_mode, p.is_visible, p.is_onboarded, p.is_verified, p.profile_completion_score,
                     a.id AS address_id, a.city, a.region, a.country_code, a.country_name,
-                    a.formatted_address, a.location_source
+                    a.formatted_address, a.location_source,
+                    au.role
                 FROM profiles p
                 JOIN app_users au ON au.id = p.user_id
                 LEFT JOIN addresses a ON a.id = au.address_id
@@ -155,7 +154,8 @@ public class ProfileService {
                         ? ((Number) r.get("profile_completion_score")).intValue() : 0,
                 prefs,
                 primaryPhotoUrl,
-                photos
+                photos,
+                (String) r.get("role")
         );
     }
 
@@ -177,7 +177,6 @@ public class ProfileService {
 
         validateOptionalEnum("marital_status", request.maritalStatus(), VALID_MARITAL_STATUS);
         validateOptionalEnum("education_level", request.educationLevel(), VALID_EDUCATION_LEVEL);
-        validateOptionalEnum("nationality", request.nationality(), VALID_NATIONALITY);
         validateOptionalEnum("religion", request.religion(), VALID_RELIGION);
 
         Boolean smoking = request.smoking();
@@ -221,7 +220,6 @@ public class ProfileService {
                 .addValue("gender", request.gender())
                 .addValue("dateOfBirth", request.dateOfBirth())
                 .addValue("heightCm", request.heightCm())
-                .addValue("residencyType", request.residencyType())
                 .addValue("bio", request.bio())
                 .addValue("nationality", request.nationality())
                 .addValue("religion", request.religion())
@@ -252,7 +250,6 @@ public class ProfileService {
                     gender                 = COALESCE(:gender, gender),
                     date_of_birth          = COALESCE(:dateOfBirth, date_of_birth),
                     height_cm              = COALESCE(:heightCm, height_cm),
-                    residency_type         = COALESCE(:residencyType, residency_type),
                     bio                    = COALESCE(:bio, bio),
                     nationality            = COALESCE(:nationality, nationality),
                     religion               = COALESCE(:religion, religion),
@@ -442,11 +439,12 @@ public class ProfileService {
 
     private void setLocationByPlace(UUID userId, UUID placeId) {
         List<Map<String, Object>> places = jdbc.queryForList(
-                "SELECT id FROM location_places WHERE id = :placeId AND is_active = TRUE",
+                "SELECT id, country_code FROM location_places WHERE id = :placeId AND is_active = TRUE",
                 Map.of("placeId", placeId));
         if (places.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "ADDRESS_NOT_FOUND");
         }
+        String countryCode = (String) places.get(0).get("country_code");
 
         UUID existingAddressId = fetchExistingAddressId(userId);
         if (existingAddressId != null) {
@@ -480,6 +478,7 @@ public class ProfileService {
                         Map.of("addressId", newIds.get(0), "userId", userId));
             }
         }
+        inferAndPersistResidencyType(userId, countryCode);
     }
 
     private void setLocationByGps(UUID userId, SetLocationRequest req) {
@@ -491,13 +490,19 @@ public class ProfileService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "INVALID_LOCATION");
         }
 
+        if (req.countryCode() == null || req.countryCode().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_COUNTRY_CODE");
+        }
+        String countryCode = req.countryCode().trim().toUpperCase();
+        if (countryCode.length() > 2) countryCode = countryCode.substring(0, 2);
+        if (countryCode.length() != 2 || !countryCode.chars().allMatch(Character::isLetter)) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_COUNTRY_CODE");
+        }
+
         String city = trimOrFallback(req.city(), "GPS Location");
-        String countryCode = trimOrFallback(req.countryCode(), "XX");
         String countryName = trimOrFallback(req.countryName(), "Unknown");
         String region = req.region() != null ? req.region().trim() : null;
         String formatted = req.formattedAddress() != null ? req.formattedAddress().trim() : null;
-
-        if (countryCode.length() > 2) countryCode = countryCode.substring(0, 2).toUpperCase();
 
         UUID existingAddressId = fetchExistingAddressId(userId);
         if (existingAddressId != null) {
@@ -533,6 +538,22 @@ public class ProfileService {
                         Map.of("addressId", newIds.get(0), "userId", userId));
             }
         }
+        inferAndPersistResidencyType(userId, countryCode);
+    }
+
+    static String inferResidencyType(String countryCode) {
+        if (countryCode == null || countryCode.isBlank()) return "DIASPORA";
+        return switch (countryCode.trim().toUpperCase()) {
+            case "ET" -> "ETHIOPIA";
+            case "ER" -> "ERITREA";
+            default   -> "DIASPORA";
+        };
+    }
+
+    private void inferAndPersistResidencyType(UUID userId, String countryCode) {
+        String residencyType = inferResidencyType(countryCode);
+        jdbc.update("UPDATE profiles SET residency_type = :rt WHERE user_id = :userId",
+                Map.of("rt", residencyType, "userId", userId));
     }
 
     private void checkActorEligibility(UUID userId) {
@@ -656,10 +677,6 @@ public class ProfileService {
                 || dob.isBefore(LocalDate.now().minusYears(120))) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_ERROR");
         }
-        String residencyType = request.residencyType();
-        if (residencyType == null || !VALID_RESIDENCY_TYPES.contains(residencyType)) {
-            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_ERROR");
-        }
         String relationshipIntention = request.relationshipIntention();
         if (relationshipIntention == null || !VALID_RELATIONSHIP_INTENTION.contains(relationshipIntention)) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_ERROR");
@@ -667,7 +684,6 @@ public class ProfileService {
 
         validateOptionalEnum("marital_status", request.maritalStatus(), VALID_MARITAL_STATUS);
         validateOptionalEnum("education_level", request.educationLevel(), VALID_EDUCATION_LEVEL);
-        validateOptionalEnum("nationality", request.nationality(), VALID_NATIONALITY);
         validateOptionalEnum("religion", request.religion(), VALID_RELIGION);
 
         Boolean smoking = request.smoking();
@@ -694,7 +710,7 @@ public class ProfileService {
                     smoking, drinking, smoking_detail, drinking_detail,
                     activity_level, interests, profile_completion_score
                 ) VALUES (
-                    :userId, :displayName, :gender, :dateOfBirth, :heightCm, :residencyType,
+                    :userId, :displayName, :gender, :dateOfBirth, :heightCm, 'DIASPORA',
                     :bio, :nationality, :religion, :educationLevel, :occupation,
                     :relationshipIntention, :maritalStatus, :hasChildren, :wantsChildren,
                     :smoking, :drinking, :smokingDetail, :drinkingDetail,
@@ -707,7 +723,6 @@ public class ProfileService {
                         .addValue("gender", gender)
                         .addValue("dateOfBirth", dob)
                         .addValue("heightCm", request.heightCm())
-                        .addValue("residencyType", residencyType)
                         .addValue("bio", trimOrNull(request.bio()))
                         .addValue("nationality", request.nationality())
                         .addValue("religion", request.religion())
@@ -830,14 +845,15 @@ public class ProfileService {
         checkActorEligibility(userId);
 
         if (isVisible) {
-            boolean hasApprovedPrimary = jdbc.queryForObject("""
+            boolean hasQualifiedPrimary = jdbc.queryForObject("""
                     SELECT EXISTS(
                         SELECT 1 FROM profile_photos
                         WHERE user_id = :userId AND deleted_at IS NULL
-                          AND is_primary = TRUE AND moderation_status = 'APPROVED'
+                          AND is_primary = TRUE
+                          AND moderation_status IN ('APPROVED', 'MANUAL_REVIEW')
                     )
                     """, Map.of("userId", userId), Boolean.class);
-            if (!Boolean.TRUE.equals(hasApprovedPrimary)) {
+            if (!Boolean.TRUE.equals(hasQualifiedPrimary)) {
                 throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "MISSING_APPROVED_PRIMARY_PHOTO");
             }
         }

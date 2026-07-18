@@ -7,10 +7,17 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "discovery")
 public class DiscoveryProperties {
 
+    private int primaryPlacementWeight = 100;
     private Rewind rewind = new Rewind();
     private Queue queue = new Queue();
     private Cursor cursor = new Cursor();
     private Distance distance = new Distance();
+    private int newMatchThresholdHours = 168;
+
+    public int getPrimaryPlacementWeight() { return primaryPlacementWeight; }
+    public void setPrimaryPlacementWeight(int primaryPlacementWeight) {
+        this.primaryPlacementWeight = primaryPlacementWeight;
+    }
 
     public Rewind getRewind() { return rewind; }
     public void setRewind(Rewind rewind) { this.rewind = rewind; }
@@ -23,6 +30,11 @@ public class DiscoveryProperties {
 
     public Distance getDistance() { return distance; }
     public void setDistance(Distance distance) { this.distance = distance; }
+
+    public int getNewMatchThresholdHours() { return newMatchThresholdHours; }
+    public void setNewMatchThresholdHours(int newMatchThresholdHours) {
+        this.newMatchThresholdHours = newMatchThresholdHours;
+    }
 
     public static class Rewind {
         private int matchGracePeriodMinutes = 10;

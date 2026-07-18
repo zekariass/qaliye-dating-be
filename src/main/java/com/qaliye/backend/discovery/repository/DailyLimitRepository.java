@@ -18,16 +18,19 @@ public class DailyLimitRepository {
         this.jdbc = jdbc;
     }
 
-    public record DailyLimitRow(UUID userId, int likesUsed, int superLikesUsed, int rewindsUsed) {}
+    public record DailyLimitRow(UUID userId, int likesUsed, int superLikesUsed, int rewindsUsed,
+                                   int voiceChatMsgsUsed, int imageChatMsgsUsed) {}
 
     private static final String UPSERT_FOR_TODAY = """
-            INSERT INTO user_daily_limits (user_id, limit_date, likes_used, super_likes_used, rewinds_used)
-            VALUES (:userId, (NOW() AT TIME ZONE 'UTC')::DATE, 0, 0, 0)
+            INSERT INTO user_daily_limits (user_id, limit_date, likes_used, super_likes_used, rewinds_used,
+                                           voice_chat_msgs_used, image_chat_msgs_used)
+            VALUES (:userId, (NOW() AT TIME ZONE 'UTC')::DATE, 0, 0, 0, 0, 0)
             ON CONFLICT (user_id, limit_date) DO NOTHING
             """;
 
     private static final String SELECT_FOR_UPDATE = """
-            SELECT user_id, likes_used, super_likes_used, rewinds_used
+            SELECT user_id, likes_used, super_likes_used, rewinds_used,
+                   voice_chat_msgs_used, image_chat_msgs_used
             FROM user_daily_limits
             WHERE user_id = :userId
               AND limit_date = (NOW() AT TIME ZONE 'UTC')::DATE
@@ -98,12 +101,42 @@ public class DailyLimitRepository {
         jdbc.update(DECREMENT_SUPERLIKES, new MapSqlParameterSource("userId", userId));
     }
 
+    private static final String INCREMENT_VOICE_CHAT_MSGS = """
+            UPDATE user_daily_limits
+            SET voice_chat_msgs_used = voice_chat_msgs_used + :count
+            WHERE user_id = :userId
+              AND limit_date = (NOW() AT TIME ZONE 'UTC')::DATE
+            """;
+
+    private static final String INCREMENT_IMAGE_CHAT_MSGS = """
+            UPDATE user_daily_limits
+            SET image_chat_msgs_used = image_chat_msgs_used + :count
+            WHERE user_id = :userId
+              AND limit_date = (NOW() AT TIME ZONE 'UTC')::DATE
+            """;
+
+    public void incrementVoiceChatMsgs(UUID userId, int count) {
+        jdbc.update(INCREMENT_VOICE_CHAT_MSGS,
+                new MapSqlParameterSource()
+                        .addValue("userId", userId)
+                        .addValue("count", count));
+    }
+
+    public void incrementImageChatMsgs(UUID userId, int count) {
+        jdbc.update(INCREMENT_IMAGE_CHAT_MSGS,
+                new MapSqlParameterSource()
+                        .addValue("userId", userId)
+                        .addValue("count", count));
+    }
+
     private DailyLimitRow mapRow(ResultSet rs, int rowNum) throws SQLException {
         return new DailyLimitRow(
                 rs.getObject("user_id", UUID.class),
                 rs.getInt("likes_used"),
                 rs.getInt("super_likes_used"),
-                rs.getInt("rewinds_used")
+                rs.getInt("rewinds_used"),
+                rs.getInt("voice_chat_msgs_used"),
+                rs.getInt("image_chat_msgs_used")
         );
     }
 }

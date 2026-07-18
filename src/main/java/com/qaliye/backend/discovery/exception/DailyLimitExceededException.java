@@ -16,6 +16,8 @@ public class DailyLimitExceededException extends DiscoveryException {
             case "LIKES" -> "DAILY_LIKE_LIMIT_EXCEEDED";
             case "SUPERLIKES" -> "DAILY_SUPERLIKE_LIMIT_EXCEEDED";
             case "REWINDS" -> "DAILY_REWIND_LIMIT_EXCEEDED";
+            case "VOICE_CHAT_MSGS" -> "DAILY_VOICE_CHAT_MSG_LIMIT_EXCEEDED";
+            case "IMAGE_CHAT_MSGS" -> "DAILY_IMAGE_CHAT_MSG_LIMIT_EXCEEDED";
             default -> "DAILY_LIMIT_EXCEEDED";
         };
     }
@@ -25,6 +27,8 @@ public class DailyLimitExceededException extends DiscoveryException {
             case "LIKES" -> "You have reached your daily like limit.";
             case "SUPERLIKES" -> "You have reached your daily super-like limit.";
             case "REWINDS" -> "You have reached your daily rewind limit.";
+            case "VOICE_CHAT_MSGS" -> "You have reached your daily voice message limit.";
+            case "IMAGE_CHAT_MSGS" -> "You have reached your daily image message limit.";
             default -> "You have reached your daily limit.";
         };
     }

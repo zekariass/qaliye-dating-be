@@ -1,5 +1,6 @@
 package com.qaliye.backend.chat.exception;
 
+import com.qaliye.backend.discovery.exception.DailyLimitExceededException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpHeaders;
@@ -7,6 +8,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import java.util.Map;
 import java.util.UUID;
 
 @RestControllerAdvice(basePackages = "com.qaliye.backend.chat.controller")
@@ -22,5 +24,15 @@ public class ChatExceptionHandler {
             builder = builder.header(HttpHeaders.RETRY_AFTER, String.valueOf(rle.getRetryAfterSeconds()));
         }
         return builder.body(body);
+    }
+
+    @ExceptionHandler(DailyLimitExceededException.class)
+    public ResponseEntity<Map<String, Object>> handleDailyLimit(DailyLimitExceededException ex) {
+        return ResponseEntity.status(ex.getHttpStatus())
+                .body(Map.of("error", Map.of(
+                        "code", ex.getErrorCode(),
+                        "message", ex.getMessage(),
+                        "details", Map.of("limit_type", ex.getLimitType())
+                )));
     }
 }

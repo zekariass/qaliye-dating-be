@@ -53,7 +53,7 @@ class MatchLifecycleServiceTest {
     void endMatch_alreadyEnded_isNoOp() {
         ChatMatchRepository.MatchRow ended = new ChatMatchRepository.MatchRow(matchId, userOneId, userTwoId, "ENDED",
                 null, null, "USER_UNMATCH", 1L, 0L, 0L, 0L, 0L,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, 0L, 0L);
         when(matchRepository.findByIdForUpdate(matchId)).thenReturn(Optional.of(ended));
 
         boolean result = service.endMatch(matchId, "USER_UNMATCH", endedByUser);
@@ -113,6 +113,6 @@ class MatchLifecycleServiceTest {
     private ChatMatchRepository.MatchRow activeMatch() {
         return new ChatMatchRepository.MatchRow(matchId, userOneId, userTwoId, "ACTIVE",
                 null, null, null, 1L, 0L, 0L, 0L, 0L,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, 0L, 0L);
     }
 }

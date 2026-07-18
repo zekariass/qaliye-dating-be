@@ -1,0 +1,14 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "QaliyeRekognitionModeration",
+      "Effect": "Allow",
+      "Action": [
+        "rekognition:DetectFaces",
+        "rekognition:DetectModerationLabels"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

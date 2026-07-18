@@ -41,5 +41,6 @@ public record ProfileMeDto(
         Integer profileCompletionScore,
         DiscoveryPreferencesDto discoveryPreferences,
         String primaryPhotoUrl,
-        List<ProfilePhotoDto> photos
+        List<ProfilePhotoDto> photos,
+        String role
 ) {}

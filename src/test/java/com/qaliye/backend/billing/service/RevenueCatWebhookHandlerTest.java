@@ -9,6 +9,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
@@ -24,6 +25,7 @@ class RevenueCatWebhookHandlerTest {
     @Mock FulfillmentService fulfillmentService;
     @Mock CacheManager cacheManager;
     @Mock Cache subscriptionCache;
+    @Mock NamedParameterJdbcTemplate jdbc;
     ObjectMapper objectMapper = new ObjectMapper();
 
     RevenueCatWebhookHandler handler;
@@ -34,7 +36,7 @@ class RevenueCatWebhookHandlerTest {
     @BeforeEach
     void setUp() {
         lenient().when(cacheManager.getCache("subscriptionFeatures")).thenReturn(subscriptionCache);
-        handler = new RevenueCatWebhookHandler(billingRepo, fulfillmentService, objectMapper, cacheManager);
+        handler = new RevenueCatWebhookHandler(billingRepo, fulfillmentService, objectMapper, cacheManager, jdbc);
     }
 
     // ── 1. Initial purchase creates one active subscription ──────────────────

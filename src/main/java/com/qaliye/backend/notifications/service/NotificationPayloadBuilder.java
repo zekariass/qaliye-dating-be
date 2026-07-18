@@ -44,6 +44,7 @@ public class NotificationPayloadBuilder {
             case "CHAT_MESSAGE"  -> buildChatMessage(outbox, deviceToken);
             case "MATCH_CREATED" -> buildMatchCreated(outbox, deviceToken);
             case "LIKE_RECEIVED" -> buildLikeReceived(outbox, deviceToken);
+            case "SUPERLIKE_RECEIVED" -> buildSuperLikeReceived(outbox, deviceToken);
             case "ACCOUNT_ALERT" -> buildAccountAlert(outbox, deviceToken);
             case "MARKETING"     -> buildMarketing(outbox, deviceToken);
             default              -> throw new IllegalArgumentException(
@@ -96,6 +97,16 @@ public class NotificationPayloadBuilder {
 
         return new ExpoMessage(deviceToken, "Qaliye", "Someone liked your profile!", data,
                 null, null, null, "normal", "likes");
+    }
+
+    private ExpoMessage buildSuperLikeReceived(OutboxRow outbox, String deviceToken) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("notification_type", "SUPERLIKE_RECEIVED");
+        data.put("discovery_action_id", outbox.discoveryActionId() != null
+                ? outbox.discoveryActionId().toString() : null);
+
+        return new ExpoMessage(deviceToken, "Qaliye", "Someone superliked your profile! ⭐", data,
+                null, null, null, "high", "likes");
     }
 
     private ExpoMessage buildAccountAlert(OutboxRow outbox, String deviceToken) {

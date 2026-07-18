@@ -1,6 +1,7 @@
 package com.qaliye.backend.billing.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.qaliye.backend.billing.BillingProperties;
 import com.qaliye.backend.billing.dto.EntitlementResponse;
 import com.qaliye.backend.billing.repository.BillingRepository;
 import com.qaliye.backend.billing.repository.CreditLotRepository;
@@ -29,20 +30,23 @@ class EntitlementServiceTest {
 
     EntitlementService service;
     ObjectMapper objectMapper = new ObjectMapper();
+    BillingProperties billingProps = new BillingProperties();
 
     UUID userId = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
-        service = new EntitlementService(billingRepo, creditLotRepo, jdbc, objectMapper);
+        billingProps.setBoostDurationMinutes(60);
+        service = new EntitlementService(billingRepo, creditLotRepo, jdbc, objectMapper, billingProps);
     }
 
     @Test
     void getEntitlements_freeUser_returnsFreeplan() {
         when(billingRepo.findActiveSubscription(userId)).thenReturn(Optional.empty());
         when(billingRepo.getUserCountryCode(userId)).thenReturn("ET");
-        when(jdbc.queryForList(contains("subscription_plans"), anyMap()))
-                .thenReturn(List.of(Map.of("id", UUID.randomUUID())));
+        UUID freePlanId = UUID.randomUUID();
+        when(jdbc.queryForList(contains("plan_kind = 'FREE'"), anyMap()))
+                .thenReturn(List.of(Map.of("id", freePlanId, "features", "{\"seeWhoLikedYou\":false,\"advancedFilters\":false,\"incognitoMode\":true}")));
         doNothing().when(jdbc).query(contains("subscription_plan_limits"), anyMap(), any(RowCallbackHandler.class));
         when(jdbc.queryForList(contains("user_daily_limits"), anyMap()))
                 .thenReturn(Collections.emptyList());
@@ -56,6 +60,7 @@ class EntitlementServiceTest {
         assertThat(response.plan()).isEqualTo("FREE");
         assertThat(response.subscription()).isNull();
         assertThat(response.features()).containsEntry("seeWhoLikedYou", false);
+        assertThat(response.features()).containsEntry("incognitoMode", true);
     }
 
     @Test
@@ -92,8 +97,8 @@ class EntitlementServiceTest {
     void getEntitlements_withActiveBoost_includesBoostInfo() {
         when(billingRepo.findActiveSubscription(userId)).thenReturn(Optional.empty());
         when(billingRepo.getUserCountryCode(userId)).thenReturn("GLOBAL");
-        when(jdbc.queryForList(contains("subscription_plans"), anyMap()))
-                .thenReturn(List.of(Map.of("id", UUID.randomUUID())));
+        when(jdbc.queryForList(contains("plan_kind = 'FREE'"), anyMap()))
+                .thenReturn(List.of(Map.of("id", UUID.randomUUID(), "features", "{}")));
         doNothing().when(jdbc).query(contains("subscription_plan_limits"), anyMap(), any(RowCallbackHandler.class));
         when(jdbc.queryForList(contains("user_daily_limits"), anyMap()))
                 .thenReturn(Collections.emptyList());
