@@ -11,9 +11,13 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -21,13 +25,19 @@ class OfferServiceTest {
 
     @Mock BillingRepository billingRepo;
     @Mock BillingMarketResolver marketResolver;
+    @Mock PromotionEligibilityService promotionEligibilityService;
     OfferService service;
 
     UUID userId = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
-        service = new OfferService(billingRepo, marketResolver);
+        service = new OfferService(billingRepo, marketResolver, promotionEligibilityService);
+        lenient().when(billingRepo.getUnlimitedEntitlementTypes(any())).thenReturn(java.util.Set.of());
+        lenient().when(promotionEligibilityService.findBestPurchasePromotion(any(), any(), anyInt(), any(), any()))
+                .thenReturn(Optional.empty());
+        lenient().when(promotionEligibilityService.findClaimablePromotions(any(), any(), any()))
+                .thenReturn(List.of());
     }
 
     @Test
@@ -115,7 +125,7 @@ class OfferServiceTest {
 
     private BillingRepository.OfferRow createOffer(String productCode) {
         return new BillingRepository.OfferRow(
-                UUID.randomUUID(), "ET", "ANDROID",
+                UUID.randomUUID(), null, "ET", "ANDROID",
                 "ETB", 49900, false,
                 null, null, null,
                 productCode, "MONTH", 1,

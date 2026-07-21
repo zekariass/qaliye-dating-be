@@ -2,6 +2,7 @@ package com.qaliye.backend.billing.service;
 
 import com.qaliye.backend.billing.repository.BillingRepository;
 import com.qaliye.backend.billing.repository.CreditLotRepository;
+import com.qaliye.backend.billing.repository.PromotionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,6 +22,7 @@ class FulfillmentServiceRevenueCatTest {
 
     @Mock BillingRepository billingRepo;
     @Mock CreditLotRepository creditLotRepo;
+    @Mock PromotionRepository promotionRepo;
 
     FulfillmentService fulfillmentService;
 
@@ -35,7 +37,7 @@ class FulfillmentServiceRevenueCatTest {
 
     @BeforeEach
     void setUp() {
-        fulfillmentService = new FulfillmentService(billingRepo, creditLotRepo);
+        fulfillmentService = new FulfillmentService(billingRepo, creditLotRepo, promotionRepo);
         lenient().when(creditLotRepo.getPlanBoostLimit(any())).thenReturn(1);
         lenient().doNothing().when(billingRepo).lockUserRowForUpdate(any());
     }

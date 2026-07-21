@@ -2,6 +2,7 @@ package com.qaliye.backend.billing.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qaliye.backend.billing.repository.BillingRepository;
+import com.qaliye.backend.billing.repository.PromotionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -18,13 +19,16 @@ public class ChapaWebhookHandler {
 
     private final BillingRepository billingRepo;
     private final FulfillmentService fulfillmentService;
+    private final PromotionRepository promotionRepo;
     private final ObjectMapper objectMapper;
 
     public ChapaWebhookHandler(BillingRepository billingRepo,
                                 FulfillmentService fulfillmentService,
+                                PromotionRepository promotionRepo,
                                 ObjectMapper objectMapper) {
         this.billingRepo = billingRepo;
         this.fulfillmentService = fulfillmentService;
+        this.promotionRepo = promotionRepo;
         this.objectMapper = objectMapper;
     }
 
@@ -74,6 +78,7 @@ public class ChapaWebhookHandler {
                 if ("failed".equalsIgnoreCase(status) || "cancelled".equalsIgnoreCase(status)) {
                     billingRepo.updateOrderStatus(order.id(), "REJECTED",
                             "Chapa payment " + status);
+                    promotionRepo.cancelRedemptionByOrderId(order.id(), "payment_" + status);
                 }
             }
         } catch (Exception e) {

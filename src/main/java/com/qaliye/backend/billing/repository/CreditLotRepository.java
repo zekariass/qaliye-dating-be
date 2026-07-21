@@ -268,4 +268,29 @@ public class CreditLotRepository {
                 rs.getTimestamp("expires_at").toInstant()
         ));
     }
+
+    // ── Account deletion: expire all credits and cancel active boosts ───────
+
+    private static final String EXPIRE_ALL_LOTS_FOR_USER_SQL = """
+            UPDATE user_entitlement_credit_lots
+            SET quantity_remaining = 0
+            WHERE user_id = :userId
+              AND quantity_remaining > 0
+            """;
+
+    public int expireAllCreditLotsForUser(UUID userId) {
+        return jdbc.update(EXPIRE_ALL_LOTS_FOR_USER_SQL, Map.of("userId", userId));
+    }
+
+    private static final String CANCEL_ACTIVE_BOOSTS_FOR_USER_SQL = """
+            UPDATE active_boosts
+            SET status   = 'CANCELLED',
+                ended_at  = NOW()
+            WHERE user_id = :userId
+              AND status = 'ACTIVE'
+            """;
+
+    public int cancelActiveBoostsForUser(UUID userId) {
+        return jdbc.update(CANCEL_ACTIVE_BOOSTS_FOR_USER_SQL, Map.of("userId", userId));
+    }
 }

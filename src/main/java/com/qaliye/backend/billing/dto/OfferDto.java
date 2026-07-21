@@ -1,5 +1,6 @@
 package com.qaliye.backend.billing.dto;
 
+import java.util.List;
 import java.util.UUID;
 
 public record OfferDto(
@@ -10,6 +11,8 @@ public record OfferDto(
         String currency,
         int priceMinorUnits,
         String displayPrice,
+        int effectivePriceMinorUnits,
+        String effectiveDisplayPrice,
         Integer billingIntervalCount,
         String billingIntervalUnit,
         boolean autoRenew,
@@ -17,5 +20,7 @@ public record OfferDto(
         String revenuecatOfferingId,
         String revenuecatPackageId,
         boolean hasAvailablePaymentMethods,
-        int availablePaymentMethodCount
+        int availablePaymentMethodCount,
+        PromotionDto promotion,
+        List<ClaimablePromotionDto> claimablePromotions
 ) {}

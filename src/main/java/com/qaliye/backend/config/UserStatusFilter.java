@@ -21,11 +21,21 @@ public class UserStatusFilter extends OncePerRequestFilter {
 
     private static final String SUSPENDED_JSON =
             "{\"error\":\"account_suspended\",\"message\":\"Account suspended\",\"status\":403}";
+    private static final String DELETED_JSON =
+            "{\"error\":\"account_deleted\",\"message\":\"Account deleted\",\"status\":403}";
 
     private final UserStatusService userStatusService;
 
     public UserStatusFilter(UserStatusService userStatusService) {
         this.userStatusService = userStatusService;
+    }
+
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        // Let DELETE /api/v1/me through so AccountDeletionService can handle
+        // idempotent retries for already-deleted accounts.
+        return "DELETE".equalsIgnoreCase(request.getMethod())
+                && "/api/v1/me".equals(request.getRequestURI());
     }
 
     @Override
@@ -48,6 +58,13 @@ public class UserStatusFilter extends OncePerRequestFilter {
             response.setStatus(HttpServletResponse.SC_FORBIDDEN);
             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
             response.getWriter().write(SUSPENDED_JSON);
+            return;
+        }
+
+        if ("DELETED".equals(userStatus.status())) {
+            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            response.getWriter().write(DELETED_JSON);
             return;
         }
 

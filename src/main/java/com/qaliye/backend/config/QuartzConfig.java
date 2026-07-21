@@ -1,5 +1,6 @@
 package com.qaliye.backend.config;
 
+import com.qaliye.backend.billing.worker.PromotionRedemptionCleanupWorker;
 import com.qaliye.backend.moderation.MessageModerationJob;
 import com.qaliye.backend.moderation.ModerationRetryWorker;
 import com.qaliye.backend.notifications.worker.ExpoDeliveryWorker;
@@ -179,6 +180,25 @@ public class QuartzConfig {
                 .withIdentity("moderationRetryTrigger")
                 .withSchedule(SimpleScheduleBuilder.simpleSchedule()
                         .withIntervalInMinutes(5)
+                        .repeatForever())
+                .build();
+    }
+
+    @Bean
+    public JobDetail promotionCleanupJobDetail() {
+        return JobBuilder.newJob(PromotionRedemptionCleanupWorker.class)
+                .withIdentity("promotionCleanupJob")
+                .storeDurably()
+                .build();
+    }
+
+    @Bean
+    public Trigger promotionCleanupTrigger(JobDetail promotionCleanupJobDetail) {
+        return TriggerBuilder.newTrigger()
+                .forJob(promotionCleanupJobDetail)
+                .withIdentity("promotionCleanupTrigger")
+                .withSchedule(SimpleScheduleBuilder.simpleSchedule()
+                        .withIntervalInHours(1)
                         .repeatForever())
                 .build();
     }

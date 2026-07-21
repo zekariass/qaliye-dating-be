@@ -31,7 +31,7 @@ public class BillingRepository {
     // ── Offers ──────────────────────────────────────────────────────────────
 
     private static final String FIND_OFFERS_SQL = """
-            SELECT po.id, po.country_code, po.platform,
+            SELECT po.id, po.subscription_product_id, po.country_code, po.platform,
                    po.currency, po.price_minor_units, po.auto_renew,
                    po.external_product_id, po.revenuecat_offering_id, po.revenuecat_package_id,
                    sp.product_code AS sub_product_code,
@@ -48,7 +48,7 @@ public class BillingRepository {
             """;
 
     public record OfferRow(
-            UUID id, String countryCode, String platform,
+            UUID id, UUID subscriptionProductId, String countryCode, String platform,
             String currency, int priceMinorUnits, boolean autoRenew,
             String externalProductId, String revenuecatOfferingId, String revenuecatPackageId,
             String subProductCode, String billingIntervalUnit, Integer billingIntervalCount,
@@ -61,6 +61,7 @@ public class BillingRepository {
                 .addValue("countryCode", countryCode);
         return jdbc.query(FIND_OFFERS_SQL, params, (rs, rowNum) -> new OfferRow(
                 rs.getObject("id", UUID.class),
+                rs.getObject("subscription_product_id", UUID.class),
                 rs.getString("country_code"),
                 rs.getString("platform"),
                 rs.getString("currency"),
@@ -894,6 +895,61 @@ public class BillingRepository {
         jdbc.update(EXPIRE_SUB_BY_ID_SQL, Map.of("id", id));
     }
 
+    // ── Account deletion: find and cancel all active subscriptions ──────────
+
+    private static final String FIND_ACTIVE_SUBS_FOR_USER_SQL = """
+            SELECT id, provider_subscription_id, provider, status, auto_renew
+            FROM user_subscriptions
+            WHERE user_id = :userId
+              AND status IN ('ACTIVE', 'GRACE_PERIOD', 'PAST_DUE', 'UNPAID', 'PENDING_VERIFICATION')
+            """;
+
+    public record ActiveSubscriptionRow(
+            UUID id, String providerSubscriptionId, String provider,
+            String status, boolean autoRenew
+    ) {}
+
+    public List<ActiveSubscriptionRow> findActiveSubscriptionsForUser(UUID userId) {
+        return jdbc.query(FIND_ACTIVE_SUBS_FOR_USER_SQL, Map.of("userId", userId),
+                (rs, rowNum) -> new ActiveSubscriptionRow(
+                        rs.getObject("id", UUID.class),
+                        rs.getString("provider_subscription_id"),
+                        rs.getString("provider"),
+                        rs.getString("status"),
+                        rs.getBoolean("auto_renew")
+                ));
+    }
+
+    private static final String CANCEL_ALL_ACTIVE_SUBS_SQL = """
+            UPDATE user_subscriptions
+            SET status              = 'CANCELED',
+                auto_renew          = FALSE,
+                cancelled_at        = NOW(),
+                ended_at            = NOW(),
+                current_period_end  = NOW(),
+                updated_at          = NOW()
+            WHERE user_id = :userId
+              AND status IN ('ACTIVE', 'GRACE_PERIOD', 'PAST_DUE', 'UNPAID', 'PENDING_VERIFICATION')
+            """;
+
+    public int cancelAllActiveSubscriptions(UUID userId) {
+        return jdbc.update(CANCEL_ALL_ACTIVE_SUBS_SQL, Map.of("userId", userId));
+    }
+
+    private static final String CANCEL_PENDING_ORDERS_SQL = """
+            UPDATE payment_orders
+            SET status       = 'CANCELLED',
+                status_reason = 'ACCOUNT_DELETED',
+                updated_at    = NOW()
+            WHERE user_id = :userId
+              AND status IN ('CREATED', 'AWAITING_PAYMENT', 'RECEIPT_SUBMITTED',
+                             'REVIEW_REQUIRED', 'VERIFICATION_PENDING')
+            """;
+
+    public int cancelPendingOrders(UUID userId) {
+        return jdbc.update(CANCEL_PENDING_ORDERS_SQL, Map.of("userId", userId));
+    }
+
     // ── Concurrent-safe subscription locking ────────────────────────────────
 
     private static final String LOCK_ALL_SUBS_SQL = """
@@ -1105,6 +1161,7 @@ public class BillingRepository {
     private static final String FIND_ACTIVE_SUB_SQL = """
             SELECT us.id, us.plan_id, us.status, us.auto_renew,
                    us.current_period_start, us.current_period_end,
+                   us.provider,
                    sp.plan_code, sp.features,
                    sprod.billing_interval_unit, sprod.billing_interval_count
             FROM user_subscriptions us
@@ -1121,7 +1178,7 @@ public class BillingRepository {
     public record ActiveSubRow(
             UUID id, UUID planId, String status, boolean autoRenew,
             Instant periodStart, Instant periodEnd,
-            String planCode, String features,
+            String provider, String planCode, String features,
             String billingIntervalUnit, Integer billingIntervalCount
     ) {}
 
@@ -1133,6 +1190,7 @@ public class BillingRepository {
                 rs.getBoolean("auto_renew"),
                 toInstant(rs, "current_period_start"),
                 toInstant(rs, "current_period_end"),
+                rs.getString("provider"),
                 rs.getString("plan_code"),
                 rs.getString("features"),
                 rs.getString("billing_interval_unit"),

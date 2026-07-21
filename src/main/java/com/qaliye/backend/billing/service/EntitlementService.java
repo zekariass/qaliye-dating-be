@@ -74,7 +74,7 @@ public class EntitlementService {
 
         if (activeSub.isPresent()) {
             var sub = activeSub.get();
-            planCode = sub.planCode();
+            planCode = "PROMOTION".equals(sub.provider()) ? "FREE_PREMIUM" : sub.planCode();
             planId = sub.planId();
             features = parseFeatures(sub.features());
             subInfo = new EntitlementResponse.SubscriptionInfo(

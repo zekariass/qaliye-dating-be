@@ -3,6 +3,7 @@ package com.qaliye.backend.billing.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qaliye.backend.billing.BillingProperties;
 import com.qaliye.backend.billing.repository.BillingRepository;
+import com.qaliye.backend.billing.repository.PromotionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -46,15 +47,18 @@ public class VerifyEtWebhookHandler {
 
     private final BillingRepository billingRepo;
     private final FulfillmentService fulfillmentService;
+    private final PromotionRepository promotionRepo;
     private final BillingProperties billingProps;
     private final ObjectMapper objectMapper;
 
     public VerifyEtWebhookHandler(BillingRepository billingRepo,
                                    FulfillmentService fulfillmentService,
+                                   PromotionRepository promotionRepo,
                                    BillingProperties billingProps,
                                    ObjectMapper objectMapper) {
         this.billingRepo = billingRepo;
         this.fulfillmentService = fulfillmentService;
+        this.promotionRepo = promotionRepo;
         this.billingProps = billingProps;
         this.objectMapper = objectMapper;
     }
@@ -206,6 +210,9 @@ public class VerifyEtWebhookHandler {
                 log.info("verify.et webhook: order {} verified and fulfilled (requestId={})",
                         attempt.orderId(), requestId);
             } else {
+                if ("REJECTED".equals(orderStatus) || "EXPIRED".equals(orderStatus)) {
+                    promotionRepo.cancelRedemptionByOrderId(attempt.orderId(), orderStatus.toLowerCase());
+                }
                 log.info("verify.et webhook: order {} -> {} reason={} (requestId={}, processingStatus={}, verifyStatus={})",
                         attempt.orderId(), orderStatus, statusResult.reason(), requestId, processingStatus, status);
             }

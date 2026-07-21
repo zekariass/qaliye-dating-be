@@ -70,7 +70,7 @@ class EntitlementServiceTest {
         var activeSub = new BillingRepository.ActiveSubRow(
                 UUID.randomUUID(), planId, "ACTIVE", true,
                 Instant.now(), periodEnd,
-                "PREMIUM", "{\"seeWhoLikedYou\":true,\"advancedFilters\":true}",
+                "STRIPE", "PREMIUM", "{\"seeWhoLikedYou\":true,\"advancedFilters\":true}",
                 "MONTH", 1
         );
 

@@ -55,6 +55,17 @@ public class BillingMarketResolver {
         return cc != null ? cc.toString() : "GLOBAL";
     }
 
+    /**
+     * Resolves the promotion-specific country code for a user.
+     * Returns the user's billing country if it is a known promotion market
+     * (currently only "ET"), otherwise falls back to "GLOBAL".
+     * This ensures ET users see only ET campaigns and non-ET users see only GLOBAL campaigns.
+     */
+    public String resolvePromotionCountry(UUID userId) {
+        String country = resolveBillingCountry(userId);
+        return "ET".equalsIgnoreCase(country) ? "ET" : "GLOBAL";
+    }
+
     public MarketResult resolveMarket(UUID userId, String platform) {
         String billingCountry = resolveBillingCountry(userId);
 

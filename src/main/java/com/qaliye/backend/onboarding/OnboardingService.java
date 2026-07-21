@@ -1,7 +1,11 @@
 package com.qaliye.backend.onboarding;
 
+import com.qaliye.backend.billing.service.BillingMarketResolver;
+import com.qaliye.backend.billing.service.PromotionSignupService;
 import com.qaliye.backend.user.entity.Profile;
 import com.qaliye.backend.user.repository.ProfileRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -17,6 +21,8 @@ import java.util.UUID;
 
 @Service
 public class OnboardingService {
+
+    private static final Logger log = LoggerFactory.getLogger(OnboardingService.class);
 
     private static final Set<String> VALID_GENDER_PREFS = Set.of("MALE", "FEMALE");
 
@@ -35,11 +41,17 @@ public class OnboardingService {
 
     private final ProfileRepository profileRepository;
     private final NamedParameterJdbcTemplate jdbc;
+    private final PromotionSignupService promotionSignupService;
+    private final BillingMarketResolver marketResolver;
 
     public OnboardingService(ProfileRepository profileRepository,
-                             NamedParameterJdbcTemplate jdbc) {
+                             NamedParameterJdbcTemplate jdbc,
+                             PromotionSignupService promotionSignupService,
+                             BillingMarketResolver marketResolver) {
         this.profileRepository = profileRepository;
         this.jdbc = jdbc;
+        this.promotionSignupService = promotionSignupService;
+        this.marketResolver = marketResolver;
     }
 
     public OnboardingStatus getStatus(UUID userId) {
@@ -138,6 +150,15 @@ public class OnboardingService {
 
         List<String> blockingReasons = new ArrayList<>();
         if (!canEnterDiscovery) blockingReasons.add("PRIMARY_PHOTO_PENDING_REVIEW");
+
+        // Apply signup promotions once when onboarding is completed.
+        // applySignupPromotions is idempotent: per-user redemption count prevents double-granting.
+        try {
+            String trustedCountry = marketResolver.resolvePromotionCountry(callerId);
+            promotionSignupService.applySignupPromotions(callerId, trustedCountry);
+        } catch (Exception e) {
+            log.warn("AUTO_ON_SIGNUP processing failed for user={}: {}", callerId, e.getMessage());
+        }
 
         return new OnboardingStatus(true, true, true, true, true, "DONE",
                 score, true, canEnterDiscovery, blockingReasons);

@@ -26,6 +26,7 @@ public class DataDeletionJob implements Job {
             SELECT id FROM app_users
             WHERE deleted_at IS NOT NULL
               AND deleted_at < NOW() - INTERVAL '30 days'
+              AND status != 'DELETED'
             """;
 
     private static final String ANONYMIZE_PROFILE_SQL = """

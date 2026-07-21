@@ -12,6 +12,7 @@ import com.qaliye.backend.billing.provider.LocalGatewayRegistry;
 import com.qaliye.backend.billing.provider.LocalOnlinePaymentGateway;
 import com.qaliye.backend.billing.provider.VerifyEtClient;
 import com.qaliye.backend.billing.repository.BillingRepository;
+import com.qaliye.backend.billing.repository.PromotionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -40,6 +41,8 @@ class OrderServiceTest {
     @Mock LocalOnlinePaymentGateway mockGateway;
     @Mock VerifyEtClient verifyEtClient;
     @Mock FulfillmentService fulfillmentService;
+    @Mock PromotionRepository promotionRepo;
+    @Mock PromotionEligibilityService promotionEligibilityService;
     @Mock BillingProperties.PaymentInstructions paymentInstructions;
     @Mock BillingProperties.Verifier verifier;
 
@@ -55,7 +58,8 @@ class OrderServiceTest {
     @BeforeEach
     void setUp() {
         service = new OrderService(billingRepo, billingProps, marketResolver,
-                gatewayRegistry, verifyEtClient, fulfillmentService, new ObjectMapper());
+                gatewayRegistry, verifyEtClient, fulfillmentService, new ObjectMapper(),
+                promotionRepo, promotionEligibilityService);
         lenient().when(billingProps.getPaymentOrderExpiryHours()).thenReturn(2);
         lenient().when(billingProps.getPaymentInstructions()).thenReturn(paymentInstructions);
         lenient().when(billingProps.getVerifier()).thenReturn(verifier);
@@ -758,6 +762,19 @@ class OrderServiceTest {
                                                        int price, String currency) {
         return new BillingRepository.FullOfferRow(
                 offerId, UUID.randomUUID(), null,
+                country, platform,
+                currency, price, false,
+                null,
+                "PREMIUM_MONTHLY", "MONTH", 1, UUID.randomUUID(),
+                null, null, null, null
+        );
+    }
+
+    private BillingRepository.FullOfferRow buildOfferWithProduct(String country, String platform,
+                                                                   int price, String currency,
+                                                                   UUID subscriptionProductId) {
+        return new BillingRepository.FullOfferRow(
+                offerId, subscriptionProductId, null,
                 country, platform,
                 currency, price, false,
                 null,

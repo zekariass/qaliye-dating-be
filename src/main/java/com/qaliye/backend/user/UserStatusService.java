@@ -23,17 +23,17 @@ public class UserStatusService {
     @Cacheable(value = "userStatus", key = "#userId")
     public UserStatus getStatus(UUID userId) {
         List<UserStatus> results = query(userId);
-        if (!results.isEmpty()) return results.get(0);
 
-        // Auto-provision new user with DB defaults
-        try {
-            jdbc.update("INSERT INTO app_users (id) VALUES (:userId)", Map.of("userId", userId));
-        } catch (DuplicateKeyException e) {
+        if (results.isEmpty()) {
+            // Auto-provision new user with DB defaults
+            try {
+                jdbc.update("INSERT INTO app_users (id) VALUES (:userId)", Map.of("userId", userId));
+            } catch (DuplicateKeyException e) {
+                // Race: another thread inserted first — re-query below
+            }
             results = query(userId);
-            return results.isEmpty() ? null : results.get(0);
         }
 
-        results = query(userId);
         return results.isEmpty() ? null : results.get(0);
     }
 

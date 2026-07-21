@@ -2,6 +2,7 @@ package com.qaliye.backend.billing.service;
 
 import com.qaliye.backend.billing.repository.BillingRepository;
 import com.qaliye.backend.billing.repository.CreditLotRepository;
+import com.qaliye.backend.billing.repository.PromotionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.cache.annotation.CacheEvict;
@@ -21,10 +22,13 @@ public class FulfillmentService {
 
     private final BillingRepository billingRepo;
     private final CreditLotRepository creditLotRepo;
+    private final PromotionRepository promotionRepo;
 
-    public FulfillmentService(BillingRepository billingRepo, CreditLotRepository creditLotRepo) {
+    public FulfillmentService(BillingRepository billingRepo, CreditLotRepository creditLotRepo,
+                               PromotionRepository promotionRepo) {
         this.billingRepo = billingRepo;
         this.creditLotRepo = creditLotRepo;
+        this.promotionRepo = promotionRepo;
     }
 
     @Transactional
@@ -73,6 +77,13 @@ public class FulfillmentService {
 
         // Grant monthly boost allowance for PREMIUM
         grantMonthlyBoostAllowance(userId, subId, offer, periodEnd);
+
+        // Fulfill any associated PURCHASE promotion redemption
+        try {
+            promotionRepo.fulfillPurchaseRedemptionByOrderId(order.id(), subId);
+        } catch (Exception e) {
+            log.error("Failed to fulfill promotion redemption for order={}: {}", order.id(), e.getMessage());
+        }
 
         log.info("Subscription fulfilled: user={}, plan={}, periodEnd={}", userId, offer.subProductCode(), periodEnd);
     }

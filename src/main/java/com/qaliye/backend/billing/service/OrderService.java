@@ -12,6 +12,7 @@ import com.qaliye.backend.billing.provider.LocalGatewayRegistry;
 import com.qaliye.backend.billing.provider.LocalOnlinePaymentGateway;
 import com.qaliye.backend.billing.provider.VerifyEtClient;
 import com.qaliye.backend.billing.repository.BillingRepository;
+import com.qaliye.backend.billing.repository.PromotionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -52,6 +53,8 @@ public class OrderService {
     private final VerifyEtClient verifyEtClient;
     private final FulfillmentService fulfillmentService;
     private final ObjectMapper objectMapper;
+    private final PromotionRepository promotionRepo;
+    private final PromotionEligibilityService promotionEligibilityService;
 
     public OrderService(BillingRepository billingRepo,
                         BillingProperties billingProps,
@@ -59,7 +62,9 @@ public class OrderService {
                         LocalGatewayRegistry gatewayRegistry,
                         VerifyEtClient verifyEtClient,
                         FulfillmentService fulfillmentService,
-                        ObjectMapper objectMapper) {
+                        ObjectMapper objectMapper,
+                        PromotionRepository promotionRepo,
+                        PromotionEligibilityService promotionEligibilityService) {
         this.billingRepo = billingRepo;
         this.billingProps = billingProps;
         this.marketResolver = marketResolver;
@@ -67,6 +72,8 @@ public class OrderService {
         this.verifyEtClient = verifyEtClient;
         this.fulfillmentService = fulfillmentService;
         this.objectMapper = objectMapper;
+        this.promotionRepo = promotionRepo;
+        this.promotionEligibilityService = promotionEligibilityService;
     }
 
     @Transactional
@@ -110,6 +117,30 @@ public class OrderService {
         // Resolve and validate gateway
         LocalOnlinePaymentGateway gateway = gatewayRegistry.resolve(method.methodCode());
 
+        // Promotion: find best PURCHASE discount for this offer
+        String trustedCountry = "ET".equalsIgnoreCase(market.billingCountryCode()) ? "ET" : "GLOBAL";
+        PromotionEligibilityService.AppliedPromotion appliedPromotion = null;
+        int effectiveAmount = offer.priceMinorUnits();
+
+        if (offer.subscriptionProductId() != null) {
+            Optional<PromotionEligibilityService.AppliedPromotion> promoOpt =
+                    promotionEligibilityService.findBestPurchasePromotion(
+                            userId, offer.subscriptionProductId(),
+                            offer.priceMinorUnits(), offer.currency(), trustedCountry);
+            if (promoOpt.isPresent()) {
+                var promo = promoOpt.get();
+                boolean reserved = promotionRepo.atomicReserveCapacity(
+                        promo.campaign().id(), userId, promo.campaign().maxRedemptionsPerUser());
+                if (reserved) {
+                    effectiveAmount = (int) promo.discount().finalAmountMinor();
+                    appliedPromotion = promo;
+                    log.info("Promotion applied: user={} campaign={} saving={}",
+                            userId, promo.campaign().campaignKey(),
+                            promo.discount().discountAmountMinor());
+                }
+            }
+        }
+
         String orderReference = generateOrderReference();
         Instant expiresAt = Instant.now().plus(billingProps.getPaymentOrderExpiryHours(), ChronoUnit.HOURS);
         String instructionSnapshot = buildOnlinePaymentSnapshot(method, offer, orderReference, expiresAt);
@@ -121,13 +152,16 @@ public class OrderService {
         try {
             LocalOnlinePaymentGateway.CheckoutResult checkout = gateway.createCheckout(
                     orderReference,
-                    offer.priceMinorUnits(),
+                    effectiveAmount,
                     offer.currency(),
                     userId.toString()
             );
             checkoutUrl = checkout.checkoutUrl();
             providerRef = checkout.txRef();
         } catch (ResponseStatusException e) {
+            if (appliedPromotion != null) {
+                promotionRepo.releaseReservation(appliedPromotion.campaign().id());
+            }
             throw e;
         } catch (Exception e) {
             log.error("Gateway checkout creation failed for user={} method={}: {}",
@@ -138,7 +172,7 @@ public class OrderService {
         BillingRepository.OrderRow order = billingRepo.insertOrder(
                 userId, offer.id(), method.id(),
                 orderReference, initialStatus,
-                offer.priceMinorUnits(), offer.currency(),
+                effectiveAmount, offer.currency(),
                 instructionSnapshot, checkoutUrl, expiresAt,
                 request.idempotencyKey()
         );
@@ -146,6 +180,22 @@ public class OrderService {
         if (checkoutUrl != null && "AWAITING_PAYMENT".equals(initialStatus)) {
             billingRepo.updateOrderWithCheckout(order.id(), "AWAITING_PAYMENT", checkoutUrl, providerRef);
             order = billingRepo.findOrderById(order.id()).orElse(order);
+        }
+
+        // Persist promotion redemption after order is created
+        if (appliedPromotion != null) {
+            try {
+                String userGender = promotionRepo.getUserGender(userId).orElse(null);
+                promotionRepo.insertRedemption(
+                        appliedPromotion.campaign().id(), userId, offer.id(), order.id(),
+                        "RESERVED", trustedCountry, userGender,
+                        offer.priceMinorUnits(),
+                        appliedPromotion.discount().discountAmountMinor(),
+                        effectiveAmount, offer.currency());
+            } catch (Exception e) {
+                log.error("Failed to insert promotion redemption for order={}: {}", order.id(), e.getMessage());
+                promotionRepo.releaseReservation(appliedPromotion.campaign().id());
+            }
         }
 
         return toOrderResponse(order, instructionSnapshot);
