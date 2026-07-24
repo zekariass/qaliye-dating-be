@@ -9,6 +9,7 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -1332,7 +1333,7 @@ public class BillingRepository {
             FROM payment_orders po
             LEFT JOIN payment_methods pm ON pm.id = po.payment_method_id
             LEFT JOIN profiles p ON p.user_id = po.user_id
-            WHERE (:status IS NULL OR po.status = :status)
+            WHERE (:statusesEmpty OR po.status IN (:statuses))
               AND (:methodCode IS NULL OR pm.method_code = :methodCode)
               AND (:countryCode IS NULL OR EXISTS (
                   SELECT 1 FROM app_users au
@@ -1346,27 +1347,45 @@ public class BillingRepository {
     private static final String COUNT_ORDERS_SQL = """
             SELECT COUNT(*) FROM payment_orders po
             LEFT JOIN payment_methods pm ON pm.id = po.payment_method_id
-            WHERE (:status IS NULL OR po.status = :status)
+            WHERE (:statusesEmpty OR po.status IN (:statuses))
               AND (:methodCode IS NULL OR pm.method_code = :methodCode)
             """;
 
-    public List<Map<String, Object>> listOrders(String status, String methodCode,
+    public List<Map<String, Object>> listOrders(List<String> statuses, String methodCode,
                                                  String countryCode, int pageSize, int offset) {
         var params = new MapSqlParameterSource()
-                .addValue("status", status)
-                .addValue("methodCode", methodCode)
-                .addValue("countryCode", countryCode)
+                .addValue("statuses", statuses.isEmpty() ? List.of("__none__") : statuses)
+                .addValue("statusesEmpty", statuses.isEmpty())
+                .addValue("methodCode", methodCode, Types.VARCHAR)
+                .addValue("countryCode", countryCode, Types.VARCHAR)
                 .addValue("pageSize", pageSize)
                 .addValue("offset", offset);
         return jdbc.queryForList(LIST_ORDERS_SQL, params);
     }
 
-    public long countOrders(String status, String methodCode) {
+    public long countOrders(List<String> statuses, String methodCode) {
         var params = new MapSqlParameterSource()
-                .addValue("status", status)
-                .addValue("methodCode", methodCode);
+                .addValue("statuses", statuses.isEmpty() ? List.of("__none__") : statuses)
+                .addValue("statusesEmpty", statuses.isEmpty())
+                .addValue("methodCode", methodCode, Types.VARCHAR);
         Long count = jdbc.queryForObject(COUNT_ORDERS_SQL, params, Long.class);
         return count != null ? count : 0;
+    }
+
+    // ── Admin: subscription products ─────────────────────────────────────────
+
+    private static final String LIST_SUBSCRIPTION_PRODUCTS_SQL = """
+            SELECT sp.id, sp.product_code,
+                   spl.plan_code, spl.name AS plan_name,
+                   sp.billing_interval_unit, sp.billing_interval_count,
+                   sp.auto_renew_supported, sp.is_active
+            FROM subscription_products sp
+            JOIN subscription_plans spl ON spl.id = sp.plan_id
+            ORDER BY spl.plan_code, sp.billing_interval_count
+            """;
+
+    public List<Map<String, Object>> listSubscriptionProducts() {
+        return jdbc.queryForList(LIST_SUBSCRIPTION_PRODUCTS_SQL, Map.of());
     }
 
     // ── Receipt proof for admin ─────────────────────────────────────────────

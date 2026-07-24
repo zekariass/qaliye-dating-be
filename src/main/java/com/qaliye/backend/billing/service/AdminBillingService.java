@@ -44,8 +44,9 @@ public class AdminBillingService {
     public Map<String, Object> listOrders(String status, String methodCode,
                                            String countryCode, int page, int pageSize) {
         int offset = (page - 1) * pageSize;
-        List<Map<String, Object>> orders = billingRepo.listOrders(status, methodCode, countryCode, pageSize, offset);
-        long total = billingRepo.countOrders(status, methodCode);
+        List<String> statuses = parseStatuses(status);
+        List<Map<String, Object>> orders = billingRepo.listOrders(statuses, methodCode, countryCode, pageSize, offset);
+        long total = billingRepo.countOrders(statuses, methodCode);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("orders", orders);
@@ -53,6 +54,20 @@ public class AdminBillingService {
         result.put("page", page);
         result.put("pageSize", pageSize);
         return result;
+    }
+
+    public List<Map<String, Object>> listSubscriptionProducts() {
+        return billingRepo.listSubscriptionProducts();
+    }
+
+    private List<String> parseStatuses(String status) {
+        if (status == null || status.isBlank() || "ALL".equalsIgnoreCase(status.trim())) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(status.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isBlank())
+                .toList();
     }
 
     public Map<String, Object> getOrderDetails(UUID orderId) {

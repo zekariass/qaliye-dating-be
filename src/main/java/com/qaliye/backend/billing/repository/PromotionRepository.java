@@ -6,6 +6,7 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.sql.Types;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -426,14 +427,16 @@ public class PromotionRepository {
 
     public List<CampaignRow> listCampaigns(String status, int limit, int offset) {
         var params = new MapSqlParameterSource()
-                .addValue("status", status)
+                .addValue("status", status, Types.VARCHAR)
                 .addValue("limit", limit)
                 .addValue("offset", offset);
         return jdbc.query(LIST_CAMPAIGNS_SQL, params, this::mapCampaignRow);
     }
 
     public long countCampaigns(String status) {
-        Long n = jdbc.queryForObject(COUNT_CAMPAIGNS_SQL, Map.of("status", status), Long.class);
+        var params = new MapSqlParameterSource()
+                .addValue("status", status, Types.VARCHAR);
+        Long n = jdbc.queryForObject(COUNT_CAMPAIGNS_SQL, params, Long.class);
         return n != null ? n : 0;
     }
 

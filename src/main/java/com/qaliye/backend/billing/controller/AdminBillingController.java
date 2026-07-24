@@ -9,6 +9,7 @@ import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -22,9 +23,14 @@ public class AdminBillingController {
         this.adminBillingService = adminBillingService;
     }
 
+    @GetMapping("/subscription-products")
+    public ResponseEntity<List<Map<String, Object>>> listSubscriptionProducts() {
+        return ResponseEntity.ok(adminBillingService.listSubscriptionProducts());
+    }
+
     @GetMapping("/orders")
     public ResponseEntity<Map<String, Object>> listOrders(
-            @RequestParam(defaultValue = "MANUAL_REVIEW,RECEIPT_SUBMITTED") String status,
+            @RequestParam(defaultValue = "MANUAL_REVIEW,RECEIPT_SUBMITTED,REVIEW_REQUIRED") String status,
             @RequestParam(required = false) String methodCode,
             @RequestParam(required = false) String countryCode,
             @RequestParam(defaultValue = "1") int page,
