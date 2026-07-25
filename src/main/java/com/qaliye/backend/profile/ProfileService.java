@@ -321,8 +321,14 @@ public class ProfileService {
         String countryCodes = request.specificCountryCodes() != null && !request.specificCountryCodes().isEmpty()
                 ? "{" + String.join(",", request.specificCountryCodes()) + "}"
                 : null;
-        String religionPrefs = request.religionPreferences() != null && !request.religionPreferences().isEmpty()
-                ? "{" + String.join(",", request.religionPreferences()) + "}"
+        List<String> normalizedReligionPrefs = request.religionPreferences() != null
+                ? request.religionPreferences().stream()
+                        .map(r -> r.trim().toUpperCase().replace(' ', '_').replace('-', '_'))
+                        .filter(r -> VALID_RELIGION.contains(r))
+                        .toList()
+                : Collections.emptyList();
+        String religionPrefs = !normalizedReligionPrefs.isEmpty()
+                ? "{" + String.join(",", normalizedReligionPrefs) + "}"
                 : null;
         String langArray = CatalogService.buildUuidArrayParam(langPrefIds);
         String ethArray  = CatalogService.buildUuidArrayParam(ethPrefIds);
