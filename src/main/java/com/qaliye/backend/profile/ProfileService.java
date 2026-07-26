@@ -273,6 +273,12 @@ public class ProfileService {
                 WHERE user_id = :userId
                 """, params);
 
+        if (request.gender() != null) {
+            String oppositeGender = "MALE".equals(request.gender()) ? "FEMALE" : "MALE";
+            jdbc.update("UPDATE discovery_preferences SET interested_in_gender = :gender WHERE user_id = :userId",
+                    Map.of("gender", oppositeGender, "userId", userId));
+        }
+
         int finalScore = profilePhotoService.computeScore(userId);
         if (finalScore != newScore) {
             jdbc.update("UPDATE profiles SET profile_completion_score = :score WHERE user_id = :userId",

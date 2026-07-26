@@ -10,6 +10,7 @@ import org.springframework.web.client.RestClient;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -38,18 +39,6 @@ public class ExpoPushClient {
         }
     }
 
-    private record ExpoSendMessage(
-            String to,
-            String title,
-            String body,
-            Map<String, Object> data,
-            String collapseId,
-            String tag,
-            Integer ttl,
-            String priority,
-            String channelId
-    ) {}
-
     private final RestClient restClient;
     private final PushProperties pushProperties;
 
@@ -62,10 +51,8 @@ public class ExpoPushClient {
     public List<TicketResult> sendBatch(List<ExpoMessage> messages) {
         if (messages == null || messages.isEmpty()) return List.of();
 
-        List<ExpoSendMessage> payload = messages.stream()
-                .map(m -> new ExpoSendMessage(
-                        m.to(), m.title(), m.body(), m.data(),
-                        m.collapseId(), m.tag(), m.ttl(), m.priority(), m.channelId()))
+        List<Map<String, Object>> payload = messages.stream()
+                .map(this::toExpoPayload)
                 .toList();
 
         try {
@@ -145,6 +132,26 @@ public class ExpoPushClient {
             log.error("Expo fetchReceipts failed: {}", e.getMessage());
             throw new ExpoProviderException("Expo receipts failed: " + e.getMessage(), e);
         }
+    }
+
+    private Map<String, Object> toExpoPayload(ExpoMessage m) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("to", m.to());
+        if (m.title() != null) map.put("title", m.title());
+        if (m.body() != null) map.put("body", m.body());
+        if (m.data() != null) {
+            Map<String, Object> cleanData = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> e : m.data().entrySet()) {
+                if (e.getValue() != null) cleanData.put(e.getKey(), e.getValue());
+            }
+            map.put("data", cleanData);
+        }
+        if (m.collapseId() != null) map.put("collapseId", m.collapseId());
+        if (m.tag() != null) map.put("tag", m.tag());
+        if (m.ttl() != null) map.put("ttl", m.ttl());
+        if (m.priority() != null) map.put("priority", m.priority());
+        if (m.channelId() != null) map.put("channelId", m.channelId());
+        return map;
     }
 
     private void addAuthHeader(org.springframework.http.HttpHeaders headers) {

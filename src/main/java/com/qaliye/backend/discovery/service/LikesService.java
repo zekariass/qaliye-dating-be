@@ -83,8 +83,9 @@ public class LikesService {
               AND uda.status = 'ACTIVE'
               AND NOT EXISTS (
                   SELECT 1 FROM matches m
-                  WHERE (m.user_one_id = uda.actor_user_id AND m.user_two_id = :userId)
-                     OR (m.user_one_id = :userId AND m.user_two_id = uda.actor_user_id)
+                  WHERE m.status = 'ACTIVE'
+                    AND ((m.user_one_id = uda.actor_user_id AND m.user_two_id = :userId)
+                     OR (m.user_one_id = :userId AND m.user_two_id = uda.actor_user_id))
               )
               AND NOT EXISTS (
                   SELECT 1 FROM user_blocks ub
@@ -107,8 +108,9 @@ public class LikesService {
               AND status = 'ACTIVE'
               AND NOT EXISTS (
                   SELECT 1 FROM matches m
-                  WHERE (m.user_one_id = actor_user_id AND m.user_two_id = :userId)
-                     OR (m.user_one_id = :userId AND m.user_two_id = actor_user_id)
+                  WHERE m.status = 'ACTIVE'
+                    AND ((m.user_one_id = actor_user_id AND m.user_two_id = :userId)
+                     OR (m.user_one_id = :userId AND m.user_two_id = actor_user_id))
               )
               AND NOT EXISTS (
                   SELECT 1 FROM user_blocks ub
@@ -163,8 +165,9 @@ public class LikesService {
               AND uda.status = 'ACTIVE'
               AND NOT EXISTS (
                   SELECT 1 FROM matches m
-                  WHERE (m.user_one_id = :userId AND m.user_two_id = uda.target_user_id)
-                     OR (m.user_one_id = uda.target_user_id AND m.user_two_id = :userId)
+                  WHERE m.status = 'ACTIVE'
+                    AND ((m.user_one_id = :userId AND m.user_two_id = uda.target_user_id)
+                     OR (m.user_one_id = uda.target_user_id AND m.user_two_id = :userId))
               )
               AND NOT EXISTS (
                   SELECT 1 FROM user_blocks ub
@@ -187,8 +190,9 @@ public class LikesService {
               AND status = 'ACTIVE'
               AND NOT EXISTS (
                   SELECT 1 FROM matches m
-                  WHERE (m.user_one_id = :userId AND m.user_two_id = target_user_id)
-                     OR (m.user_one_id = target_user_id AND m.user_two_id = :userId)
+                  WHERE m.status = 'ACTIVE'
+                    AND ((m.user_one_id = :userId AND m.user_two_id = target_user_id)
+                     OR (m.user_one_id = target_user_id AND m.user_two_id = :userId))
               )
               AND NOT EXISTS (
                   SELECT 1 FROM user_blocks ub
