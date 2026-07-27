@@ -36,7 +36,7 @@ public class NotificationEligibilityService {
             case "MATCH_CREATED" -> checkMatchCreatedEligibility(row);
             case "LIKE_RECEIVED" -> checkLikeReceivedEligibility(row);
             case "SUPERLIKE_RECEIVED" -> checkSuperLikeReceivedEligibility(row);
-            case "ACCOUNT_ALERT" -> EligibilityResult.ok();
+            case "ACCOUNT_ALERT" -> checkAccountAlertEligibility(row);
             case "MARKETING"     -> checkMarketingEligibility(row);
             default              -> EligibilityResult.skip("UNKNOWN_TYPE");
         };
@@ -119,6 +119,7 @@ public class NotificationEligibilityService {
                 JOIN user_notification_preferences unp
                     ON unp.user_id = :recipientUserId
                 WHERE m.id = :matchId
+                  AND m.status = 'ACTIVE'
                   AND unp.push_enabled = TRUE
                   AND unp.match_notifications_enabled = TRUE
                 """,
@@ -160,6 +161,21 @@ public class NotificationEligibilityService {
         return count != null && count > 0
                 ? EligibilityResult.ok()
                 : EligibilityResult.skip("SUPERLIKE_PREF_DISABLED");
+    }
+
+    private EligibilityResult checkAccountAlertEligibility(OutboxRow row) {
+        Integer count = jdbc.queryForObject("""
+                SELECT COUNT(1)
+                FROM user_notification_preferences unp
+                WHERE unp.user_id = :recipientUserId
+                  AND unp.push_enabled = TRUE
+                """,
+                Map.of("recipientUserId", row.recipientUserId()),
+                Integer.class);
+
+        return count != null && count > 0
+                ? EligibilityResult.ok()
+                : EligibilityResult.skip("PUSH_DISABLED");
     }
 
     private EligibilityResult checkMarketingEligibility(OutboxRow row) {

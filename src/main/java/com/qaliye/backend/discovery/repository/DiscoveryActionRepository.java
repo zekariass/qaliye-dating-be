@@ -54,11 +54,11 @@ public class DiscoveryActionRepository {
             RETURNING id, actor_user_id, target_user_id, action_type, status, client_action_id, created_at
             """;
 
-    private static final String REVERSE_ACTION = """
+    private static final String REVERSE_ACTION_SQL = """
             UPDATE user_discovery_actions
             SET status = 'REVERSED',
                 reversed_at = NOW(),
-                reversed_reason = 'USER_REWIND'
+                reversed_reason = :reason
             WHERE id = :actionId
               AND status = 'ACTIVE'
             """;
@@ -126,7 +126,14 @@ public class DiscoveryActionRepository {
     }
 
     public int reverseAction(UUID actionId) {
-        return jdbc.update(REVERSE_ACTION, new MapSqlParameterSource("actionId", actionId));
+        return reverseActionWithReason(actionId, "USER_REWIND");
+    }
+
+    public int reverseActionWithReason(UUID actionId, String reason) {
+        var params = new MapSqlParameterSource()
+                .addValue("actionId", actionId)
+                .addValue("reason", reason);
+        return jdbc.update(REVERSE_ACTION_SQL, params);
     }
 
     public int reversePassForRevisit(UUID actionId) {

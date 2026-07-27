@@ -36,8 +36,14 @@ public class NotificationPayloadBuilder {
             String tag,
             Integer ttl,
             String priority,
-            String channelId
-    ) {}
+            String channelId,
+            String sound
+    ) {
+        public ExpoMessage(String to, String title, String body, Map<String, Object> data,
+                           String collapseId, String tag, Integer ttl, String priority, String channelId) {
+            this(to, title, body, data, collapseId, tag, ttl, priority, channelId, "notification.mp3");
+        }
+    }
 
     public ExpoMessage buildForDelivery(OutboxRow outbox, String deviceToken) {
         return switch (outbox.notificationType()) {
@@ -77,7 +83,7 @@ public class NotificationPayloadBuilder {
         String tag = collapseId;
 
         return new ExpoMessage(deviceToken, title, body, data,
-                collapseId, tag, ttl, "high", "chat");
+                collapseId, tag, ttl, "high", "chat", "notification.mp3");
     }
 
     private ExpoMessage buildMatchCreated(OutboxRow outbox, String deviceToken) {
@@ -86,7 +92,7 @@ public class NotificationPayloadBuilder {
         data.put("match_id", outbox.matchId() != null ? outbox.matchId().toString() : null);
 
         return new ExpoMessage(deviceToken, "Qaliye", "It's a Match! 🎉", data,
-                null, null, null, "high", "matches");
+                null, null, null, "high", "matches", "notification.mp3");
     }
 
     private ExpoMessage buildLikeReceived(OutboxRow outbox, String deviceToken) {
@@ -96,7 +102,7 @@ public class NotificationPayloadBuilder {
                 ? outbox.discoveryActionId().toString() : null);
 
         return new ExpoMessage(deviceToken, "Qaliye", "Someone liked your profile!", data,
-                null, null, null, "normal", "likes");
+                null, null, null, "normal", "likes", "notification.mp3");
     }
 
     private ExpoMessage buildSuperLikeReceived(OutboxRow outbox, String deviceToken) {
@@ -106,7 +112,7 @@ public class NotificationPayloadBuilder {
                 ? outbox.discoveryActionId().toString() : null);
 
         return new ExpoMessage(deviceToken, "Qaliye", "Someone superliked your profile! ⭐", data,
-                null, null, null, "high", "likes");
+                null, null, null, "high", "likes", "notification.mp3");
     }
 
     private ExpoMessage buildAccountAlert(OutboxRow outbox, String deviceToken) {
@@ -114,7 +120,7 @@ public class NotificationPayloadBuilder {
         data.put("notification_type", "ACCOUNT_ALERT");
 
         return new ExpoMessage(deviceToken, "Qaliye", "Important account update", data,
-                null, null, null, "high", "alerts");
+                null, null, null, "high", "alerts", "notification.mp3");
     }
 
     private ExpoMessage buildMarketing(OutboxRow outbox, String deviceToken) {
@@ -135,7 +141,7 @@ public class NotificationPayloadBuilder {
         }
 
         return new ExpoMessage(deviceToken, title, body, data,
-                outbox.collapseKey(), null, null, "normal", "marketing");
+                outbox.collapseKey(), null, null, "normal", "marketing", "notification.mp3");
     }
 
     private boolean isMessagePreviewEnabled(UUID userId) {

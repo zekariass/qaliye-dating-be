@@ -3,9 +3,7 @@ package com.qaliye.backend.notifications;
 import com.qaliye.backend.notifications.service.NotificationOutboxService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -21,8 +19,6 @@ public class NotificationDispatcher {
         this.outboxService = outboxService;
     }
 
-    @Async
-    @Transactional
     public void dispatchMatchNotification(UUID userOneId, UUID userTwoId, UUID matchId) {
         try {
             OffsetDateTime now = OffsetDateTime.now();
@@ -33,8 +29,6 @@ public class NotificationDispatcher {
         }
     }
 
-    @Async
-    @Transactional
     public void dispatchLikeNotification(UUID actorId, UUID targetId, UUID discoveryActionId) {
         try {
             outboxService.createLikeReceivedEvent(discoveryActionId, targetId, actorId, OffsetDateTime.now());
@@ -43,8 +37,6 @@ public class NotificationDispatcher {
         }
     }
 
-    @Async
-    @Transactional
     public void dispatchSuperLikeNotification(UUID actorId, UUID targetId, UUID discoveryActionId) {
         try {
             outboxService.createSuperLikeReceivedEvent(discoveryActionId, targetId, actorId, OffsetDateTime.now());
@@ -53,16 +45,12 @@ public class NotificationDispatcher {
         }
     }
 
-    @Async
-    @Transactional
     public void dispatchMessageNotification(UUID recipientId, UUID matchId,
                                             String senderDisplayName) {
         log.debug("dispatchMessageNotification: use MessageCommandService outbox integration instead; "
                 + "skipping legacy dispatch for match {}", matchId);
     }
 
-    @Async
-    @Transactional
     public void dispatchVerificationApprovedNotification(UUID userId) {
         try {
             outboxService.createAccountAlertEvent(userId, "VERIFICATION_APPROVED",
@@ -73,8 +61,6 @@ public class NotificationDispatcher {
         }
     }
 
-    @Async
-    @Transactional
     public void dispatchVerificationRejectedNotification(UUID userId, String rejectionReason) {
         try {
             outboxService.createAccountAlertEvent(userId, "VERIFICATION_REJECTED",

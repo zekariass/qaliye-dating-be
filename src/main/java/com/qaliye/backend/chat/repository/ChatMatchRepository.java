@@ -29,7 +29,8 @@ public class ChatMatchRepository {
             OffsetDateTime userOneLastDeliveredAt, OffsetDateTime userTwoLastDeliveredAt,
             OffsetDateTime userOneLastReadAt, OffsetDateTime userTwoLastReadAt,
             OffsetDateTime firstMessageAt, OffsetDateTime lastMessageAt,
-            long userOneClearedSequence, long userTwoClearedSequence
+            long userOneClearedSequence, long userTwoClearedSequence,
+            UUID userOneLikeActionId, UUID userTwoLikeActionId
     ) {
         public boolean isParticipant(UUID userId) {
             return userOneId.equals(userId) || userTwoId.equals(userId);
@@ -51,7 +52,8 @@ public class ChatMatchRepository {
             m.user_one_last_delivered_at, m.user_two_last_delivered_at,
             m.user_one_last_read_at, m.user_two_last_read_at,
             m.first_message_at, m.last_message_at,
-            m.user_one_cleared_sequence, m.user_two_cleared_sequence
+            m.user_one_cleared_sequence, m.user_two_cleared_sequence,
+            m.user_one_like_action_id, m.user_two_like_action_id
             """;
 
     private static final String FIND_BY_ID_SQL =
@@ -236,7 +238,9 @@ public class ChatMatchRepository {
                 rs.getObject("first_message_at", OffsetDateTime.class),
                 rs.getObject("last_message_at", OffsetDateTime.class),
                 rs.getLong("user_one_cleared_sequence"),
-                rs.getLong("user_two_cleared_sequence")
+                rs.getLong("user_two_cleared_sequence"),
+                rs.getObject("user_one_like_action_id", UUID.class),
+                rs.getObject("user_two_like_action_id", UUID.class)
         );
     }
 }

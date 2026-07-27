@@ -319,7 +319,7 @@ class MessageCommandServiceAttachmentTest {
 
     private ChatMatchRepository.MatchRow buildActiveMatch() {
         return new ChatMatchRepository.MatchRow(matchId, callerId, otherUser, "ACTIVE",
-                null, null, null, 2L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, 0L, 0L);
+                null, null, null, 2L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, 0L, 0L, null, null);
     }
 
     private ChatMessageRepository.MessageRow buildMessageRow(long seq) {

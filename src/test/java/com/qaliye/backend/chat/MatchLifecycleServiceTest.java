@@ -3,6 +3,7 @@ package com.qaliye.backend.chat;
 import com.qaliye.backend.chat.repository.ChatMatchRepository;
 import com.qaliye.backend.chat.service.ChatOutboxService;
 import com.qaliye.backend.chat.service.MatchLifecycleService;
+import com.qaliye.backend.discovery.repository.DiscoveryActionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,6 +22,7 @@ class MatchLifecycleServiceTest {
 
     @Mock ChatMatchRepository matchRepository;
     @Mock ChatOutboxService outboxService;
+    @Mock DiscoveryActionRepository actionRepository;
 
     MatchLifecycleService service;
 
@@ -31,7 +33,7 @@ class MatchLifecycleServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MatchLifecycleService(matchRepository, outboxService);
+        service = new MatchLifecycleService(matchRepository, outboxService, actionRepository);
     }
 
     @Test
@@ -53,7 +55,7 @@ class MatchLifecycleServiceTest {
     void endMatch_alreadyEnded_isNoOp() {
         ChatMatchRepository.MatchRow ended = new ChatMatchRepository.MatchRow(matchId, userOneId, userTwoId, "ENDED",
                 null, null, "USER_UNMATCH", 1L, 0L, 0L, 0L, 0L,
-                null, null, null, null, null, null, 0L, 0L);
+                null, null, null, null, null, null, 0L, 0L, null, null);
         when(matchRepository.findByIdForUpdate(matchId)).thenReturn(Optional.of(ended));
 
         boolean result = service.endMatch(matchId, "USER_UNMATCH", endedByUser);
@@ -113,6 +115,6 @@ class MatchLifecycleServiceTest {
     private ChatMatchRepository.MatchRow activeMatch() {
         return new ChatMatchRepository.MatchRow(matchId, userOneId, userTwoId, "ACTIVE",
                 null, null, null, 1L, 0L, 0L, 0L, 0L,
-                null, null, null, null, null, null, 0L, 0L);
+                null, null, null, null, null, null, 0L, 0L, null, null);
     }
 }

@@ -138,7 +138,7 @@ class MessageCommandServiceTest {
     void sendMessage_notParticipant_throwsAccessDenied() {
         ChatMatchRepository.MatchRow matchWithOthers = new ChatMatchRepository.MatchRow(
                 matchId, UUID.randomUUID(), UUID.randomUUID(), "ACTIVE",
-                null, null, null, 1L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, 0L, 0L);
+                null, null, null, 1L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, 0L, 0L, null, null);
         when(messageRepository.findByIdempotencyKey(callerId, clientMsgId)).thenReturn(Optional.empty());
         when(matchRepository.findByIdForUpdate(matchId)).thenReturn(Optional.of(matchWithOthers));
 
@@ -181,12 +181,12 @@ class MessageCommandServiceTest {
 
     private ChatMatchRepository.MatchRow buildActiveMatch() {
         return new ChatMatchRepository.MatchRow(matchId, callerId, otherUser, "ACTIVE",
-                null, null, null, 2L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, 0L, 0L);
+                null, null, null, 2L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, 0L, 0L, null, null);
     }
 
     private ChatMatchRepository.MatchRow buildEndedMatch() {
         return new ChatMatchRepository.MatchRow(matchId, callerId, otherUser, "ENDED",
-                null, null, "USER_UNMATCH", 1L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, 0L, 0L);
+                null, null, "USER_UNMATCH", 1L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, 0L, 0L, null, null);
     }
 
     private ChatMessageRepository.MessageRow buildMessageRow(long seq) {

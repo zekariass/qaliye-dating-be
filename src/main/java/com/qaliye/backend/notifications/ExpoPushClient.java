@@ -151,6 +151,7 @@ public class ExpoPushClient {
         if (m.ttl() != null) map.put("ttl", m.ttl());
         if (m.priority() != null) map.put("priority", m.priority());
         if (m.channelId() != null) map.put("channelId", m.channelId());
+        if (m.sound() != null) map.put("sound", m.sound());
         return map;
     }
 

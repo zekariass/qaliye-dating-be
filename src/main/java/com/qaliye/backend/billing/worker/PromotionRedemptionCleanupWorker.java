@@ -15,7 +15,7 @@ import java.time.temporal.ChronoUnit;
 public class PromotionRedemptionCleanupWorker implements Job {
 
     private static final Logger log = LoggerFactory.getLogger(PromotionRedemptionCleanupWorker.class);
-    private static final int STALE_RESERVATION_HOURS = 48;
+    private static final int STALE_RESERVATION_HOURS = 24;
 
     @Autowired
     private PromotionRepository promotionRepo;
