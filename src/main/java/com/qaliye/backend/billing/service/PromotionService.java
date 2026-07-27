@@ -4,6 +4,7 @@ import com.qaliye.backend.billing.dto.RedeemPromotionResponse;
 import com.qaliye.backend.billing.repository.PromotionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -68,11 +69,17 @@ public class PromotionService {
 
         String userGender = promotionRepo.getUserGender(userId).orElse(null);
 
-        UUID redemptionId = promotionRepo.insertRedemption(
-                campaign.id(), userId, null, null,
-                "RESERVED", trustedCountry, userGender,
-                0L, 0L, 0L, null
-        );
+        UUID redemptionId;
+        try {
+            redemptionId = promotionRepo.insertRedemption(
+                    campaign.id(), userId, null, null,
+                    "RESERVED", trustedCountry, userGender,
+                    0L, 0L, 0L, null
+            );
+        } catch (DataIntegrityViolationException e) {
+            promotionRepo.releaseReservation(campaign.id());
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "promotion_already_redeemed");
+        }
 
         UUID subId;
         try {
