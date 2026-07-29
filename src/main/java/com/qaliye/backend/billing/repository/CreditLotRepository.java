@@ -37,6 +37,44 @@ public class CreditLotRepository {
         return result != null ? result : 0;
     }
 
+    private static final String GET_PURCHASED_BALANCE_SQL = """
+            SELECT COALESCE(SUM(lot.quantity_remaining), 0)
+            FROM user_entitlement_credit_lots lot
+            JOIN user_entitlement_ledger le ON lot.source_ledger_entry_id = le.id
+            WHERE lot.user_id = :userId
+              AND lot.entitlement_type = :type
+              AND lot.quantity_remaining > 0
+              AND (lot.expires_at IS NULL OR lot.expires_at > NOW())
+              AND le.reason = 'PURCHASE'
+            """;
+
+    public int getPurchasedBalance(UUID userId, String entitlementType) {
+        var params = new MapSqlParameterSource()
+                .addValue("userId", userId)
+                .addValue("type", entitlementType);
+        Integer result = jdbc.queryForObject(GET_PURCHASED_BALANCE_SQL, params, Integer.class);
+        return result != null ? result : 0;
+    }
+
+    private static final String GET_NON_PURCHASED_BALANCE_SQL = """
+            SELECT COALESCE(SUM(lot.quantity_remaining), 0)
+            FROM user_entitlement_credit_lots lot
+            JOIN user_entitlement_ledger le ON lot.source_ledger_entry_id = le.id
+            WHERE lot.user_id = :userId
+              AND lot.entitlement_type = :type
+              AND lot.quantity_remaining > 0
+              AND (lot.expires_at IS NULL OR lot.expires_at > NOW())
+              AND le.reason != 'PURCHASE'
+            """;
+
+    public int getNonPurchasedBalance(UUID userId, String entitlementType) {
+        var params = new MapSqlParameterSource()
+                .addValue("userId", userId)
+                .addValue("type", entitlementType);
+        Integer result = jdbc.queryForObject(GET_NON_PURCHASED_BALANCE_SQL, params, Integer.class);
+        return result != null ? result : 0;
+    }
+
     // ── Find oldest valid lot with remaining credits (locked) ───────────────
 
     private static final String FIND_OLDEST_LOT_SQL = """

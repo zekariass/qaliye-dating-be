@@ -57,7 +57,8 @@ public class PromotionRepository {
             String status,
             Long originalAmountMinor, Long discountAmountMinor, Long finalAmountMinor,
             String currency, Instant reservedAt, Instant fulfilledAt,
-            Instant cancelledAt, Instant expiredAt, String failureCode
+            Instant cancelledAt, Instant expiredAt, String failureCode,
+            String subscriptionStatus, Instant subscriptionPeriodEnd
     ) {}
 
     // ── Campaign SQL ─────────────────────────────────────────────────────────
@@ -291,9 +292,11 @@ public class PromotionRepository {
                    r.status,
                    r.original_amount_minor, r.discount_amount_minor, r.final_amount_minor,
                    r.currency, r.reserved_at, r.fulfilled_at,
-                   r.cancelled_at, r.expired_at, r.failure_code
+                   r.cancelled_at, r.expired_at, r.failure_code,
+                   us.status AS subscription_status, us.current_period_end AS subscription_period_end
             FROM promotion_redemptions r
             JOIN promotion_campaigns c ON c.id = r.campaign_id
+            LEFT JOIN user_subscriptions us ON us.id = r.subscription_id
             WHERE r.user_id = :userId
             ORDER BY r.reserved_at DESC
             LIMIT :limit OFFSET :offset
@@ -708,7 +711,10 @@ public class PromotionRepository {
                         ? rs.getObject("cancelled_at", java.time.OffsetDateTime.class).toInstant() : null,
                 rs.getObject("expired_at") != null
                         ? rs.getObject("expired_at", java.time.OffsetDateTime.class).toInstant() : null,
-                rs.getString("failure_code")
+                rs.getString("failure_code"),
+                rs.getString("subscription_status"),
+                rs.getObject("subscription_period_end") != null
+                        ? rs.getObject("subscription_period_end", java.time.OffsetDateTime.class).toInstant() : null
         );
     }
 }

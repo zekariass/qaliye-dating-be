@@ -107,7 +107,8 @@ public class PromotionController {
                 r.status(),
                 r.originalAmountMinor(), r.discountAmountMinor(), r.finalAmountMinor(),
                 r.currency(), r.reservedAt(), r.fulfilledAt(),
-                r.cancelledAt(), r.expiredAt(), r.failureCode()
+                r.cancelledAt(), r.expiredAt(), r.failureCode(),
+                r.subscriptionStatus(), r.subscriptionPeriodEnd()
         );
     }
 }

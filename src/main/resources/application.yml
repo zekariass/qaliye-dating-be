@@ -133,7 +133,7 @@ revenuecat:
   webhook-authorization: ${REVENUECAT_WEBHOOK_AUTHORIZATION:Bearer 81681740bf621b2e857dac2d658fc83ab2b4e17d3e08252573fa5e99061cc7b4}
 
 billing:
-  boost-duration-minutes: ${BILLING_BOOST_DURATION_MINUTES:60}
+  boost-duration-minutes: ${BILLING_BOOST_DURATION_MINUTES:3}
   payment-order-expiry-hours: ${BILLING_ORDER_EXPIRY_HOURS:72}
   receipt-signed-url-ttl-seconds: ${BILLING_RECEIPT_URL_TTL:300}
   manual-transfer-max-age-hours: ${BILLING_MANUAL_TRANSFER_MAX_AGE_HOURS:48000}

@@ -21,5 +21,7 @@ public record UserRedemptionDto(
         Instant fulfilledAt,
         Instant cancelledAt,
         Instant expiredAt,
-        String failureCode
+        String failureCode,
+        String subscriptionStatus,
+        Instant subscriptionPeriodEnd
 ) {}

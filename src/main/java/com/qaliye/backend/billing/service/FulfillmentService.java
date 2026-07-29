@@ -56,6 +56,18 @@ public class FulfillmentService {
         Instant now = Instant.now();
         Instant periodEnd = calculatePeriodEnd(now, offer.billingIntervalUnit(), offer.billingIntervalCount());
 
+        // Extend periodEnd with remaining days from an active PROMOTION subscription
+        Optional<BillingRepository.ActiveSubRow> activeSub = billingRepo.findActiveSubscription(userId);
+        if (activeSub.isPresent() && "PROMOTION".equals(activeSub.get().provider())) {
+            Instant promoEnd = activeSub.get().periodEnd();
+            if (promoEnd.isAfter(now)) {
+                long remainingSeconds = promoEnd.getEpochSecond() - now.getEpochSecond();
+                periodEnd = periodEnd.plus(remainingSeconds, ChronoUnit.SECONDS);
+                log.info("Extending paid subscription with {} remaining promotion seconds for user={}",
+                        remainingSeconds, userId);
+            }
+        }
+
         String provider = mapMethodCodeToProvider(order.methodCode());
 
         // Create transaction

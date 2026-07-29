@@ -128,18 +128,22 @@ public class EntitlementService {
         Integer voiceChatMsgLimit = limits.get("VOICE_CHAT_MSGS");
         Integer imageChatMsgLimit = limits.get("IMAGE_CHAT_MSGS");
 
+        // Compute boost usage from actual credit lot consumption (non-purchased lots)
+        int nonPurchasedBoostBalance = creditLotRepo.getNonPurchasedBalance(userId, "BOOST_CREDIT");
+        int boostsUsed = boostsLimit != null ? Math.max(0, boostsLimit - nonPurchasedBoostBalance) : 0;
+
         Map<String, EntitlementResponse.QuotaInfo> quotaMap = new LinkedHashMap<>();
         quotaMap.put("likes", buildQuota(likesUsed, likesLimit, tomorrowStart));
         quotaMap.put("superLikes", buildQuota(superLikesUsed, superLikesLimit, tomorrowStart));
         quotaMap.put("rewinds", buildQuota(rewindsUsed, rewindsLimit, tomorrowStart));
-        quotaMap.put("boosts", buildQuota(0, boostsLimit, null));
+        quotaMap.put("boosts", buildQuota(boostsUsed, boostsLimit, null));
         quotaMap.put("voiceChatMsgs", buildQuota(voiceChatMsgsUsed, voiceChatMsgLimit, tomorrowStart));
         quotaMap.put("imageChatMsgs", buildQuota(imageChatMsgsUsed, imageChatMsgLimit, tomorrowStart));
 
-        // Credits
-        int boostCredits = creditLotRepo.getBalance(userId, "BOOST_CREDIT");
-        int superLikeCredits = creditLotRepo.getBalance(userId, "SUPERLIKE_CREDIT");
-        int rewindCredits = creditLotRepo.getBalance(userId, "REWIND_CREDIT");
+        // Credits — only purchased credit packs, not subscription/promotion allowances
+        int boostCredits = creditLotRepo.getPurchasedBalance(userId, "BOOST_CREDIT");
+        int superLikeCredits = creditLotRepo.getPurchasedBalance(userId, "SUPERLIKE_CREDIT");
+        int rewindCredits = creditLotRepo.getPurchasedBalance(userId, "REWIND_CREDIT");
 
         var credits = new EntitlementResponse.CreditsInfo(boostCredits, superLikeCredits, rewindCredits);
 

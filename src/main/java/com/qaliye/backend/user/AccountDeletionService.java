@@ -188,9 +188,10 @@ public class AccountDeletionService {
                 DELETE FROM discovery_preferences WHERE user_id = :userId
                 """, params);
 
-        // Delete only discovery actions not referenced by matches (match FKs are
+        // Delete discovery actions not referenced by matches (match FKs are
         // NOT NULL + ON DELETE RESTRICT + immutable via trigger, so we must leave
-        // the referenced rows in place).
+        // the referenced rows in place but reverse them so they don't appear in
+        // likes lists as ACTIVE).
         jdbc.update("""
                 DELETE FROM user_discovery_actions
                 WHERE (actor_user_id = :userId OR target_user_id = :userId)
@@ -201,6 +202,15 @@ public class AccountDeletionService {
                     SELECT user_two_like_action_id FROM matches
                     WHERE user_two_like_action_id IS NOT NULL
                   )
+                """, params);
+
+        jdbc.update("""
+                UPDATE user_discovery_actions
+                SET status          = 'REVERSED',
+                    reversed_at     = NOW(),
+                    reversed_reason = 'ACCOUNT_DELETED'
+                WHERE (actor_user_id = :userId OR target_user_id = :userId)
+                  AND status = 'ACTIVE'
                 """, params);
 
         jdbc.update("""

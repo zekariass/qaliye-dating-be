@@ -50,9 +50,10 @@ class EntitlementServiceTest {
         doNothing().when(jdbc).query(contains("subscription_plan_limits"), anyMap(), any(RowCallbackHandler.class));
         when(jdbc.queryForList(contains("user_daily_limits"), anyMap()))
                 .thenReturn(Collections.emptyList());
-        when(creditLotRepo.getBalance(userId, "BOOST_CREDIT")).thenReturn(0);
-        when(creditLotRepo.getBalance(userId, "SUPERLIKE_CREDIT")).thenReturn(0);
-        when(creditLotRepo.getBalance(userId, "REWIND_CREDIT")).thenReturn(0);
+        when(creditLotRepo.getNonPurchasedBalance(userId, "BOOST_CREDIT")).thenReturn(0);
+        when(creditLotRepo.getPurchasedBalance(userId, "BOOST_CREDIT")).thenReturn(0);
+        when(creditLotRepo.getPurchasedBalance(userId, "SUPERLIKE_CREDIT")).thenReturn(0);
+        when(creditLotRepo.getPurchasedBalance(userId, "REWIND_CREDIT")).thenReturn(0);
         when(creditLotRepo.findActiveBoost(userId)).thenReturn(Collections.emptyList());
 
         EntitlementResponse response = service.getEntitlements(userId);
@@ -78,9 +79,10 @@ class EntitlementServiceTest {
         doNothing().when(jdbc).query(contains("subscription_plan_limits"), anyMap(), any(RowCallbackHandler.class));
         when(jdbc.queryForList(contains("user_daily_limits"), anyMap()))
                 .thenReturn(List.of(Map.of("likes_used", 5, "super_likes_used", 1, "rewinds_used", 0)));
-        when(creditLotRepo.getBalance(userId, "BOOST_CREDIT")).thenReturn(2);
-        when(creditLotRepo.getBalance(userId, "SUPERLIKE_CREDIT")).thenReturn(5);
-        when(creditLotRepo.getBalance(userId, "REWIND_CREDIT")).thenReturn(3);
+        when(creditLotRepo.getNonPurchasedBalance(userId, "BOOST_CREDIT")).thenReturn(0);
+        when(creditLotRepo.getPurchasedBalance(userId, "BOOST_CREDIT")).thenReturn(2);
+        when(creditLotRepo.getPurchasedBalance(userId, "SUPERLIKE_CREDIT")).thenReturn(5);
+        when(creditLotRepo.getPurchasedBalance(userId, "REWIND_CREDIT")).thenReturn(3);
         when(creditLotRepo.findActiveBoost(userId)).thenReturn(Collections.emptyList());
 
         EntitlementResponse response = service.getEntitlements(userId);
@@ -102,9 +104,10 @@ class EntitlementServiceTest {
         doNothing().when(jdbc).query(contains("subscription_plan_limits"), anyMap(), any(RowCallbackHandler.class));
         when(jdbc.queryForList(contains("user_daily_limits"), anyMap()))
                 .thenReturn(Collections.emptyList());
-        when(creditLotRepo.getBalance(userId, "BOOST_CREDIT")).thenReturn(0);
-        when(creditLotRepo.getBalance(userId, "SUPERLIKE_CREDIT")).thenReturn(0);
-        when(creditLotRepo.getBalance(userId, "REWIND_CREDIT")).thenReturn(0);
+        when(creditLotRepo.getNonPurchasedBalance(userId, "BOOST_CREDIT")).thenReturn(0);
+        when(creditLotRepo.getPurchasedBalance(userId, "BOOST_CREDIT")).thenReturn(0);
+        when(creditLotRepo.getPurchasedBalance(userId, "SUPERLIKE_CREDIT")).thenReturn(0);
+        when(creditLotRepo.getPurchasedBalance(userId, "REWIND_CREDIT")).thenReturn(0);
 
         Instant boostStart = Instant.now().minusSeconds(600);
         Instant boostEnd = Instant.now().plusSeconds(1200);
