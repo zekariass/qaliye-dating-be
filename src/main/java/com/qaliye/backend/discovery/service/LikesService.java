@@ -3,6 +3,7 @@ package com.qaliye.backend.discovery.service;
 import com.qaliye.backend.activity.ActivityStatus;
 import com.qaliye.backend.activity.ActivityStatusService;
 import com.qaliye.backend.discovery.dto.LikeItemDto;
+import com.qaliye.backend.discovery.dto.LikesAndMatchesCountDto;
 import com.qaliye.backend.discovery.dto.LikesPageResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -214,6 +215,68 @@ public class LikesService {
                     )
               )
             """;
+
+    private static final String LIKES_AND_MATCHES_COUNT_SQL = """
+            SELECT
+              (SELECT COUNT(*)
+               FROM user_discovery_actions uda
+               JOIN app_users au ON au.id = uda.actor_user_id
+               WHERE uda.target_user_id = :userId
+                 AND uda.action_type IN ('LIKE', 'SUPERLIKE')
+                 AND uda.status = 'ACTIVE'
+                 AND au.status = 'ACTIVE'
+                 AND au.deleted_at IS NULL
+                 AND NOT EXISTS (
+                     SELECT 1 FROM matches m
+                     WHERE m.status = 'ACTIVE'
+                       AND ((m.user_one_id = uda.actor_user_id AND m.user_two_id = :userId)
+                        OR (m.user_one_id = :userId AND m.user_two_id = uda.actor_user_id))
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1 FROM user_blocks ub
+                     WHERE ub.status = 'ACTIVE'
+                       AND ((ub.blocker_user_id = :userId AND ub.blocked_user_id = uda.actor_user_id)
+                        OR (ub.blocker_user_id = uda.actor_user_id AND ub.blocked_user_id = :userId))
+                 )
+              ) AS received_likes_count,
+              (SELECT COUNT(*)
+               FROM user_discovery_actions uda
+               JOIN app_users au ON au.id = uda.target_user_id
+               WHERE uda.actor_user_id = :userId
+                 AND uda.action_type IN ('LIKE', 'SUPERLIKE')
+                 AND uda.status = 'ACTIVE'
+                 AND au.status = 'ACTIVE'
+                 AND au.deleted_at IS NULL
+                 AND NOT EXISTS (
+                     SELECT 1 FROM matches m
+                     WHERE m.status = 'ACTIVE'
+                       AND ((m.user_one_id = :userId AND m.user_two_id = uda.target_user_id)
+                        OR (m.user_one_id = uda.target_user_id AND m.user_two_id = :userId))
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1 FROM user_blocks ub
+                     WHERE ub.status = 'ACTIVE'
+                       AND ((ub.blocker_user_id = :userId AND ub.blocked_user_id = uda.target_user_id)
+                        OR (ub.blocker_user_id = uda.target_user_id AND ub.blocked_user_id = :userId))
+                 )
+              ) AS sent_likes_count,
+              (SELECT COUNT(*)
+               FROM matches m
+               WHERE m.status = 'ACTIVE'
+                 AND (m.user_one_id = :userId OR m.user_two_id = :userId)
+              ) AS matches_count
+            """;
+
+    @Transactional(readOnly = true)
+    public LikesAndMatchesCountDto getLikesAndMatchesCount(UUID currentUserId) {
+        var params = new MapSqlParameterSource("userId", currentUserId);
+        return jdbc.queryForObject(LIKES_AND_MATCHES_COUNT_SQL, params, (rs, rowNum) ->
+                new LikesAndMatchesCountDto(
+                        rs.getLong("received_likes_count"),
+                        rs.getLong("sent_likes_count"),
+                        rs.getLong("matches_count")
+                ));
+    }
 
     @Transactional(readOnly = true)
     public LikesPageResponse getLikes(UUID currentUserId, String direction, int page, int size) {

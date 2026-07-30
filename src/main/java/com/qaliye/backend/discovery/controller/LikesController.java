@@ -1,5 +1,6 @@
 package com.qaliye.backend.discovery.controller;
 
+import com.qaliye.backend.discovery.dto.LikesAndMatchesCountDto;
 import com.qaliye.backend.discovery.dto.LikesPageResponse;
 import com.qaliye.backend.discovery.service.LikesService;
 import org.springframework.http.HttpStatus;
@@ -21,6 +22,13 @@ public class LikesController {
 
     public LikesController(LikesService likesService) {
         this.likesService = likesService;
+    }
+
+    @GetMapping("/counts")
+    public LikesAndMatchesCountDto getLikesAndMatchesCount(
+            @AuthenticationPrincipal Jwt jwt) {
+        UUID currentUserId = requireUserId(jwt);
+        return likesService.getLikesAndMatchesCount(currentUserId);
     }
 
     @GetMapping("/likes")

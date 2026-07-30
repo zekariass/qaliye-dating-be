@@ -53,6 +53,7 @@ public class SupportConversationRepository {
                    c.created_at, c.updated_at
             FROM public.support_conversations c
             LEFT JOIN profiles p ON p.user_id = c.user_id
+            LEFT JOIN app_users au ON au.id = c.user_id
             """;
 
     private ConversationRow mapRow(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
@@ -120,6 +121,8 @@ public class SupportConversationRepository {
 
         StringBuilder sql = new StringBuilder(SELECT_CONV_COLUMNS + " WHERE 1=1");
         MapSqlParameterSource params = new MapSqlParameterSource();
+
+        sql.append(" AND (au.status IS NULL OR au.status != 'DELETED')");
 
         if (status != null && !status.isBlank()) {
             sql.append(" AND c.status = :status");
