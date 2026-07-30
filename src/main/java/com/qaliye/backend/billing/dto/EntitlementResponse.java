@@ -15,6 +15,7 @@ public record EntitlementResponse(
 ) {
     public record SubscriptionInfo(
             String status,
+            String provider,
             Integer billingIntervalCount,
             String billingIntervalUnit,
             Instant expiresAt,

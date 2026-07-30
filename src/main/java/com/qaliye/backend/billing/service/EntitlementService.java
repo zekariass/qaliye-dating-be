@@ -79,6 +79,7 @@ public class EntitlementService {
             features = parseFeatures(sub.features());
             subInfo = new EntitlementResponse.SubscriptionInfo(
                     sub.status(),
+                    sub.provider(),
                     sub.billingIntervalCount(),
                     sub.billingIntervalUnit(),
                     sub.periodEnd(),
