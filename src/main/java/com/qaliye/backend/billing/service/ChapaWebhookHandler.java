@@ -1,6 +1,7 @@
 package com.qaliye.backend.billing.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.qaliye.backend.billing.provider.ChapaClient;
 import com.qaliye.backend.billing.repository.BillingRepository;
 import com.qaliye.backend.billing.repository.PromotionRepository;
 import org.slf4j.Logger;
@@ -21,15 +22,18 @@ public class ChapaWebhookHandler {
     private final FulfillmentService fulfillmentService;
     private final PromotionRepository promotionRepo;
     private final ObjectMapper objectMapper;
+    private final ChapaClient chapaClient;
 
     public ChapaWebhookHandler(BillingRepository billingRepo,
                                 FulfillmentService fulfillmentService,
                                 PromotionRepository promotionRepo,
-                                ObjectMapper objectMapper) {
+                                ObjectMapper objectMapper,
+                                ChapaClient chapaClient) {
         this.billingRepo = billingRepo;
         this.fulfillmentService = fulfillmentService;
         this.promotionRepo = promotionRepo;
         this.objectMapper = objectMapper;
+        this.chapaClient = chapaClient;
     }
 
     @Transactional
@@ -41,6 +45,7 @@ public class ChapaWebhookHandler {
             String txRef = (String) payload.get("tx_ref");
             String chapaRef = (String) payload.get("reference");
             String status = (String) payload.get("status");
+            String event = (String) payload.get("event");
             Object amountObj = payload.get("amount");
             String currency = (String) payload.get("currency");
 
@@ -60,7 +65,6 @@ public class ChapaWebhookHandler {
             }
 
             // Find the order by reference (tx_ref = order_reference)
-            // We search for the order that matches this tx_ref
             Optional<BillingRepository.OrderRow> orderOpt = findOrderByReference(txRef);
             if (orderOpt.isEmpty()) {
                 log.warn("Chapa webhook: no order found for tx_ref={}", txRef);
@@ -69,13 +73,44 @@ public class ChapaWebhookHandler {
 
             BillingRepository.OrderRow order = orderOpt.get();
 
-            if ("success".equalsIgnoreCase(status)) {
-                billingRepo.updateOrderStatus(order.id(), "VERIFIED", "Chapa payment success");
-                fulfillmentService.fulfillVerifiedOrder(order.id(), order.userId());
-                log.info("Chapa payment verified and fulfilled: order={}, tx_ref={}", order.id(), txRef);
+            // Skip if order is already in a terminal state
+            if ("VERIFIED".equals(order.status()) || "REJECTED".equals(order.status())
+                    || "EXPIRED".equals(order.status()) || "CANCELLED".equals(order.status())) {
+                log.info("Chapa webhook: order {} already in terminal status={}, skipping", order.id(), order.status());
+                return;
+            }
+
+            if ("success".equalsIgnoreCase(status) || "charge.success".equalsIgnoreCase(event)) {
+                // Server-side verification: always verify the final state of the transaction
+                ChapaClient.VerifyResult verifyResult = chapaClient.verifyTransaction(txRef);
+                if (verifyResult.isSuccess()) {
+                    // Verify amount matches the order
+                    Integer verifiedAmount = verifyResult.amountMinorUnits();
+                    if (verifiedAmount != null && verifiedAmount != order.expectedAmountMinorUnits()) {
+                        log.warn("Chapa amount mismatch: order={}, expected={}, verified={}",
+                                order.id(), order.expectedAmountMinorUnits(), verifiedAmount);
+                        billingRepo.updateOrderStatus(order.id(), "MANUAL_REVIEW",
+                                "amount mismatch: expected=" + order.expectedAmountMinorUnits()
+                                + ", verified=" + verifiedAmount);
+                        return;
+                    }
+                    billingRepo.updateOrderStatus(order.id(), "VERIFIED", "Chapa payment verified");
+                    fulfillmentService.fulfillVerifiedOrder(order.id(), order.userId());
+                    log.info("Chapa payment verified and fulfilled: order={}, tx_ref={}", order.id(), txRef);
+                } else if (verifyResult.isFailed()) {
+                    billingRepo.updateOrderStatus(order.id(), "REJECTED",
+                            "Chapa verify status: " + verifyResult.status());
+                    promotionRepo.cancelRedemptionByOrderId(order.id(), "payment_failed");
+                    log.info("Chapa payment rejected after verify: order={}, status={}", order.id(), verifyResult.status());
+                } else {
+                    log.warn("Chapa verify returned non-terminal status: order={}, verifyStatus={}, error={}",
+                            order.id(), verifyResult.status(), verifyResult.errorMessage());
+                    // Keep order in AWAITING_PAYMENT for future webhook retries
+                }
             } else {
-                log.info("Chapa payment not successful: order={}, status={}", order.id(), status);
-                if ("failed".equalsIgnoreCase(status) || "cancelled".equalsIgnoreCase(status)) {
+                log.info("Chapa payment not successful: order={}, status={}, event={}", order.id(), status, event);
+                if ("failed".equalsIgnoreCase(status) || "cancelled".equalsIgnoreCase(status)
+                        || (event != null && event.contains("failed"))) {
                     billingRepo.updateOrderStatus(order.id(), "REJECTED",
                             "Chapa payment " + status);
                     promotionRepo.cancelRedemptionByOrderId(order.id(), "payment_" + status);

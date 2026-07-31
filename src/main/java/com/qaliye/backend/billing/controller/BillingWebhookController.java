@@ -68,11 +68,44 @@ public class BillingWebhookController {
             @RequestBody byte[] body) {
 
         // Verify Chapa webhook signature
+        // Per Chapa docs: both chapa-signature and x-chapa-signature headers may be present;
+        // if either is valid, proceed. HMAC is signed with the secret key.
         String chapaSignature = request.getHeader("Chapa-Signature");
+        String xChapaSignature = request.getHeader("x-chapa-signature");
+        String secretKey = billingProps.getChapa().getSecretKey();
         String webhookSecret = billingProps.getChapa().getWebhookSecret();
-        if (webhookSecret != null && !webhookSecret.isBlank() && chapaSignature != null) {
-            if (!verifyChapaSignature(body, chapaSignature, webhookSecret)) {
-                log.warn("Chapa webhook: invalid signature");
+        // Trim to remove any trailing whitespace/newline from env vars
+        if (secretKey != null) secretKey = secretKey.trim();
+        if (webhookSecret != null) webhookSecret = webhookSecret.trim();
+        // Prefer webhook secret if configured, otherwise use the API secret key
+        String verifySecret = (webhookSecret != null && !webhookSecret.isBlank()) ? webhookSecret : secretKey;
+
+        if (verifySecret != null && !verifySecret.isBlank()) {
+            // Try verification with both the webhook secret and the API secret key
+            // Chapa docs are ambiguous about which key is used for signing
+            boolean chapaValid = false;
+            boolean xChapaValid = false;
+
+            if (chapaSignature != null) {
+                chapaValid = verifySecretSignature(chapaSignature, verifySecret);
+                if (!chapaValid && secretKey != null && !secretKey.isBlank() && !secretKey.equals(verifySecret)) {
+                    chapaValid = verifySecretSignature(chapaSignature, secretKey);
+                }
+            }
+            if (xChapaSignature != null) {
+                xChapaValid = verifyChapaSignature(body, xChapaSignature, verifySecret);
+                if (!xChapaValid && secretKey != null && !secretKey.isBlank() && !secretKey.equals(verifySecret)) {
+                    xChapaValid = verifyChapaSignature(body, xChapaSignature, secretKey);
+                }
+            }
+
+            if (!chapaValid && !xChapaValid) {
+                log.warn("Chapa webhook: no valid signature found (chapa-signature={}, x-chapa-signature={})",
+                        chapaSignature != null, xChapaSignature != null);
+                log.debug("Chapa webhook debug: webhookSecretSet={}, secretKeySet={}, bodyPreview={}",
+                        webhookSecret != null && !webhookSecret.isBlank(),
+                        secretKey != null && !secretKey.isBlank(),
+                        body.length > 200 ? new String(body, 0, 200, StandardCharsets.UTF_8) + "..." : new String(body, StandardCharsets.UTF_8));
                 return ResponseEntity.status(401).body(Map.of("error", "invalid_signature"));
             }
         }
@@ -111,9 +144,32 @@ public class BillingWebhookController {
             mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
             byte[] hash = mac.doFinal(body);
             String computed = HexFormat.of().formatHex(hash);
-            return computed.equalsIgnoreCase(signature);
+            boolean match = computed.equalsIgnoreCase(signature);
+            if (!match) {
+                log.debug("Chapa x-signature mismatch: computed={}, received={}, secretLen={}, bodyLen={}",
+                        computed, signature, secret.length(), body.length);
+            }
+            return match;
         } catch (Exception e) {
             log.error("Chapa signature verification error: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean verifySecretSignature(String signature, String secret) {
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            byte[] hash = mac.doFinal(secret.getBytes(StandardCharsets.UTF_8));
+            String computed = HexFormat.of().formatHex(hash);
+            boolean match = computed.equalsIgnoreCase(signature);
+            if (!match) {
+                log.debug("Chapa signature mismatch: computed={}, received={}, secretLen={}",
+                        computed, signature, secret.length());
+            }
+            return match;
+        } catch (Exception e) {
+            log.error("Chapa secret signature verification error: {}", e.getMessage());
             return false;
         }
     }

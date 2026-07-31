@@ -64,7 +64,7 @@ public class BillingProperties {
         private String secretKey = "";
         private String webhookSecret = "";
         private String baseUrl = "https://gateway.arifpay.net";
-        private String callbackUrl = "";
+        private String webhookUrl = "";
 
         public String getSecretKey() { return secretKey; }
         public void setSecretKey(String secretKey) { this.secretKey = secretKey; }
@@ -75,15 +75,16 @@ public class BillingProperties {
         public String getBaseUrl() { return baseUrl; }
         public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
 
-        public String getCallbackUrl() { return callbackUrl; }
-        public void setCallbackUrl(String callbackUrl) { this.callbackUrl = callbackUrl; }
+        public String getWebhookUrl() { return webhookUrl; }
+        public void setWebhookUrl(String webhookUrl) { this.webhookUrl = webhookUrl; }
     }
 
     public static class Chapa {
         private String secretKey = "";
         private String webhookSecret = "";
         private String baseUrl = "https://api.chapa.co/v1";
-        private String callbackUrl = "";
+        private String webhookUrl = "";
+        private String returnUrl = "";
 
         public String getSecretKey() { return secretKey; }
         public void setSecretKey(String secretKey) { this.secretKey = secretKey; }
@@ -94,8 +95,11 @@ public class BillingProperties {
         public String getBaseUrl() { return baseUrl; }
         public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
 
-        public String getCallbackUrl() { return callbackUrl; }
-        public void setCallbackUrl(String callbackUrl) { this.callbackUrl = callbackUrl; }
+        public String getWebhookUrl() { return webhookUrl; }
+        public void setWebhookUrl(String webhookUrl) { this.webhookUrl = webhookUrl; }
+
+        public String getReturnUrl() { return returnUrl; }
+        public void setReturnUrl(String returnUrl) { this.returnUrl = returnUrl; }
     }
 
     public static class Verifier {

@@ -179,7 +179,8 @@ public class OfferService {
                 row.paymentMethod(),
                 row.paymentInstructions(),
                 row.displayOrder(),
-                row.verificationParams()
+                row.verificationParams(),
+                row.logoUrl()
         );
     }
 

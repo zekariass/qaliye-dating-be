@@ -12,5 +12,6 @@ public record PaymentMethodDto(
         String paymentMethod,
         String paymentInstructionsHtml,
         int displayOrder,
-        List<Map<String, Object>> verificationParams
+        List<Map<String, Object>> verificationParams,
+        String logoUrl
 ) {}

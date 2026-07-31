@@ -32,7 +32,7 @@ import java.util.UUID;
  *   <li>verified=true + settlement matched + bank+amount match → VERIFIED → fulfill</li>
  *   <li>verified=true + settlement matched + bank or amount mismatch → MANUAL_REVIEW</li>
  *   <li>verified=true + settlement NOT matched → MANUAL_REVIEW</li>
- *   <li>verified=true + confirmedBefore=true → MANUAL_REVIEW (duplicate)</li>
+ *   <li>verified=true + confirmedBefore=true → REJECTED (used in another app)</li>
  *   <li>verified=true + duplicate providerRef in another verified order → MANUAL_REVIEW</li>
  *   <li>verified=true + order older than manualTransferMaxAgeHours → EXPIRED</li>
  *   <li>status=not_found → REJECTED</li>
@@ -196,7 +196,7 @@ public class VerifyEtWebhookHandler {
             Boolean confirmedBefore = extractConfirmedBefore(data);
 
             StatusResult statusResult = resolveOrderStatus(data, processingStatus, status, verified,
-                    attempt, providerRef, verifiedAmount);
+                    attempt, providerRef, verifiedAmount, confirmedBefore);
             String orderStatus = statusResult.status();
 
             billingRepo.finalizeVerificationAttemptVerifyEt(
@@ -233,7 +233,8 @@ public class VerifyEtWebhookHandler {
                                        String processingStatus, String verifyStatus,
                                        boolean verified,
                                        BillingRepository.VerificationAttemptRow attempt,
-                                       String providerRef, Integer verifiedAmount) {
+                                       String providerRef, Integer verifiedAmount,
+                                       boolean confirmedBefore) {
         // Terminal failure -> REJECTED
         if ("failed".equals(processingStatus) || "not_found".equals(verifyStatus)) {
             return new StatusResult("REJECTED",
@@ -304,6 +305,13 @@ public class VerifyEtWebhookHandler {
                     providerRef, attempt.orderId());
             return new StatusResult("MANUAL_REVIEW",
                     "duplicate provider reference: " + providerRef);
+        }
+
+        // confirmedBefore check: transaction was confirmed in another app
+        if (confirmedBefore) {
+            log.warn("verify.et webhook: confirmedBefore=true for order={}, rejecting as used in another app",
+                    attempt.orderId());
+            return new StatusResult("REJECTED", "transaction used in another app");
         }
 
         return new StatusResult("VERIFIED", null);

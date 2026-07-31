@@ -177,7 +177,7 @@ public class BillingRepository {
     private static final String FIND_PAYMENT_METHODS_SQL = """
             SELECT id, country_code, platform, method_code, display_name,
                    payment_channel, payment_method, payment_instructions, is_active, display_order,
-                   verification_params
+                   verification_params, logo_url
             FROM payment_methods
             WHERE country_code = :countryCode AND platform = :platform AND is_active = TRUE
             ORDER BY display_order ASC
@@ -186,7 +186,7 @@ public class BillingRepository {
     private static final String FIND_PAYMENT_METHOD_BY_ID_SQL = """
             SELECT id, country_code, platform, method_code, display_name,
                    payment_channel, payment_method, payment_instructions, is_active, display_order,
-                   verification_params
+                   verification_params, logo_url
             FROM payment_methods
             WHERE id = :id
             """;
@@ -201,7 +201,7 @@ public class BillingRepository {
     private static final String FIND_PAYMENT_METHODS_BY_CHANNEL_SQL = """
             SELECT id, country_code, platform, method_code, display_name,
                    payment_channel, payment_method, payment_instructions, is_active, display_order,
-                   verification_params
+                   verification_params, logo_url
             FROM payment_methods
             WHERE country_code = :countryCode AND platform = :platform
               AND payment_channel = :paymentChannel AND is_active = TRUE
@@ -216,7 +216,7 @@ public class BillingRepository {
     private static final String FIND_ACTIVE_ONLINE_PAYMENT_METHOD_SQL = """
             SELECT id, country_code, platform, method_code, display_name,
                    payment_channel, payment_method, payment_instructions, is_active, display_order,
-                   verification_params
+                   verification_params, logo_url
             FROM payment_methods
             WHERE country_code = :countryCode AND platform = :platform
               AND payment_channel = 'ONLINE_PAYMENT' AND is_active = TRUE
@@ -252,7 +252,8 @@ public class BillingRepository {
             String methodCode, String displayName,
             String paymentChannel, String paymentMethod,
             String paymentInstructions, boolean isActive, int displayOrder,
-            java.util.List<java.util.Map<String, Object>> verificationParams
+            java.util.List<java.util.Map<String, Object>> verificationParams,
+            String logoUrl
     ) {}
 
     public List<PaymentMethodRow> findActivePaymentMethods(String countryCode, String platform) {
@@ -302,7 +303,8 @@ public class BillingRepository {
                 rs.getInt("display_order"),
                 rs.getObject("verification_params") != null
                         ? parseJsonbArray(rs.getString("verification_params"))
-                        : null
+                        : null,
+                rs.getString("logo_url")
         );
     }
 
@@ -350,7 +352,6 @@ public class BillingRepository {
             ORDER_SELECT + """
             WHERE po.payment_method_id = :methodId
               AND po.manual_payment_reference_normalized = :normalizedRef
-              AND po.status NOT IN ('CANCELLED', 'EXPIRED')
             ORDER BY po.created_at DESC LIMIT 1
             """;
 

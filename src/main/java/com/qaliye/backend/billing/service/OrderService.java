@@ -8,6 +8,7 @@ import com.qaliye.backend.billing.dto.ManualTransferVerifyRequest;
 import com.qaliye.backend.billing.dto.OrderListResponse;
 import com.qaliye.backend.billing.dto.OrderResponse;
 import com.qaliye.backend.billing.dto.OrderSummaryDto;
+import com.qaliye.backend.billing.provider.ChapaClient;
 import com.qaliye.backend.billing.provider.LocalGatewayRegistry;
 import com.qaliye.backend.billing.provider.LocalOnlinePaymentGateway;
 import com.qaliye.backend.billing.provider.VerifyEtClient;
@@ -55,6 +56,7 @@ public class OrderService {
     private final ObjectMapper objectMapper;
     private final PromotionRepository promotionRepo;
     private final PromotionEligibilityService promotionEligibilityService;
+    private final ChapaClient chapaClient;
 
     public OrderService(BillingRepository billingRepo,
                         BillingProperties billingProps,
@@ -64,7 +66,8 @@ public class OrderService {
                         FulfillmentService fulfillmentService,
                         ObjectMapper objectMapper,
                         PromotionRepository promotionRepo,
-                        PromotionEligibilityService promotionEligibilityService) {
+                        PromotionEligibilityService promotionEligibilityService,
+                        ChapaClient chapaClient) {
         this.billingRepo = billingRepo;
         this.billingProps = billingProps;
         this.marketResolver = marketResolver;
@@ -74,6 +77,7 @@ public class OrderService {
         this.objectMapper = objectMapper;
         this.promotionRepo = promotionRepo;
         this.promotionEligibilityService = promotionEligibilityService;
+        this.chapaClient = chapaClient;
     }
 
     @Transactional
@@ -238,6 +242,56 @@ public class OrderService {
     }
 
     @Transactional
+    public OrderResponse verifyChapaPayment(UUID userId, UUID orderId) {
+        BillingRepository.OrderRow order = billingRepo.findOrderById(orderId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "order_not_found"));
+
+        if (!order.userId().equals(userId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "access_denied");
+        }
+
+        if (!"chapa".equals(order.methodCode())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "not_chapa_order");
+        }
+
+        // Only verify orders that are still pending payment
+        if (!"AWAITING_PAYMENT".equals(order.status()) && !"CREATED".equals(order.status())) {
+            log.info("Chapa verify: order {} already in status={}, returning current state", orderId, order.status());
+            return toOrderResponse(order);
+        }
+
+        String txRef = order.orderReference();
+        ChapaClient.VerifyResult verifyResult = chapaClient.verifyTransaction(txRef);
+
+        if (verifyResult.isSuccess()) {
+            // Verify amount matches
+            Integer verifiedAmount = verifyResult.amountMinorUnits();
+            if (verifiedAmount != null && verifiedAmount != order.expectedAmountMinorUnits()) {
+                log.warn("Chapa verify amount mismatch: order={}, expected={}, verified={}",
+                        orderId, order.expectedAmountMinorUnits(), verifiedAmount);
+                billingRepo.updateOrderStatus(orderId, "MANUAL_REVIEW",
+                        "amount mismatch: expected=" + order.expectedAmountMinorUnits()
+                        + ", verified=" + verifiedAmount);
+            } else {
+                billingRepo.updateOrderStatus(orderId, "VERIFIED", "Chapa payment verified");
+                fulfillmentService.fulfillVerifiedOrder(orderId, userId);
+                log.info("Chapa payment verified and fulfilled via poll: order={}, tx_ref={}", orderId, txRef);
+            }
+        } else if (verifyResult.isFailed()) {
+            billingRepo.updateOrderStatus(orderId, "REJECTED",
+                    "Chapa verify status: " + verifyResult.status());
+            promotionRepo.cancelRedemptionByOrderId(orderId, "payment_failed");
+            log.info("Chapa payment rejected via poll: order={}, status={}", orderId, verifyResult.status());
+        } else {
+            log.info("Chapa verify non-terminal: order={}, status={}, error={}",
+                    orderId, verifyResult.status(), verifyResult.errorMessage());
+        }
+
+        order = billingRepo.findOrderById(orderId).orElse(order);
+        return toOrderResponse(order);
+    }
+
+    @Transactional
     public OrderResponse submitManualTransferVerification(UUID userId, ManualTransferVerifyRequest request) {
         // Idempotency check
         if (request.idempotencyKey() != null) {
@@ -270,27 +324,33 @@ public class OrderService {
         String manualRef = extractTransactionRef(methodCode, request.verificationData());
         String normalizedRef = manualRef != null ? manualRef.trim().toUpperCase(Locale.ROOT) : null;
 
-        // Check for an existing active order with the same manual reference
+        // Layer 1: Check local DB for an existing order with the same manual reference.
+        // If found, reject immediately without calling verify.et or changing the existing order.
         if (normalizedRef != null) {
             Optional<BillingRepository.OrderRow> existingByRef =
                     billingRepo.findOrderByManualReference(method.id(), normalizedRef);
             if (existingByRef.isPresent()) {
                 BillingRepository.OrderRow existingOrder = existingByRef.get();
+                String existingStatus = existingOrder.status();
                 log.info("verify.et dedup: found existing order={} status={} for ref={}",
-                        existingOrder.id(), existingOrder.status(), normalizedRef);
+                        existingOrder.id(), existingStatus, normalizedRef);
 
                 // If still VERIFICATION_PENDING with a queued request ID, treat as a status poll
-                if ("VERIFICATION_PENDING".equals(existingOrder.status())
+                if ("VERIFICATION_PENDING".equals(existingStatus)
                         && existingOrder.providerVerificationRequestId() != null) {
                     return pollAndUpdateOrder(existingOrder, offer, method);
                 }
 
-                // New frontend verify request for an existing reference: count it.
-                // We do not increment when polling an already-queued request above.
-                billingRepo.incrementVerificationCount(existingOrder.id());
-                BillingRepository.OrderRow refreshedOrder =
-                        billingRepo.findOrderById(existingOrder.id()).orElse(existingOrder);
-                return toOrderResponse(refreshedOrder);
+                // Reference already used — reject without changing existing order status
+                String errorCode = switch (existingStatus) {
+                    case "VERIFIED" -> "transaction_already_used";
+                    case "MANUAL_REVIEW", "RECEIPT_SUBMITTED" -> "transaction_under_review";
+                    case "REJECTED" -> "transaction_rejected";
+                    case "EXPIRED" -> "transaction_expired";
+                    case "CANCELLED" -> "transaction_cancelled";
+                    default -> "transaction_already_used";
+                };
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, errorCode);
             }
         }
 
@@ -659,6 +719,14 @@ public class OrderService {
             } catch (Exception e) {
                 log.warn("verify.et inline: could not parse transfer timestamp: {}", transferTs);
             }
+        }
+
+        // confirmedBefore check: transaction was confirmed in another app
+        Boolean confirmedBefore = resp.result() != null && resp.result().confirmationHistory() != null
+                && resp.result().confirmationHistory().confirmedBefore();
+        if (confirmedBefore) {
+            log.warn("verify.et inline: confirmedBefore=true, rejecting as used in another app");
+            return new StatusResult("REJECTED", "transaction used in another app");
         }
 
         return new StatusResult("VERIFIED", null);

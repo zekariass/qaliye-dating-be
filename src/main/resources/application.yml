@@ -143,9 +143,10 @@ billing:
     api-base-url: ${REVENUECAT_API_BASE_URL:https://api.revenuecat.com/v1}
   chapa:
     secret-key: ${CHAPA_SECRET_KEY:}
-    webhook-secret: ${CHAPA_WEBHOOK_SECRET:}
+    webhook-secret: ${CHAPA_WEBHOOK_SECRET:b593c000e02037464f7f9cb09f42ac41f25855caa806f199e02870422cbbb83e}
     base-url: ${CHAPA_BASE_URL:https://api.chapa.co/v1}
-    callback-url: ${CHAPA_CALLBACK_URL:}
+    webhook-url: ${CHAPA_WEBHOOK_URL:}
+    return-url: ${CHAPA_RETURN_URL:qaliyemobile://callback}
   verifier:
     provider: VERIFY_ET
     api-key: ${VERIFY_ET_API_KEY:VERIFY_BANK_ET_BdHRjlvR9CLfMTANPZmGyeWGjpdzB7fZIq3-GhxjfhrBWz0u5EzX2qlYSdIgOEqa}
@@ -271,3 +272,4 @@ logging:
     com.qaliye.backend.discovery.service.LikesService: DEBUG
     com.qaliye.backend.discovery.service.MatchesService: DEBUG
     com.qaliye.backend.billing.service.OfferService: DEBUG
+    com.qaliye.backend.billing.controller.BillingWebhookController: DEBUG

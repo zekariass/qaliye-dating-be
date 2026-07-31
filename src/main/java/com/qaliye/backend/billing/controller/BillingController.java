@@ -98,6 +98,8 @@ public class BillingController {
     @PostMapping("/orders")
     public ResponseEntity<OrderResponse> createOrder(@Valid @RequestBody CreateOrderRequest request) {
         UUID userId = CallerUtils.callerId();
+        log.info("createOrder request: paymentOfferId={}, paymentMethodId={}, platform={}, idempotencyKey={}",
+                request.paymentOfferId(), request.paymentMethodId(), request.platform(), request.idempotencyKey());
         OrderResponse response = orderService.createOrder(userId, request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
@@ -106,6 +108,12 @@ public class BillingController {
     public ResponseEntity<OrderResponse> getOrder(@PathVariable UUID orderId) {
         UUID userId = CallerUtils.callerId();
         return ResponseEntity.ok(orderService.getOrder(userId, orderId));
+    }
+
+    @PostMapping("/orders/{orderId}/verify")
+    public ResponseEntity<OrderResponse> verifyPayment(@PathVariable UUID orderId) {
+        UUID userId = CallerUtils.callerId();
+        return ResponseEntity.ok(orderService.verifyChapaPayment(userId, orderId));
     }
 
     @PostMapping("/manual-transfer/verify")

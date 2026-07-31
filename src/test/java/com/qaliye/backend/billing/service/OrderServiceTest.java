@@ -8,6 +8,7 @@ import com.qaliye.backend.billing.dto.ManualTransferVerifyRequest;
 import com.qaliye.backend.billing.dto.OrderListResponse;
 import com.qaliye.backend.billing.dto.OrderResponse;
 import com.qaliye.backend.billing.dto.OrderSummaryDto;
+import com.qaliye.backend.billing.provider.ChapaClient;
 import com.qaliye.backend.billing.provider.LocalGatewayRegistry;
 import com.qaliye.backend.billing.provider.LocalOnlinePaymentGateway;
 import com.qaliye.backend.billing.provider.VerifyEtClient;
@@ -16,8 +17,10 @@ import com.qaliye.backend.billing.repository.PromotionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
@@ -45,6 +48,7 @@ class OrderServiceTest {
     @Mock PromotionEligibilityService promotionEligibilityService;
     @Mock BillingProperties.PaymentInstructions paymentInstructions;
     @Mock BillingProperties.Verifier verifier;
+    @Mock ChapaClient chapaClient;
 
     OrderService service;
 
@@ -59,7 +63,7 @@ class OrderServiceTest {
     void setUp() {
         service = new OrderService(billingRepo, billingProps, marketResolver,
                 gatewayRegistry, verifyEtClient, fulfillmentService, new ObjectMapper(),
-                promotionRepo, promotionEligibilityService);
+                promotionRepo, promotionEligibilityService, chapaClient);
         lenient().when(billingProps.getPaymentOrderExpiryHours()).thenReturn(2);
         lenient().when(billingProps.getPaymentInstructions()).thenReturn(paymentInstructions);
         lenient().when(billingProps.getVerifier()).thenReturn(verifier);
@@ -612,7 +616,7 @@ class OrderServiceTest {
     }
 
     @Test
-    void manualTransfer_duplicateReference_returnsExistingOrder() {
+    void manualTransfer_duplicateReference_rejectsWithError() {
         BillingRepository.FullOfferRow offer = buildOffer("ET", "ANDROID", 49900, "ETB");
         BillingRepository.PaymentMethodRow method = buildMethod("telebirr", "MANUAL_TRANSFER", "ET", "ANDROID");
         BillingRepository.OrderRow existingOrder = buildOrderRow(userId, offerId, methodId,
@@ -621,19 +625,18 @@ class OrderServiceTest {
         when(billingRepo.findOfferById(offerId)).thenReturn(Optional.of(offer));
         when(billingRepo.findPaymentMethodById(methodId)).thenReturn(Optional.of(method));
         when(billingRepo.findOrderByManualReference(any(), any())).thenReturn(Optional.of(existingOrder));
-        when(billingRepo.findOrderById(existingOrder.id())).thenReturn(Optional.of(
-                buildOrderRow(userId, offerId, methodId, "VERIFIED", "MANUAL_TRANSFER", "telebirr", null, 1)));
 
-        OrderResponse response = service.submitManualTransferVerification(userId,
-                new ManualTransferVerifyRequest(offerId, methodId, "ANDROID",
-                        Map.of("transactionOrReference", "ABCDEF"), null));
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () ->
+                service.submitManualTransferVerification(userId,
+                        new ManualTransferVerifyRequest(offerId, methodId, "ANDROID",
+                                Map.of("transactionOrReference", "ABCDEF"), null)));
 
-        assertThat(response.status()).isEqualTo("VERIFIED");
-        assertThat(response.verificationCount()).isEqualTo(1);
+        assertThat(ex.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(ex.getReason()).isEqualTo("transaction_already_used");
         verify(billingRepo, never()).insertManualTransferOrder(any(), any(), any(), any(), any(),
                 anyInt(), any(), any(), any(), any(), any(), any());
         verify(verifyEtClient, never()).submit(any(), any(), any(), any());
-        verify(billingRepo).incrementVerificationCount(existingOrder.id());
+        verify(billingRepo, never()).incrementVerificationCount(any());
     }
 
     @Test
@@ -790,7 +793,7 @@ class OrderServiceTest {
                 methodCode, "Pay via " + methodCode,
                 channel, "METHOD",
                 null, true, 1,
-                null
+                null, null
         );
     }
 
