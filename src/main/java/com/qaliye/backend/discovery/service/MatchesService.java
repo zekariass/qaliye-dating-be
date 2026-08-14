@@ -111,6 +111,8 @@ public class MatchesService {
                   AND pp.deleted_at IS NULL
             WHERE (m.user_one_id = :userId OR m.user_two_id = :userId)
               AND m.status = 'ACTIVE'
+              AND (cu.role = 'TEST' AND au.role = 'TEST'
+                   OR cu.role <> 'TEST' AND au.role <> 'TEST')
               AND NOT EXISTS (
                   SELECT 1 FROM user_blocks ub
                   WHERE ub.status = 'ACTIVE'
@@ -127,8 +129,13 @@ public class MatchesService {
     private static final String MATCHES_COUNT_SQL = """
             SELECT COUNT(*)
             FROM matches m
+            JOIN app_users cu ON cu.id = :userId
+            JOIN app_users au ON au.id = CASE WHEN m.user_one_id = :userId
+                                              THEN m.user_two_id ELSE m.user_one_id END
             WHERE (m.user_one_id = :userId OR m.user_two_id = :userId)
               AND m.status = 'ACTIVE'
+              AND (cu.role = 'TEST' AND au.role = 'TEST'
+                   OR cu.role <> 'TEST' AND au.role <> 'TEST')
               AND NOT EXISTS (
                   SELECT 1 FROM user_blocks ub
                   WHERE ub.status = 'ACTIVE'

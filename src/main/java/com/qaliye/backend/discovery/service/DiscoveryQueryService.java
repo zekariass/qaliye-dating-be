@@ -56,7 +56,8 @@ public class DiscoveryQueryService {
             UUID[] ethnicityPreferenceIds,
             String hasChildrenPreference,
             String wantsChildrenPreference,
-            String[] religionPreferences
+            String[] religionPreferences,
+            String actorRole
     ) {}
 
     public record FetchCursor(Double score, UUID userId) {
@@ -81,7 +82,8 @@ public class DiscoveryQueryService {
                    dp.ethnicity_preference_ids,
                    dp.has_children_preference,
                    dp.wants_children_preference,
-                   dp.religion_preferences
+                   dp.religion_preferences,
+                   au.role
             FROM app_users au
             JOIN discovery_preferences dp ON dp.user_id = au.id
             JOIN addresses a ON a.id = au.address_id
@@ -204,6 +206,8 @@ public class DiscoveryQueryService {
                   AND au.status         = 'ACTIVE'
                   AND au.deleted_at     IS NULL
                   AND p.user_id        <> :actorId
+                  AND (:actorRole = 'TEST' AND au.role = 'TEST'
+                       OR :actorRole <> 'TEST' AND au.role <> 'TEST')
                   AND (p.discovery_mode <> 'INCOGNITO'
                        OR EXISTS (
                            SELECT 1 FROM user_discovery_actions uda_inc
@@ -301,6 +305,8 @@ public class DiscoveryQueryService {
               AND au.status         = 'ACTIVE'
               AND au.deleted_at     IS NULL
               AND p.user_id        <> :actorId
+              AND (:actorRole = 'TEST' AND au.role = 'TEST'
+                   OR :actorRole <> 'TEST' AND au.role <> 'TEST')
               AND (p.discovery_mode <> 'INCOGNITO'
                    OR EXISTS (
                        SELECT 1 FROM user_discovery_actions uda_inc
@@ -409,7 +415,8 @@ public class DiscoveryQueryService {
                     resolvedEthIds != null ? resolvedEthIds : new UUID[0],
                     rs.getString("has_children_preference"),
                     rs.getString("wants_children_preference"),
-                    religionPrefs
+                    religionPrefs,
+                    rs.getString("role")
             );
         });
     }
@@ -537,6 +544,7 @@ public class DiscoveryQueryService {
         return new MapSqlParameterSource()
                 .addValue("actorId", actorId)
                 .addValue("skipDistance", skipDistance)
+                .addValue("actorRole", ctx.actorRole() != null ? ctx.actorRole() : "USER")
                 .addValue("actorCoords", ctx.coordsEwkt())
                 .addValue("targetGender", ctx.interestedInGender())
                 .addValue("minAge", ctx.minAge())

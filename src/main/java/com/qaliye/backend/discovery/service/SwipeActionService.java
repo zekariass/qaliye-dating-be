@@ -50,10 +50,14 @@ public class SwipeActionService {
     }
 
     private static final String TARGET_ELIGIBILITY_SQL = """
-            SELECT au.status, au.deleted_at, p.is_visible, p.is_onboarded
+            SELECT au.status, au.deleted_at, au.role, p.is_visible, p.is_onboarded
             FROM app_users au
             JOIN profiles p ON p.user_id = au.id
             WHERE au.id = :targetId
+            """;
+
+    private static final String ACTOR_ROLE_SQL = """
+            SELECT role FROM app_users WHERE id = :actorId
             """;
 
     private static final String BLOCK_CHECK_SQL = """
@@ -232,14 +236,18 @@ public class SwipeActionService {
 
     private void checkTargetEligibility(UUID actorId, UUID targetId) {
         var params = new MapSqlParameterSource("targetId", targetId);
+        String[] targetRole = new String[1];
         boolean eligible = Boolean.TRUE.equals(jdbc.query(TARGET_ELIGIBILITY_SQL, params, rs -> {
             if (!rs.next()) return false;
+            targetRole[0] = rs.getString("role");
             return "ACTIVE".equals(rs.getString("status"))
                     && rs.getObject("deleted_at") == null
                     && rs.getBoolean("is_visible")
                     && rs.getBoolean("is_onboarded");
         }));
         if (!eligible) throw new TargetIneligibleException();
+
+        checkRoleIsolation(actorId, targetRole[0]);
 
         boolean hasApprovedPhoto = !jdbc.queryForList(PRIMARY_PHOTO_CHECK_SQL, params).isEmpty();
         if (!hasApprovedPhoto) throw new TargetIneligibleException();
@@ -251,11 +259,15 @@ public class SwipeActionService {
 
     private void checkBasicTargetEligibility(UUID actorId, UUID targetId) {
         var params = new MapSqlParameterSource("targetId", targetId);
+        String[] targetRole = new String[1];
         boolean exists = Boolean.TRUE.equals(jdbc.query(TARGET_ELIGIBILITY_SQL, params, rs -> {
             if (!rs.next()) return false;
+            targetRole[0] = rs.getString("role");
             return "ACTIVE".equals(rs.getString("status")) && rs.getObject("deleted_at") == null;
         }));
         if (!exists) throw new TargetIneligibleException();
+
+        checkRoleIsolation(actorId, targetRole[0]);
 
         var blockParams = new MapSqlParameterSource("actorId", actorId).addValue("targetId", targetId);
         boolean blocked = !jdbc.queryForList(BLOCK_CHECK_SQL, blockParams).isEmpty();
@@ -283,5 +295,18 @@ public class SwipeActionService {
                 false, null, null, null, null,
                 createdAt, true
         );
+    }
+
+    private void checkRoleIsolation(UUID actorId, String targetRole) {
+        String actorRole = jdbc.queryForObject(
+                ACTOR_ROLE_SQL,
+                new MapSqlParameterSource("actorId", actorId),
+                String.class);
+        if (actorRole == null) actorRole = "USER";
+        boolean actorIsTest = "TEST".equals(actorRole);
+        boolean targetIsTest = "TEST".equals(targetRole);
+        if (actorIsTest != targetIsTest) {
+            throw new TargetIneligibleException();
+        }
     }
 }

@@ -6,8 +6,8 @@ import jakarta.validation.constraints.Pattern;
 public class UpdateUserRoleRequest {
 
     @NotBlank
-    @Pattern(regexp = "^(USER|MODERATOR|ADMIN)$",
-             message = "role must be USER, MODERATOR, or ADMIN")
+    @Pattern(regexp = "^(USER|MODERATOR|ADMIN|TEST)$",
+             message = "role must be USER, MODERATOR, ADMIN, or TEST")
     private String role;
 
     public String getRole() { return role; }

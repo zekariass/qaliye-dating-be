@@ -97,6 +97,7 @@ public class ChatQueryService {
                                                 THEN m.user_two_id ELSE m.user_one_id END
             JOIN app_users au ON au.id = CASE WHEN m.user_one_id = :userId
                                              THEN m.user_two_id ELSE m.user_one_id END
+            JOIN app_users cu ON cu.id = :userId
             LEFT JOIN profile_photos pp
                 ON pp.user_id = CASE WHEN m.user_one_id = :userId
                                      THEN m.user_two_id ELSE m.user_one_id END
@@ -105,6 +106,8 @@ public class ChatQueryService {
                AND pp.deleted_at IS NULL
             WHERE (m.user_one_id = :userId OR m.user_two_id = :userId)
               AND m.status = 'ACTIVE'
+              AND (cu.role = 'TEST' AND au.role = 'TEST'
+                   OR cu.role <> 'TEST' AND au.role <> 'TEST')
               AND NOT EXISTS (
                   SELECT 1 FROM user_blocks ub
                   WHERE ub.status = 'ACTIVE'
