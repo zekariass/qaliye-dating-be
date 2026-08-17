@@ -1,7 +1,11 @@
 package com.qaliye.backend.discovery.service;
 
+import com.qaliye.backend.billing.repository.ActionLimitRepository;
+import com.qaliye.backend.billing.service.ActionCostService;
+import com.qaliye.backend.billing.service.CreditService;
 import com.qaliye.backend.discovery.dto.RevisitPassesResponse;
 import com.qaliye.backend.discovery.exception.ActorIneligibleException;
+import com.qaliye.backend.discovery.exception.ActionLimitExceededException;
 import com.qaliye.backend.discovery.repository.DiscoveryActionRepository;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -20,13 +24,22 @@ public class RevisitPassesService {
     private final DiscoveryActionRepository actionRepo;
     private final DiscoveryQueryService queryService;
     private final NamedParameterJdbcTemplate jdbc;
+    private final ActionCostService actionCostService;
+    private final CreditService creditService;
+    private final ActionLimitRepository actionLimitRepo;
 
     public RevisitPassesService(DiscoveryActionRepository actionRepo,
                                  DiscoveryQueryService queryService,
-                                 NamedParameterJdbcTemplate jdbc) {
+                                 NamedParameterJdbcTemplate jdbc,
+                                 ActionCostService actionCostService,
+                                 CreditService creditService,
+                                 ActionLimitRepository actionLimitRepo) {
         this.actionRepo = actionRepo;
         this.queryService = queryService;
         this.jdbc = jdbc;
+        this.actionCostService = actionCostService;
+        this.creditService = creditService;
+        this.actionLimitRepo = actionLimitRepo;
     }
 
     /**
@@ -123,6 +136,26 @@ public class RevisitPassesService {
         DiscoveryQueryService.ActorContext ctx = queryService.loadActorContext(actorId);
         if (ctx == null) {
             throw ActorIneligibleException.profileIncomplete();
+        }
+
+        // Evaluate RETURN_PASSED_PROFILE action cost from subscription_plan_limit_and_cost
+        ActionCostService.ActionCostResult cost = actionCostService.evaluate(actorId, "RETURN_PASSED_PROFILE");
+        if (cost.isBlocked()) {
+            throw new ActionLimitExceededException("RETURN_PASSED_PROFILE", cost.periodType());
+        }
+        if (cost.ruleId() != null && cost.limitValue() != null) {
+            actionLimitRepo.ensureExists(actorId, cost.ruleId(), cost.periodStart(), cost.periodEnd());
+            boolean incremented = actionLimitRepo
+                    .tryIncrementUnderLimit(actorId, cost.ruleId(), cost.periodStart(), cost.limitValue())
+                    .isPresent();
+            if (!incremented && !cost.requiresCredits()) {
+                throw new ActionLimitExceededException("RETURN_PASSED_PROFILE", cost.periodType());
+            }
+        }
+
+        if (cost.requiresCredits()) {
+            creditService.consumeCredits(actorId, cost.creditCost(), "RETURN_PASSED_PROFILE",
+                    "revisit-" + actorId + "-" + System.currentTimeMillis());
         }
 
         String residencyParam = buildArrayParam(resolveResidencyTypes(ctx));

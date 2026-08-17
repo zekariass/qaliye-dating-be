@@ -9,9 +9,9 @@ import com.qaliye.backend.chat.repository.ChatAttachmentRepository.AttachmentRow
 import com.qaliye.backend.chat.repository.ChatMatchRepository;
 import com.qaliye.backend.chat.repository.ChatMessageRepository;
 import com.qaliye.backend.chat.service.*;
-import com.qaliye.backend.discovery.dto.UserPlanEntitlement;
-import com.qaliye.backend.discovery.repository.DailyLimitRepository;
-import com.qaliye.backend.discovery.service.PlanEntitlementService;
+import com.qaliye.backend.billing.repository.ActionLimitRepository;
+import com.qaliye.backend.billing.service.ActionCostService;
+import com.qaliye.backend.billing.service.CreditService;
 import com.qaliye.backend.notifications.service.NotificationOutboxService;
 import com.qaliye.backend.storage.SupabaseStorageService;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,8 +46,9 @@ class MessageCommandServiceAttachmentTest {
     @Mock ChatAttachmentRepository attachmentRepository;
     @Mock SupabaseStorageService storageService;
     @Mock ChatProperties chatProperties;
-    @Mock PlanEntitlementService entitlementService;
-    @Mock DailyLimitRepository dailyLimitRepo;
+    @Mock ActionCostService actionCostService;
+    @Mock ActionLimitRepository actionLimitRepo;
+    @Mock CreditService creditService;
 
     MessageCommandService service;
 
@@ -62,7 +63,7 @@ class MessageCommandServiceAttachmentTest {
                 matchRepository, messageRepository, authorizationService,
                 outboxService, rateLimitService, mapper, notificationOutboxService,
                 attachmentRepository, storageService, chatProperties,
-                entitlementService, dailyLimitRepo);
+                actionCostService, actionLimitRepo, creditService);
     }
 
     @Test
@@ -300,10 +301,9 @@ class MessageCommandServiceAttachmentTest {
         lenient().when(attachmentRepository.insert(any(), anyString(), anyString(), anyString(), anyLong(), anyString(), anyString(), any()))
                 .thenReturn(attRow);
 
-        lenient().when(entitlementService.loadEntitlement(callerId)).thenReturn(
-                new UserPlanEntitlement(callerId, "PREMIUM", true, 150, 5, 10, null, null, 0, 0));
-        lenient().when(dailyLimitRepo.lockForUpdate(callerId)).thenReturn(
-                Optional.of(new DailyLimitRepository.DailyLimitRow(callerId, 0, 0, 0, 0, 0)));
+        lenient().when(actionCostService.evaluate(any(), any())).thenReturn(
+                new ActionCostService.ActionCostResult(null, 0, true, false, false,
+                        java.time.LocalDate.now(), java.time.LocalDate.now(), 0, null, "DAY"));
     }
 
     private void setupMinimalMatchMock() {

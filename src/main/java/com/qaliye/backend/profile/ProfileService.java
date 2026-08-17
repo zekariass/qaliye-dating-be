@@ -2,6 +2,9 @@ package com.qaliye.backend.profile;
 
 import com.qaliye.backend.activity.ActivityStatus;
 import com.qaliye.backend.activity.ActivityStatusService;
+import com.qaliye.backend.billing.repository.ActionLimitRepository;
+import com.qaliye.backend.billing.service.ActionCostService;
+import com.qaliye.backend.billing.service.CreditService;
 import com.qaliye.backend.catalog.CatalogService;
 import com.qaliye.backend.catalog.EthnicityOption;
 import com.qaliye.backend.catalog.LanguageOption;
@@ -64,15 +67,24 @@ public class ProfileService {
     private final ProfilePhotoService profilePhotoService;
     private final ActivityStatusService activityStatusService;
     private final CatalogService catalogService;
+    private final ActionCostService actionCostService;
+    private final CreditService creditService;
+    private final ActionLimitRepository actionLimitRepo;
 
     public ProfileService(NamedParameterJdbcTemplate jdbc,
                           ProfilePhotoService profilePhotoService,
                           ActivityStatusService activityStatusService,
-                          CatalogService catalogService) {
+                          CatalogService catalogService,
+                          ActionCostService actionCostService,
+                          CreditService creditService,
+                          ActionLimitRepository actionLimitRepo) {
         this.jdbc = jdbc;
         this.profilePhotoService = profilePhotoService;
         this.activityStatusService = activityStatusService;
         this.catalogService = catalogService;
+        this.actionCostService = actionCostService;
+        this.creditService = creditService;
+        this.actionLimitRepo = actionLimitRepo;
     }
 
     public ProfileMeDto getCurrentProfile(UUID userId) {
@@ -92,7 +104,7 @@ public class ProfileService {
                     p.discovery_mode, p.is_visible, p.is_onboarded, p.is_verified, p.profile_completion_score,
                     a.id AS address_id, a.city, a.region, a.country_code, a.country_name,
                     a.formatted_address, a.location_source,
-                    au.role
+                    au.role, au.verification_status
                 FROM profiles p
                 JOIN app_users au ON au.id = p.user_id
                 LEFT JOIN addresses a ON a.id = au.address_id
@@ -150,6 +162,7 @@ public class ProfileService {
                 (String) r.get("discovery_mode"),
                 (Boolean) r.get("is_onboarded"),
                 (Boolean) r.get("is_verified"),
+                r.get("verification_status") != null ? r.get("verification_status").toString() : "NOT_STARTED",
                 r.get("profile_completion_score") != null
                         ? ((Number) r.get("profile_completion_score")).intValue() : 0,
                 prefs,
@@ -162,6 +175,17 @@ public class ProfileService {
     @Transactional
     public ProfileMeDto updateProfile(UUID userId, ProfileUpdateRequest request) {
         checkActorEligibility(userId);
+
+        // Check INCOGNITO_MODE cost only when switching TO incognito
+        if ("INCOGNITO".equals(request.discoveryMode())) {
+            String currentMode = jdbc.queryForObject(
+                    "SELECT discovery_mode FROM profiles WHERE user_id = :userId",
+                    Map.of("userId", userId), String.class);
+            if (!"INCOGNITO".equals(currentMode)) {
+                evaluateAndConsumeActionCost(userId, "INCOGNITO_MODE",
+                        "incognito-" + userId, HttpStatus.PAYMENT_REQUIRED, "incognito_mode_not_available");
+            }
+        }
 
         ensureProfileExists(userId, request);
 
@@ -429,6 +453,14 @@ public class ProfileService {
         String source = request.locationSource();
         if (source == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "INVALID_LOCATION");
+        }
+
+        // First-time address creation is free; only charge CHANGE_ADDRESS on updates
+        UUID existingAddressId = fetchExistingAddressId(userId);
+        if (existingAddressId != null) {
+            evaluateAndConsumeActionCost(userId, "CHANGE_ADDRESS",
+                    "change-addr-" + userId + "-" + System.currentTimeMillis(),
+                    HttpStatus.PAYMENT_REQUIRED, "change_address_not_available");
         }
 
         if ("GPS".equalsIgnoreCase(source)) {
@@ -967,4 +999,26 @@ public class ProfileService {
     }
 
     private record RelationInfo(String status, UUID matchId) {}
+
+    private void evaluateAndConsumeActionCost(UUID userId, String actionCode, String idempotencyKey,
+                                               HttpStatus blockedStatus, String blockedReason) {
+        ActionCostService.ActionCostResult cost = actionCostService.evaluate(userId, actionCode);
+        if (cost.isBlocked()) {
+            throw new ResponseStatusException(blockedStatus, blockedReason);
+        }
+        if (cost.ruleId() != null && cost.limitValue() != null) {
+            actionLimitRepo.ensureExists(userId, cost.ruleId(), cost.periodStart(), cost.periodEnd());
+            boolean incremented = actionLimitRepo
+                    .tryIncrementUnderLimit(userId, cost.ruleId(), cost.periodStart(), cost.limitValue())
+                    .isPresent();
+            if (!incremented) {
+                if (!cost.requiresCredits()) {
+                    throw new ResponseStatusException(blockedStatus, blockedReason);
+                }
+                creditService.consumeCredits(userId, cost.creditCost(), actionCode, idempotencyKey);
+            }
+        } else if (cost.requiresCredits()) {
+            creditService.consumeCredits(userId, cost.creditCost(), actionCode, idempotencyKey);
+        }
+    }
 }

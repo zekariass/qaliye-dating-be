@@ -19,9 +19,10 @@ public class DailyLimitsService {
      * 3. Active GLOBAL FREE plan (country_code = 'GLOBAL')
      */
     private static final String EFFECTIVE_PLAN_SQL = """
-            SELECT spl.limit_type, spl.limit_value
-            FROM subscription_plan_limits spl
-            WHERE spl.plan_id = (
+            SELECT fa.code AS limit_type, splac.limit_value
+            FROM subscription_plan_limit_and_cost splac
+            JOIN feature_actions fa ON fa.id = splac.feature_action_id
+            WHERE splac.subscription_plan_id = (
                 SELECT us.plan_id
                 FROM user_subscriptions us
                 WHERE us.user_id = :userId
@@ -30,10 +31,12 @@ public class DailyLimitsService {
                 ORDER BY us.current_period_start DESC
                 LIMIT 1
             )
+            AND fa.code IN ('LIKE', 'SUPER_LIKE', 'REWIND')
             UNION ALL
-            SELECT spl2.limit_type, spl2.limit_value
-            FROM subscription_plan_limits spl2
-            WHERE spl2.plan_id = (
+            SELECT fa2.code AS limit_type, splac2.limit_value
+            FROM subscription_plan_limit_and_cost splac2
+            JOIN feature_actions fa2 ON fa2.id = splac2.feature_action_id
+            WHERE splac2.subscription_plan_id = (
                 SELECT sp.id
                 FROM subscription_plans sp
                 WHERE sp.plan_kind = 'FREE'
@@ -46,6 +49,7 @@ public class DailyLimitsService {
                   )
                 LIMIT 1
             )
+            AND fa2.code IN ('LIKE', 'SUPER_LIKE', 'REWIND')
               AND NOT EXISTS (
                   SELECT 1 FROM user_subscriptions us2
                   WHERE us2.user_id = :userId
@@ -53,15 +57,17 @@ public class DailyLimitsService {
                     AND us2.current_period_end > NOW()
               )
             UNION ALL
-            SELECT spl3.limit_type, spl3.limit_value
-            FROM subscription_plan_limits spl3
-            WHERE spl3.plan_id = (
+            SELECT fa3.code AS limit_type, splac3.limit_value
+            FROM subscription_plan_limit_and_cost splac3
+            JOIN feature_actions fa3 ON fa3.id = splac3.feature_action_id
+            WHERE splac3.subscription_plan_id = (
                 SELECT sp.id FROM subscription_plans sp
                 WHERE sp.plan_kind = 'FREE'
                   AND sp.country_code = 'GLOBAL'
                   AND sp.is_active = TRUE
                 LIMIT 1
             )
+            AND fa3.code IN ('LIKE', 'SUPER_LIKE', 'REWIND')
               AND NOT EXISTS (
                   SELECT 1 FROM user_subscriptions us3
                   WHERE us3.user_id = :userId
@@ -110,9 +116,9 @@ public class DailyLimitsService {
             Object limitValueObj = row.get("limit_value");
             int limitValue = limitValueObj == null ? Integer.MAX_VALUE : ((Number) limitValueObj).intValue();
             switch (limitType) {
-                case "LIKES" -> likes = limitValue;
-                case "SUPERLIKES" -> superLikes = limitValue;
-                case "REWINDS" -> rewinds = limitValue;
+                case "LIKE"      -> likes = limitValue;
+                case "SUPER_LIKE" -> superLikes = limitValue;
+                case "REWIND"    -> rewinds = limitValue;
             }
         }
         return new TierLimits(likes, superLikes, rewinds);

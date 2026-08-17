@@ -15,6 +15,7 @@ public record OfferDto(
         String effectiveDisplayPrice,
         Integer billingIntervalCount,
         String billingIntervalUnit,
+        long includedCredits,
         boolean autoRenew,
         String externalProductId,
         String revenuecatOfferingId,

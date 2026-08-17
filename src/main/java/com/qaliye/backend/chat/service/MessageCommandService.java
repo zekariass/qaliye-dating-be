@@ -10,10 +10,10 @@ import com.qaliye.backend.chat.repository.ChatAttachmentRepository;
 import com.qaliye.backend.chat.repository.ChatAttachmentRepository.AttachmentRow;
 import com.qaliye.backend.chat.repository.ChatMatchRepository;
 import com.qaliye.backend.chat.repository.ChatMessageRepository;
-import com.qaliye.backend.discovery.dto.UserPlanEntitlement;
-import com.qaliye.backend.discovery.exception.DailyLimitExceededException;
-import com.qaliye.backend.discovery.repository.DailyLimitRepository;
-import com.qaliye.backend.discovery.service.PlanEntitlementService;
+import com.qaliye.backend.billing.repository.ActionLimitRepository;
+import com.qaliye.backend.billing.service.ActionCostService;
+import com.qaliye.backend.billing.service.CreditService;
+import com.qaliye.backend.discovery.exception.ActionLimitExceededException;
 import com.qaliye.backend.notifications.service.NotificationOutboxService;
 import com.qaliye.backend.storage.SupabaseStorageService;
 import org.slf4j.Logger;
@@ -44,8 +44,9 @@ public class MessageCommandService {
     private final ChatAttachmentRepository attachmentRepository;
     private final SupabaseStorageService storageService;
     private final ChatProperties chatProps;
-    private final PlanEntitlementService entitlementService;
-    private final DailyLimitRepository dailyLimitRepo;
+    private final ActionCostService actionCostService;
+    private final ActionLimitRepository actionLimitRepo;
+    private final CreditService creditService;
 
     public MessageCommandService(ChatMatchRepository matchRepository,
                                   ChatMessageRepository messageRepository,
@@ -57,8 +58,9 @@ public class MessageCommandService {
                                   ChatAttachmentRepository attachmentRepository,
                                   SupabaseStorageService storageService,
                                   ChatProperties chatProps,
-                                  PlanEntitlementService entitlementService,
-                                  DailyLimitRepository dailyLimitRepo) {
+                                  ActionCostService actionCostService,
+                                  ActionLimitRepository actionLimitRepo,
+                                  CreditService creditService) {
         this.matchRepository = matchRepository;
         this.messageRepository = messageRepository;
         this.authorizationService = authorizationService;
@@ -69,8 +71,9 @@ public class MessageCommandService {
         this.attachmentRepository = attachmentRepository;
         this.storageService = storageService;
         this.chatProps = chatProps;
-        this.entitlementService = entitlementService;
-        this.dailyLimitRepo = dailyLimitRepo;
+        this.actionCostService = actionCostService;
+        this.actionLimitRepo = actionLimitRepo;
+        this.creditService = creditService;
     }
 
     public record SendResult(ChatMessageDto message, boolean isNew) {}
@@ -175,22 +178,41 @@ public class MessageCommandService {
         // Step 5: Validate and classify files
         List<ValidatedAttachment> validated = validateAndClassifyFiles(safeFiles, durations);
 
-        // Step 5b: Enforce daily voice/image message limits
+        // Step 5b: Enforce daily voice/image message limits atomically
         long voiceCount = validated.stream().filter(v -> "VOICE".equals(v.attachmentType())).count();
         long imageCount = validated.stream().filter(v -> "IMAGE".equals(v.attachmentType())).count();
-        if (voiceCount > 0 || imageCount > 0) {
-            UserPlanEntitlement ent = entitlementService.loadEntitlement(callerId);
-            dailyLimitRepo.ensureRowExists(callerId);
-            DailyLimitRepository.DailyLimitRow limits = dailyLimitRepo.lockForUpdate(callerId)
-                    .orElseThrow(() -> new IllegalStateException("Daily limits row missing after upsert"));
-
-            if (ent.dailyVoiceChatMsgLimit() != null
-                    && limits.voiceChatMsgsUsed() + voiceCount > ent.dailyVoiceChatMsgLimit()) {
-                throw new DailyLimitExceededException("VOICE_CHAT_MSGS");
+        if (voiceCount > 0) {
+            ActionCostService.ActionCostResult voiceCost = actionCostService.evaluate(callerId, "VOICE_MESSAGE");
+            if (voiceCost.ruleId() != null && voiceCost.limitValue() != null) {
+                actionLimitRepo.ensureExists(callerId, voiceCost.ruleId(), voiceCost.periodStart(), voiceCost.periodEnd());
+                boolean ok = actionLimitRepo
+                        .tryIncrementByUnderLimit(callerId, voiceCost.ruleId(), voiceCost.periodStart(),
+                                voiceCost.limitValue(), (int) voiceCount)
+                        .isPresent();
+                if (!ok && !voiceCost.requiresCredits()) {
+                    throw new ActionLimitExceededException("VOICE_MESSAGE", voiceCost.periodType());
+                }
             }
-            if (ent.dailyImageChatMsgLimit() != null
-                    && limits.imageChatMsgsUsed() + imageCount > ent.dailyImageChatMsgLimit()) {
-                throw new DailyLimitExceededException("IMAGE_CHAT_MSGS");
+            if (voiceCost.requiresCredits()) {
+                creditService.consumeCredits(callerId, voiceCost.creditCost() * voiceCount, "VOICE_MESSAGE",
+                        "voice-msg-" + callerId + "-" + System.currentTimeMillis());
+            }
+        }
+        if (imageCount > 0) {
+            ActionCostService.ActionCostResult imageCost = actionCostService.evaluate(callerId, "IMAGE_MESSAGE");
+            if (imageCost.ruleId() != null && imageCost.limitValue() != null) {
+                actionLimitRepo.ensureExists(callerId, imageCost.ruleId(), imageCost.periodStart(), imageCost.periodEnd());
+                boolean ok = actionLimitRepo
+                        .tryIncrementByUnderLimit(callerId, imageCost.ruleId(), imageCost.periodStart(),
+                                imageCost.limitValue(), (int) imageCount)
+                        .isPresent();
+                if (!ok && !imageCost.requiresCredits()) {
+                    throw new ActionLimitExceededException("IMAGE_MESSAGE", imageCost.periodType());
+                }
+            }
+            if (imageCost.requiresCredits()) {
+                creditService.consumeCredits(callerId, imageCost.creditCost() * imageCount, "IMAGE_MESSAGE",
+                        "image-msg-" + callerId + "-" + System.currentTimeMillis());
             }
         }
 
@@ -230,13 +252,7 @@ public class MessageCommandService {
             throw new InvalidMessageException("Failed to upload one or more attachments.");
         }
 
-        // Step 10b: Increment daily voice/image message counters
-        if (voiceCount > 0) {
-            dailyLimitRepo.incrementVoiceChatMsgs(callerId, (int) voiceCount);
-        }
-        if (imageCount > 0) {
-            dailyLimitRepo.incrementImageChatMsgs(callerId, (int) imageCount);
-        }
+        // Step 10b: Voice/image usage already tracked atomically in Step 5b
 
         OffsetDateTime occurredAt = inserted.createdAt();
 

@@ -84,6 +84,56 @@ public class ModerationImageConverter {
         }
     }
 
+    /**
+     * Prepares an image for Rekognition face comparison. WebP images are
+     * decoded and re-encoded as JPEG (Rekognition only accepts JPEG/PNG).
+     * JPEG and PNG images are returned unchanged.
+     *
+     * @throws InvalidModerationImageException if the image is empty, animated
+     *         WebP, or an unsupported format
+     */
+    public byte[] prepareForRekognition(byte[] imageBytes) {
+        if (imageBytes == null || imageBytes.length == 0) {
+            throw new InvalidModerationImageException(ERROR_CODE_EMPTY, "Image is empty");
+        }
+
+        // Already Rekognition-compatible — pass through
+        if (isJpeg(imageBytes) || isPng(imageBytes)) {
+            return imageBytes;
+        }
+
+        if (!isWebp(imageBytes)) {
+            throw new InvalidModerationImageException(ERROR_CODE_FORMAT,
+                    "Image format not supported. Only JPEG, PNG, and WebP are accepted.");
+        }
+
+        ensureNotAnimated(imageBytes);
+
+        ImageReader reader = getWebpReader();
+        if (reader == null) {
+            throw new InvalidModerationImageException(ERROR_CODE_FORMAT, "WebP reader not available");
+        }
+
+        try (ImageInputStream inputStream = ImageIO.createImageInputStream(new ByteArrayInputStream(imageBytes))) {
+            reader.setInput(inputStream, false, false);
+
+            int imageCount = safeGetNumImages(reader);
+            if (imageCount > 1) {
+                throw new InvalidModerationImageException(ERROR_CODE_ANIMATED, "Animated WebP images are not supported");
+            }
+
+            BufferedImage source = reader.read(0);
+            BufferedImage rgbImage = flattenToRgb(source);
+            return encodeJpeg(rgbImage, properties.getConversion().getJpegQuality());
+        } catch (InvalidModerationImageException e) {
+            throw e;
+        } catch (IOException | IllegalArgumentException e) {
+            throw new InvalidModerationImageException(ERROR_CODE_FORMAT, "Failed to decode WebP image");
+        } finally {
+            reader.dispose();
+        }
+    }
+
     private void validateDimensions(int width, int height, ImageModerationProperties.Conversion conversion) {
         if (width <= 0 || height <= 0) {
             throw new InvalidModerationImageException(ERROR_CODE_FORMAT, "WebP image has invalid dimensions");
@@ -152,6 +202,20 @@ public class ModerationImageConverter {
                 && bytes[9] == 'E'
                 && bytes[10] == 'B'
                 && bytes[11] == 'P';
+    }
+
+    private static boolean isJpeg(byte[] bytes) {
+        return bytes.length >= 2
+                && (bytes[0] & 0xFF) == 0xFF
+                && (bytes[1] & 0xFF) == 0xD8;
+    }
+
+    private static boolean isPng(byte[] bytes) {
+        return bytes.length >= 4
+                && (bytes[0] & 0xFF) == 0x89
+                && (bytes[1] & 0xFF) == 0x50
+                && (bytes[2] & 0xFF) == 0x4E
+                && (bytes[3] & 0xFF) == 0x47;
     }
 
     private ImageReader getWebpReader() {

@@ -31,13 +31,16 @@ public class OfferService {
     private final BillingRepository billingRepo;
     private final BillingMarketResolver marketResolver;
     private final PromotionEligibilityService promotionEligibilityService;
+    private final CountrySettingsService countrySettingsService;
 
     public OfferService(BillingRepository billingRepo,
                         BillingMarketResolver marketResolver,
-                        PromotionEligibilityService promotionEligibilityService) {
+                        PromotionEligibilityService promotionEligibilityService,
+                        CountrySettingsService countrySettingsService) {
         this.billingRepo = billingRepo;
         this.marketResolver = marketResolver;
         this.promotionEligibilityService = promotionEligibilityService;
+        this.countrySettingsService = countrySettingsService;
     }
 
     public PaymentOptionsResponse getPaymentOptions(UUID userId, String platform) {
@@ -72,6 +75,13 @@ public class OfferService {
         log.debug("getOffers user={} market={}/{} methodCount={}",
                 userId, market.resolvedCountryCode(), market.platform(), methodCount);
 
+        // Country-level payment mode gate — use the user's actual billing country,
+        // not the resolved market country (which may have fallen back to GLOBAL).
+        // CountrySettingsService.getSettings() already falls back to GLOBAL if no
+        // row exists for the given country.
+        CountrySettingsService.CountrySettings settings =
+                countrySettingsService.getSettings(market.billingCountryCode());
+
         java.util.Set<String> unlimitedTypes = billingRepo.getUnlimitedEntitlementTypes(userId);
 
         List<BillingRepository.OfferRow> rows =
@@ -81,6 +91,19 @@ public class OfferService {
 
         List<OfferDto> result = rows.stream()
                 .filter(o -> {
+                    // Filter by country payment mode settings
+                    boolean isSubscription = o.subProductCode() != null;
+                    if (isSubscription && !settings.subscriptionEnabled()) {
+                        log.debug("Hiding subscription offer {} – subscriptions disabled for country={}",
+                                o.id(), settings.countryCode());
+                        return false;
+                    }
+                    if (!isSubscription && !settings.creditsEnabled()) {
+                        log.debug("Hiding consumable offer {} – credits disabled for country={}",
+                                o.id(), settings.countryCode());
+                        return false;
+                    }
+                    // Filter out consumables the user already has unlimited allowance for
                     if (o.entitlementType() != null && unlimitedTypes.contains(o.entitlementType())) {
                         log.debug("Hiding consumable offer {} – user has unlimited {}",
                                 o.id(), o.entitlementType());
@@ -91,7 +114,7 @@ public class OfferService {
                 .map(o -> toOfferDto(o, methodCount, userId, trustedCountry))
                 .toList();
 
-        log.debug("getOffers returning {} offers (filtered {} unlimited consumables)",
+        log.debug("getOffers returning {} offers (filtered {} by country settings + unlimited consumables)",
                 result.size(), rows.size() - result.size());
         return result;
     }
@@ -137,6 +160,7 @@ public class OfferService {
                 effectiveDisplayPrice,
                 row.billingIntervalCount(),
                 row.billingIntervalUnit(),
+                row.includedCredits(),
                 row.autoRenew(),
                 row.externalProductId(),
                 row.revenuecatOfferingId(),

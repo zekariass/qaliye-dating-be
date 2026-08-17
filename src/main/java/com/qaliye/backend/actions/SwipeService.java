@@ -1,5 +1,9 @@
 package com.qaliye.backend.actions;
 
+import com.qaliye.backend.billing.repository.ActionLimitRepository;
+import com.qaliye.backend.billing.service.ActionCostService;
+import com.qaliye.backend.billing.service.CreditService;
+import com.qaliye.backend.discovery.exception.ActionLimitExceededException;
 import com.qaliye.backend.notifications.NotificationDispatcher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -36,20 +40,6 @@ public class SwipeService {
               AND p.is_onboarded = TRUE
               AND p.is_visible = TRUE
               AND au.status = 'ACTIVE'
-            """;
-
-    private static final String UPSERT_DAILY_LIMITS_SQL = """
-            INSERT INTO user_daily_limits (user_id, limit_date)
-            VALUES (:callerId, (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::DATE)
-            ON CONFLICT (user_id, limit_date) DO NOTHING
-            """;
-
-    private static final String LOCK_DAILY_LIMITS_SQL = """
-            SELECT likes_used, super_likes_used, rewinds_used
-            FROM user_daily_limits
-            WHERE user_id = :callerId
-              AND limit_date = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::DATE
-            FOR UPDATE
             """;
 
     private static final String FIND_EXISTING_BY_CLIENT_ID_SQL = """
@@ -101,20 +91,6 @@ public class SwipeService {
             RETURNING id
             """;
 
-    private static final String INCREMENT_LIKES_SQL = """
-            UPDATE user_daily_limits
-            SET likes_used = likes_used + 1, updated_at = NOW()
-            WHERE user_id = :callerId
-              AND limit_date = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::DATE
-            """;
-
-    private static final String INCREMENT_SUPER_LIKES_SQL = """
-            UPDATE user_daily_limits
-            SET super_likes_used = super_likes_used + 1, updated_at = NOW()
-            WHERE user_id = :callerId
-              AND limit_date = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::DATE
-            """;
-
     private static final String FETCH_LAST_ACTIVE_ACTION_SQL = """
             SELECT id, target_user_id, action_type
             FROM user_discovery_actions
@@ -128,7 +104,9 @@ public class SwipeService {
     private static final String FIND_ACTIVE_MATCH_BY_ACTION_SQL = """
             SELECT id, rewind_eligible_until, first_message_at
             FROM matches
-            WHERE created_by_action_id = :actionId
+            WHERE (created_by_action_id = :actionId
+                   OR user_one_like_action_id = :actionId
+                   OR user_two_like_action_id = :actionId)
               AND status = 'ACTIVE'
             FOR UPDATE
             """;
@@ -151,22 +129,21 @@ public class SwipeService {
             WHERE id = :actionId
             """;
 
-    private static final String INCREMENT_REWINDS_SQL = """
-            UPDATE user_daily_limits
-            SET rewinds_used = rewinds_used + 1, updated_at = NOW()
-            WHERE user_id = :callerId
-              AND limit_date = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::DATE
-            """;
-
     private final NamedParameterJdbcTemplate jdbc;
-    private final DailyLimitsService dailyLimitsService;
+    private final ActionCostService actionCostService;
+    private final ActionLimitRepository actionLimitRepo;
+    private final CreditService creditService;
     private final NotificationDispatcher notificationDispatcher;
 
     public SwipeService(NamedParameterJdbcTemplate jdbc,
-                        DailyLimitsService dailyLimitsService,
+                        ActionCostService actionCostService,
+                        ActionLimitRepository actionLimitRepo,
+                        CreditService creditService,
                         NotificationDispatcher notificationDispatcher) {
         this.jdbc = jdbc;
-        this.dailyLimitsService = dailyLimitsService;
+        this.actionCostService = actionCostService;
+        this.actionLimitRepo = actionLimitRepo;
+        this.creditService = creditService;
         this.notificationDispatcher = notificationDispatcher;
     }
 
@@ -215,24 +192,26 @@ public class SwipeService {
             return new SwipeResult(false, null);
         }
 
-        // Enforce daily quota for LIKE / SUPERLIKE
-        jdbc.update(UPSERT_DAILY_LIMITS_SQL, Map.of("callerId", callerId));
-        MapSqlParameterSource lockParams = new MapSqlParameterSource("callerId", callerId);
-        int[] dailyUsed = jdbc.queryForObject(LOCK_DAILY_LIMITS_SQL, lockParams,
-                (rs, rowNum) -> new int[]{
-                        rs.getInt("likes_used"),
-                        rs.getInt("super_likes_used"),
-                        rs.getInt("rewinds_used")});
+        // Enforce action cost/limit atomically to prevent TOCTOU races
+        String featureCode = "SUPERLIKE".equals(actionType) ? "SUPER_LIKE" : "LIKE";
+        ActionCostService.ActionCostResult cost = actionCostService.evaluate(callerId, featureCode);
 
-        TierLimits tier = dailyLimitsService.getTierLimits(callerId);
-
-        if ("LIKE".equals(actionType) && tier.likesPerDay() != Integer.MAX_VALUE
-                && dailyUsed[0] >= tier.likesPerDay()) {
-            throw new DailyLimitReachedException("likes");
+        if (cost.ruleId() != null && cost.limitValue() != null) {
+            // Ensure tracker row exists, then atomically increment iff still under limit
+            actionLimitRepo.ensureExists(callerId, cost.ruleId(), cost.periodStart(), cost.periodEnd());
+            boolean incremented = actionLimitRepo
+                    .tryIncrementUnderLimit(callerId, cost.ruleId(), cost.periodStart(), cost.limitValue())
+                    .isPresent();
+            if (!incremented && !cost.requiresCredits()) {
+                throw new ActionLimitExceededException("SUPERLIKE".equals(actionType) ? "SUPER_LIKE" : "LIKE", cost.periodType());
+            }
+        } else if (cost.isBlocked()) {
+            throw new ActionLimitExceededException("SUPERLIKE".equals(actionType) ? "SUPER_LIKE" : "LIKE", cost.periodType());
         }
-        if ("SUPERLIKE".equals(actionType) && tier.superLikesPerDay() != Integer.MAX_VALUE
-                && dailyUsed[1] >= tier.superLikesPerDay()) {
-            throw new DailyLimitReachedException("super_likes");
+
+        if (cost.requiresCredits()) {
+            String idemKey = "swipe-" + callerId + "-" + clientActionId;
+            creditService.consumeCredits(callerId, cost.creditCost(), featureCode, idemKey);
         }
 
         // Insert the action
@@ -241,13 +220,6 @@ public class SwipeService {
                        "actionType", actionType, "clientActionId", clientActionId),
                 (rs, rowNum) -> rs.getObject("id", UUID.class));
         UUID newActionId = insertedIds.get(0);
-
-        // Increment daily counter
-        if ("LIKE".equals(actionType)) {
-            jdbc.update(INCREMENT_LIKES_SQL, Map.of("callerId", callerId));
-        } else {
-            jdbc.update(INCREMENT_SUPER_LIKES_SQL, Map.of("callerId", callerId));
-        }
 
         // Check for reciprocal like/superlike
         List<UUID> reciprocalIds = jdbc.query(CHECK_RECIPROCAL_SQL,
@@ -277,22 +249,23 @@ public class SwipeService {
 
     @Transactional
     public UUID rewind(UUID callerId) {
-        // Ensure daily limits row exists for today
-        jdbc.update(UPSERT_DAILY_LIMITS_SQL, Map.of("callerId", callerId));
-        MapSqlParameterSource lockParams = new MapSqlParameterSource("callerId", callerId);
-        int[] dailyUsed = jdbc.queryForObject(LOCK_DAILY_LIMITS_SQL, lockParams,
-                (rs, rowNum) -> new int[]{
-                        rs.getInt("likes_used"),
-                        rs.getInt("super_likes_used"),
-                        rs.getInt("rewinds_used")});
+        ActionCostService.ActionCostResult cost = actionCostService.evaluate(callerId, "REWIND");
 
-        TierLimits tier = dailyLimitsService.getTierLimits(callerId);
-        if (tier.rewindsPerDay() != Integer.MAX_VALUE && dailyUsed[2] >= tier.rewindsPerDay()) {
-            throw new DailyLimitReachedException("rewinds");
+        if (cost.ruleId() != null && cost.limitValue() != null) {
+            actionLimitRepo.ensureExists(callerId, cost.ruleId(), cost.periodStart(), cost.periodEnd());
+            boolean incremented = actionLimitRepo
+                    .tryIncrementUnderLimit(callerId, cost.ruleId(), cost.periodStart(), cost.limitValue())
+                    .isPresent();
+            if (!incremented && !cost.requiresCredits()) {
+                throw new ActionLimitExceededException("REWIND", cost.periodType());
+            }
+        } else if (cost.isBlocked()) {
+            throw new ActionLimitExceededException("REWIND", cost.periodType());
         }
 
         // Find the latest ACTIVE action for this user
-        List<ActionRow> lastActions = jdbc.query(FETCH_LAST_ACTIVE_ACTION_SQL, lockParams,
+        MapSqlParameterSource callerParams = new MapSqlParameterSource("callerId", callerId);
+        List<ActionRow> lastActions = jdbc.query(FETCH_LAST_ACTIVE_ACTION_SQL, callerParams,
                 (rs, rowNum) -> new ActionRow(
                         rs.getObject("id", UUID.class),
                         rs.getObject("target_user_id", UUID.class),
@@ -333,9 +306,12 @@ public class SwipeService {
                     Map.of("callerId", callerId, "matchId", match.id()));
         }
 
-        // Reverse the action
+        // Reverse the action (tracker already incremented above within the lock)
         jdbc.update(REVERSE_ACTION_SQL, Map.of("actionId", actionId));
-        jdbc.update(INCREMENT_REWINDS_SQL, Map.of("callerId", callerId));
+
+        if (cost.requiresCredits()) {
+            creditService.consumeCredits(callerId, cost.creditCost(), "REWIND", "rewind-" + actionId);
+        }
 
         return targetId;
     }

@@ -5,6 +5,7 @@ import com.qaliye.backend.billing.BillingProperties;
 import com.qaliye.backend.billing.dto.EntitlementResponse;
 import com.qaliye.backend.billing.repository.BillingRepository;
 import com.qaliye.backend.billing.repository.CreditLotRepository;
+import com.qaliye.backend.billing.service.CountrySettingsService;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -22,46 +23,60 @@ public class EntitlementService {
 
     private final BillingRepository billingRepo;
     private final CreditLotRepository creditLotRepo;
+    private final CreditService creditService;
     private final NamedParameterJdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
     private final BillingProperties billingProps;
+    private final CountrySettingsService countrySettingsService;
 
     public EntitlementService(BillingRepository billingRepo,
                               CreditLotRepository creditLotRepo,
+                              CreditService creditService,
                               NamedParameterJdbcTemplate jdbc,
                               ObjectMapper objectMapper,
-                              BillingProperties billingProps) {
+                              BillingProperties billingProps,
+                              CountrySettingsService countrySettingsService) {
         this.billingRepo = billingRepo;
         this.creditLotRepo = creditLotRepo;
+        this.creditService = creditService;
         this.jdbc = jdbc;
         this.objectMapper = objectMapper;
         this.billingProps = billingProps;
+        this.countrySettingsService = countrySettingsService;
     }
 
     private static final String PLAN_LIMITS_SQL = """
-            SELECT spl.limit_type, spl.limit_value
-            FROM subscription_plan_limits spl
-            WHERE spl.plan_id = :planId
-              AND spl.limit_type IN ('LIKES', 'SUPERLIKES', 'REWINDS', 'BOOSTS',
-                                     'VOICE_CHAT_MSGS', 'IMAGE_CHAT_MSGS')
+            SELECT fa.code AS action_code, splac.limit_value
+            FROM subscription_plan_limit_and_cost splac
+            JOIN feature_actions fa ON fa.id = splac.feature_action_id
+            WHERE splac.subscription_plan_id = :planId
+              AND fa.code IN ('LIKE', 'SUPER_LIKE', 'REWIND', 'BOOST',
+                              'VOICE_MESSAGE', 'IMAGE_MESSAGE')
             """;
 
     private static final String DAILY_USAGE_SQL = """
-            SELECT likes_used, super_likes_used, rewinds_used,
-                   voice_chat_msgs_used, image_chat_msgs_used
-            FROM user_daily_limits
-            WHERE user_id = :userId AND limit_date = (NOW() AT TIME ZONE 'UTC')::DATE
+            SELECT fa.code AS action_code, uat.used_count
+            FROM user_action_limits_tracker uat
+            JOIN subscription_plan_limit_and_cost splac
+                ON splac.id = uat.subscription_plan_limit_and_cost_id
+            JOIN feature_actions fa ON fa.id = splac.feature_action_id
+            WHERE uat.user_id = :userId
+              AND uat.period_start_date <= CURRENT_DATE
+              AND uat.period_end_date   >= CURRENT_DATE
+              AND fa.code IN ('LIKE', 'SUPER_LIKE', 'REWIND', 'BOOST',
+                              'VOICE_MESSAGE', 'IMAGE_MESSAGE')
             """;
 
     private static final String PREMIUM_PLAN_LIMITS_SQL = """
-            SELECT spl.limit_type, spl.limit_value
-            FROM subscription_plan_limits spl
-            JOIN subscription_plans sp ON sp.id = spl.plan_id
+            SELECT fa.code AS action_code, splac.limit_value
+            FROM subscription_plan_limit_and_cost splac
+            JOIN feature_actions fa ON fa.id = splac.feature_action_id
+            JOIN subscription_plans sp ON sp.id = splac.subscription_plan_id
             WHERE sp.plan_kind = 'PAID'
               AND sp.is_active = TRUE
-              AND spl.limit_type IN ('LIKES', 'SUPERLIKES', 'REWINDS', 'BOOSTS',
-                                     'VOICE_CHAT_MSGS', 'IMAGE_CHAT_MSGS')
-            ORDER BY CASE WHEN sp.country_code = :countryCode THEN 0 ELSE 1 END, spl.limit_type
+              AND fa.code IN ('LIKE', 'SUPER_LIKE', 'REWIND', 'BOOST',
+                              'VOICE_MESSAGE', 'IMAGE_MESSAGE')
+            ORDER BY CASE WHEN sp.country_code = :countryCode THEN 0 ELSE 1 END, fa.code
             """;
 
     public EntitlementResponse getEntitlements(UUID userId) {
@@ -96,42 +111,35 @@ public class EntitlementService {
         Map<String, Integer> limits = new LinkedHashMap<>();
         if (planId != null) {
             jdbc.query(PLAN_LIMITS_SQL, Map.of("planId", planId), rs -> {
-                String type = rs.getString("limit_type");
+                String code = rs.getString("action_code");
                 Object val = rs.getObject("limit_value");
                 Integer limitVal = val != null ? ((Number) val).intValue() : null;
-                limits.put(type, limitVal);
+                limits.put(code, limitVal);
             });
         }
 
-        // Load daily usage
-        int likesUsed = 0, superLikesUsed = 0, rewindsUsed = 0;
-        int voiceChatMsgsUsed = 0, imageChatMsgsUsed = 0;
-        var usageRows = jdbc.queryForList(DAILY_USAGE_SQL, Map.of("userId", userId));
-        if (!usageRows.isEmpty()) {
-            var row = usageRows.get(0);
-            likesUsed = ((Number) row.get("likes_used")).intValue();
-            superLikesUsed = ((Number) row.get("super_likes_used")).intValue();
-            rewindsUsed = ((Number) row.get("rewinds_used")).intValue();
-            if (row.get("voice_chat_msgs_used") != null)
-                voiceChatMsgsUsed = ((Number) row.get("voice_chat_msgs_used")).intValue();
-            if (row.get("image_chat_msgs_used") != null)
-                imageChatMsgsUsed = ((Number) row.get("image_chat_msgs_used")).intValue();
-        }
+        // Load current-period usage from tracker
+        Map<String, Integer> usageByAction = new LinkedHashMap<>();
+        jdbc.query(DAILY_USAGE_SQL, Map.of("userId", userId), rs -> {
+            usageByAction.put(rs.getString("action_code"), rs.getInt("used_count"));
+        });
+        int likesUsed         = usageByAction.getOrDefault("LIKE",          0);
+        int superLikesUsed    = usageByAction.getOrDefault("SUPER_LIKE",    0);
+        int rewindsUsed       = usageByAction.getOrDefault("REWIND",        0);
+        int boostsUsed        = usageByAction.getOrDefault("BOOST",         0);
+        int voiceChatMsgsUsed = usageByAction.getOrDefault("VOICE_MESSAGE", 0);
+        int imageChatMsgsUsed = usageByAction.getOrDefault("IMAGE_MESSAGE", 0);
 
         Instant tomorrowStart = LocalDate.now(ZoneOffset.UTC).plusDays(1)
                 .atStartOfDay(ZoneOffset.UTC).toInstant();
 
         // Resolve limits
-        Integer likesLimit = limits.get("LIKES");
-        Integer superLikesLimit = limits.get("SUPERLIKES");
-        Integer rewindsLimit = limits.get("REWINDS");
-        Integer boostsLimit = limits.get("BOOSTS");
-        Integer voiceChatMsgLimit = limits.get("VOICE_CHAT_MSGS");
-        Integer imageChatMsgLimit = limits.get("IMAGE_CHAT_MSGS");
-
-        // Compute boost usage from actual credit lot consumption (non-purchased lots)
-        int nonPurchasedBoostBalance = creditLotRepo.getNonPurchasedBalance(userId, "BOOST_CREDIT");
-        int boostsUsed = boostsLimit != null ? Math.max(0, boostsLimit - nonPurchasedBoostBalance) : 0;
+        Integer likesLimit       = limits.get("LIKE");
+        Integer superLikesLimit  = limits.get("SUPER_LIKE");
+        Integer rewindsLimit     = limits.get("REWIND");
+        Integer boostsLimit      = limits.get("BOOST");
+        Integer voiceChatMsgLimit  = limits.get("VOICE_MESSAGE");
+        Integer imageChatMsgLimit  = limits.get("IMAGE_MESSAGE");
 
         Map<String, EntitlementResponse.QuotaInfo> quotaMap = new LinkedHashMap<>();
         quotaMap.put("likes", buildQuota(likesUsed, likesLimit, tomorrowStart));
@@ -141,12 +149,10 @@ public class EntitlementService {
         quotaMap.put("voiceChatMsgs", buildQuota(voiceChatMsgsUsed, voiceChatMsgLimit, tomorrowStart));
         quotaMap.put("imageChatMsgs", buildQuota(imageChatMsgsUsed, imageChatMsgLimit, tomorrowStart));
 
-        // Credits — only purchased credit packs, not subscription/promotion allowances
-        int boostCredits = creditLotRepo.getPurchasedBalance(userId, "BOOST_CREDIT");
-        int superLikeCredits = creditLotRepo.getPurchasedBalance(userId, "SUPERLIKE_CREDIT");
-        int rewindCredits = creditLotRepo.getPurchasedBalance(userId, "REWIND_CREDIT");
+        // Credits — all actions now use the central credit balance
+        long centralCreditBalance = creditService.getBalance(userId);
 
-        var credits = new EntitlementResponse.CreditsInfo(boostCredits, superLikeCredits, rewindCredits);
+        var credits = new EntitlementResponse.CreditsInfo(centralCreditBalance, 0, 0, 0);
 
         // Active boost
         EntitlementResponse.ActiveBoostInfo boostInfo = null;
@@ -163,14 +169,22 @@ public class EntitlementService {
         jdbc.query(PREMIUM_PLAN_LIMITS_SQL,
                 Map.of("countryCode", countryCode != null ? countryCode : "GLOBAL"),
                 rs -> {
-                    String type = rs.getString("limit_type");
+                    String code = rs.getString("action_code");
                     Object val = rs.getObject("limit_value");
                     Integer limitVal = val != null ? ((Number) val).intValue() : null;
-                    planLimits.putIfAbsent(type, limitVal);
+                    planLimits.putIfAbsent(code, limitVal);
                 });
 
+        var countrySettings = countrySettingsService.getSettingsForUser(userId);
+        var settingsDto = new EntitlementResponse.CountrySettings(
+                countrySettings.countryCode(),
+                countrySettings.subscriptionEnabled(),
+                countrySettings.creditsEnabled(),
+                countrySettings.identityVerificationRequired()
+        );
+
         return new EntitlementResponse(planCode, subInfo, quotaMap, credits, boostInfo, features, planLimits,
-                billingProps.getBoostDurationMinutes());
+                billingProps.getBoostDurationMinutes(), settingsDto);
     }
 
     private EntitlementResponse.QuotaInfo buildQuota(int used, Integer limit, Instant resetsAt) {

@@ -168,20 +168,11 @@ public class CreditLotRepository {
         return results.isEmpty() ? null : results.get(0);
     }
 
-    // ── Credit consumption record ───────────────────────────────────────────
-
-    private static final String INSERT_CONSUMPTION_SQL = """
-            INSERT INTO user_entitlement_credit_consumptions
-                (consumption_ledger_entry_id, credit_lot_id, quantity_consumed)
-            VALUES
-                (:ledgerEntryId, :lotId, :quantity)
-            """;
+    // ── Credit consumption record (legacy shim — new code uses CreditService) ──
 
     public void insertConsumption(UUID ledgerEntryId, UUID lotId, int quantity) {
-        jdbc.update(INSERT_CONSUMPTION_SQL, Map.of(
-                "ledgerEntryId", ledgerEntryId,
-                "lotId", lotId,
-                "quantity", quantity));
+        // user_entitlement_credit_consumptions was dropped in V53.
+        // New consumption tracking goes through CreditService → user_credit_lot_consumptions.
     }
 
     // ── Expire credit lots past their expiry date ───────────────────────────
@@ -272,14 +263,15 @@ public class CreditLotRepository {
     // ── Plan limit lookup ───────────────────────────────────────────────────
 
     private static final String GET_PLAN_BOOST_LIMIT_SQL = """
-            SELECT limit_value
-            FROM subscription_plan_limits
-            WHERE plan_id = :planId
-              AND limit_type = 'BOOSTS'
+            SELECT splac.limit_value
+            FROM subscription_plan_limit_and_cost splac
+            JOIN feature_actions fa ON fa.id = splac.feature_action_id
+            WHERE splac.subscription_plan_id = :planId
+              AND fa.code = 'BOOST'
             """;
 
     /**
-     * Returns the BOOSTS limit_value for the given plan, or 1 if not found.
+     * Returns the BOOST limit_value for the given plan, or 1 if not found.
      * A NULL limit_value means unlimited; we cap at a reasonable default (1) since
      * unlimited boosts don't make sense as a monthly allowance.
      */

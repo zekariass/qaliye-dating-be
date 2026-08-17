@@ -22,12 +22,14 @@ public class FulfillmentService {
 
     private final BillingRepository billingRepo;
     private final CreditLotRepository creditLotRepo;
+    private final CreditService creditService;
     private final PromotionRepository promotionRepo;
 
     public FulfillmentService(BillingRepository billingRepo, CreditLotRepository creditLotRepo,
-                               PromotionRepository promotionRepo) {
+                               CreditService creditService, PromotionRepository promotionRepo) {
         this.billingRepo = billingRepo;
         this.creditLotRepo = creditLotRepo;
+        this.creditService = creditService;
         this.promotionRepo = promotionRepo;
     }
 
@@ -87,8 +89,12 @@ public class FulfillmentService {
                 now, now, periodEnd
         );
 
-        // Grant monthly boost allowance for PREMIUM
-        grantMonthlyBoostAllowance(userId, subId, offer, periodEnd);
+        // Expire any remaining subscription allowance credits from the previous period
+        String expireIdemKey = "sub-expire-" + subId + "-" + periodEnd.truncatedTo(ChronoUnit.DAYS);
+        creditService.expireSubscriptionAllowanceLots(userId, subId, expireIdemKey);
+
+        // Grant included subscription credits into central credit balance
+        grantSubscriptionIncludedCredits(userId, subId, offer, periodEnd);
 
         // Fulfill any associated PURCHASE promotion redemption
         try {
@@ -113,44 +119,35 @@ public class FulfillmentService {
         );
 
         // Grant credits
-        Instant expiresAt = offer.expiresAfterDays() != null
-                ? Instant.now().plus(offer.expiresAfterDays(), ChronoUnit.DAYS)
-                : null;
-
         String idempotencyKey = "order-" + order.id();
-        UUID ledgerEntryId = creditLotRepo.insertLedgerEntry(
-                userId, offer.entitlementType(), offer.quantityGranted(),
-                "PURCHASE", transactionId, null, null,
-                idempotencyKey, expiresAt, "{}"
-        );
 
-        if (ledgerEntryId != null) {
-            creditLotRepo.createLot(userId, offer.entitlementType(), ledgerEntryId,
-                    offer.quantityGranted(), expiresAt);
+        if ("CREDIT_PURCHASE".equals(offer.entitlementType())) {
+            long qty = offer.quantityGranted() != null ? offer.quantityGranted() : 0L;
+            creditService.grantPurchasedCredits(userId, qty, transactionId, idempotencyKey);
+        } else {
+            Instant expiresAt = offer.expiresAfterDays() != null
+                    ? Instant.now().plus(offer.expiresAfterDays(), ChronoUnit.DAYS)
+                    : null;
+            UUID ledgerEntryId = creditLotRepo.insertLedgerEntry(
+                    userId, offer.entitlementType(), offer.quantityGranted() != null ? offer.quantityGranted() : 0,
+                    "PURCHASE", transactionId, null, null,
+                    idempotencyKey, expiresAt, "{}"
+            );
+            if (ledgerEntryId != null) {
+                creditLotRepo.createLot(userId, offer.entitlementType(), ledgerEntryId,
+                        offer.quantityGranted() != null ? offer.quantityGranted() : 0, expiresAt);
+            }
         }
 
         log.info("Consumable fulfilled: user={}, type={}, qty={}", userId, offer.entitlementType(), offer.quantityGranted());
     }
 
-    private void grantMonthlyBoostAllowance(UUID userId, UUID subscriptionId, BillingRepository.FullOfferRow offer,
-                                               Instant periodEnd) {
-        if (offer.planId() == null) return;
-
-        int boostQty = creditLotRepo.getPlanBoostLimit(offer.planId());
-        if (boostQty <= 0) return;
-
-        String idempotencyKey = "sub-boost-" + subscriptionId + "-" + Instant.now().truncatedTo(ChronoUnit.DAYS);
-
-        UUID ledgerEntryId = creditLotRepo.insertLedgerEntry(
-                userId, "BOOST_CREDIT", boostQty, "SUBSCRIPTION_ALLOWANCE",
-                null, subscriptionId, null,
-                idempotencyKey, periodEnd, "{\"reason\":\"monthly_allowance\"}"
-        );
-
-        if (ledgerEntryId != null) {
-            creditLotRepo.createLot(userId, "BOOST_CREDIT", ledgerEntryId, boostQty, periodEnd);
-            log.info("Monthly boost allowance granted: user={}, qty={}, expiresAt={}", userId, boostQty, periodEnd);
-        }
+    private void grantSubscriptionIncludedCredits(UUID userId, UUID subscriptionId,
+                                                    BillingRepository.FullOfferRow offer, Instant periodEnd) {
+        if (offer.includedCredits() <= 0) return;
+        String idemKey = "sub-credits-" + subscriptionId + "-" + periodEnd.truncatedTo(ChronoUnit.DAYS);
+        creditService.grantSubscriptionAllowance(userId, offer.includedCredits(), subscriptionId, idemKey, periodEnd);
+        log.info("Subscription credits granted: user={}, credits={}, expiresAt={}", userId, offer.includedCredits(), periodEnd);
     }
 
     @Transactional
@@ -235,19 +232,18 @@ public class FulfillmentService {
             }
         }
 
-        // ── Step 6: Grant monthly boost allowance (idempotent by stable sub ID + period day) ──
-        int boostQty = creditLotRepo.getPlanBoostLimit(planId);
-        if (boostQty > 0) {
-            String idempotencyKey = "rc-boost-" + stableSubId + "-" + periodStart.truncatedTo(ChronoUnit.DAYS);
-            UUID ledgerEntryId = creditLotRepo.insertLedgerEntry(
-                    userId, "BOOST_CREDIT", boostQty, "SUBSCRIPTION_ALLOWANCE",
-                    null, subId, null, idempotencyKey, periodEnd,
-                    "{\"reason\":\"revenuecat_subscription_allowance\"}"
-            );
-            if (ledgerEntryId != null) {
-                creditLotRepo.createLot(userId, "BOOST_CREDIT", ledgerEntryId, boostQty, periodEnd);
+        // ── Step 6: Expire previous period allowance credits before granting new ones ──
+        final UUID finalSubId = subId;
+        String expireIdemKey = "rc-expire-" + stableSubId + "-" + periodStart.truncatedTo(ChronoUnit.DAYS);
+        creditService.expireSubscriptionAllowanceLots(userId, finalSubId, expireIdemKey);
+
+        // ── Step 7: Grant included subscription credits (idempotent) ──
+        billingRepo.findOfferById(offerId).ifPresent(offer -> {
+            if (offer.includedCredits() > 0) {
+                String credIdemKey = "rc-credits-" + stableSubId + "-" + periodStart.truncatedTo(ChronoUnit.DAYS);
+                creditService.grantSubscriptionAllowance(userId, offer.includedCredits(), finalSubId, credIdemKey, periodEnd);
             }
-        }
+        });
 
         log.info("RevenueCat subscription fulfilled: user={}, stableSubId={}, ref={}, periodEnd={}",
                 userId, stableSubId, providerSubRef, periodEnd);
@@ -258,17 +254,21 @@ public class FulfillmentService {
     public void fulfillRevenueCatConsumable(UUID userId, String entitlementType,
                                             int quantity, UUID transactionId,
                                             String providerTransactionId, Integer expiresAfterDays) {
-        Instant expiresAt = expiresAfterDays != null
-                ? Instant.now().plus(expiresAfterDays, ChronoUnit.DAYS)
-                : null;
-
         String idempotencyKey = "rc-" + providerTransactionId;
-        UUID ledgerEntryId = creditLotRepo.insertLedgerEntry(
-                userId, entitlementType, quantity, "PURCHASE",
-                transactionId, null, null, idempotencyKey, expiresAt, "{}"
-        );
-        if (ledgerEntryId != null) {
-            creditLotRepo.createLot(userId, entitlementType, ledgerEntryId, quantity, expiresAt);
+
+        if ("CREDIT_PURCHASE".equals(entitlementType)) {
+            creditService.grantPurchasedCredits(userId, quantity, transactionId, idempotencyKey);
+        } else {
+            Instant expiresAt = expiresAfterDays != null
+                    ? Instant.now().plus(expiresAfterDays, ChronoUnit.DAYS)
+                    : null;
+            UUID ledgerEntryId = creditLotRepo.insertLedgerEntry(
+                    userId, entitlementType, quantity, "PURCHASE",
+                    transactionId, null, null, idempotencyKey, expiresAt, "{}"
+            );
+            if (ledgerEntryId != null) {
+                creditLotRepo.createLot(userId, entitlementType, ledgerEntryId, quantity, expiresAt);
+            }
         }
 
         log.info("RevenueCat consumable fulfilled: user={}, type={}, qty={}", userId, entitlementType, quantity);

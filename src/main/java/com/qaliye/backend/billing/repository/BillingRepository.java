@@ -37,6 +37,7 @@ public class BillingRepository {
                    po.external_product_id, po.revenuecat_offering_id, po.revenuecat_package_id,
                    sp.product_code AS sub_product_code,
                    sp.billing_interval_unit, sp.billing_interval_count,
+                   COALESCE(sp.included_credits, 0) AS included_credits,
                    cp.product_code AS con_product_code,
                    cp.entitlement_type, cp.quantity_granted
             FROM payment_offers po
@@ -53,6 +54,7 @@ public class BillingRepository {
             String currency, int priceMinorUnits, boolean autoRenew,
             String externalProductId, String revenuecatOfferingId, String revenuecatPackageId,
             String subProductCode, String billingIntervalUnit, Integer billingIntervalCount,
+            long includedCredits,
             String conProductCode, String entitlementType, Integer quantityGranted
     ) {}
 
@@ -74,6 +76,7 @@ public class BillingRepository {
                 rs.getString("sub_product_code"),
                 rs.getString("billing_interval_unit"),
                 rs.getObject("billing_interval_count") != null ? rs.getInt("billing_interval_count") : null,
+                rs.getLong("included_credits"),
                 rs.getString("con_product_code"),
                 rs.getString("entitlement_type"),
                 rs.getObject("quantity_granted") != null ? rs.getInt("quantity_granted") : null
@@ -89,6 +92,7 @@ public class BillingRepository {
                    po.revenuecat_offering_id, po.revenuecat_package_id, po.auto_renew,
                    sp.product_code AS sub_product_code,
                    sp.billing_interval_unit, sp.billing_interval_count, sp.plan_id,
+                   COALESCE(sp.included_credits, 0) AS included_credits,
                    cp.product_code AS con_product_code,
                    cp.entitlement_type, cp.quantity_granted, cp.expires_after_days
             FROM payment_offers po
@@ -103,6 +107,7 @@ public class BillingRepository {
             String currency, int priceMinorUnits, boolean autoRenew,
             String externalProductId,
             String subProductCode, String billingIntervalUnit, Integer billingIntervalCount, UUID planId,
+            long includedCredits,
             String conProductCode, String entitlementType, Integer quantityGranted, Integer expiresAfterDays
     ) {}
 
@@ -122,6 +127,7 @@ public class BillingRepository {
                 rs.getString("billing_interval_unit"),
                 rs.getObject("billing_interval_count") != null ? rs.getInt("billing_interval_count") : null,
                 rs.getObject("plan_id", UUID.class),
+                rs.getLong("included_credits"),
                 rs.getString("con_product_code"),
                 rs.getString("entitlement_type"),
                 rs.getObject("quantity_granted") != null ? rs.getInt("quantity_granted") : null,
@@ -138,6 +144,7 @@ public class BillingRepository {
                    po.revenuecat_offering_id, po.revenuecat_package_id, po.auto_renew,
                    sp.product_code AS sub_product_code,
                    sp.billing_interval_unit, sp.billing_interval_count, sp.plan_id,
+                   COALESCE(sp.included_credits, 0) AS included_credits,
                    cp.product_code AS con_product_code,
                    cp.entitlement_type, cp.quantity_granted, cp.expires_after_days
             FROM payment_offers po
@@ -165,6 +172,7 @@ public class BillingRepository {
                 rs.getString("billing_interval_unit"),
                 rs.getObject("billing_interval_count") != null ? rs.getInt("billing_interval_count") : null,
                 rs.getObject("plan_id", UUID.class),
+                rs.getLong("included_credits"),
                 rs.getString("con_product_code"),
                 rs.getString("entitlement_type"),
                 rs.getObject("quantity_granted") != null ? rs.getInt("quantity_granted") : null,
@@ -1203,27 +1211,19 @@ public class BillingRepository {
     // ── Unlimited entitlement types for active subscription ─────────────────
 
     private static final String UNLIMITED_ENTITLEMENTS_SQL = """
-            SELECT spl.limit_type
+            SELECT fa.code AS limit_type
             FROM user_subscriptions us
-            JOIN subscription_plan_limits spl ON spl.plan_id = us.plan_id
+            JOIN subscription_plan_limit_and_cost splac ON splac.subscription_plan_id = us.plan_id
+            JOIN feature_actions fa ON fa.id = splac.feature_action_id
             WHERE us.user_id = :userId
               AND us.status = 'ACTIVE'
-              AND spl.limit_value IS NULL
-              AND spl.limit_type IN ('BOOSTS', 'SUPERLIKES', 'REWINDS')
+              AND splac.limit_value IS NULL
+              AND fa.code IN ('BOOST', 'SUPER_LIKE', 'REWIND')
             """;
 
     public java.util.Set<String> getUnlimitedEntitlementTypes(UUID userId) {
-        var limitTypes = jdbc.queryForList(UNLIMITED_ENTITLEMENTS_SQL, Map.of("userId", userId), String.class);
-        java.util.Set<String> result = new java.util.HashSet<>();
-        for (String lt : limitTypes) {
-            result.add(switch (lt) {
-                case "BOOSTS" -> "BOOST_CREDIT";
-                case "SUPERLIKES" -> "SUPERLIKE_CREDIT";
-                case "REWINDS" -> "REWIND_CREDIT";
-                default -> lt;
-            });
-        }
-        return result;
+        return new java.util.HashSet<>(
+                jdbc.queryForList(UNLIMITED_ENTITLEMENTS_SQL, Map.of("userId", userId), String.class));
     }
 
     // ── User country (legacy – prefer BillingMarketResolver) ────────────────

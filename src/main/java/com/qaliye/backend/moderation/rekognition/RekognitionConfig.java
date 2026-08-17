@@ -1,5 +1,6 @@
 package com.qaliye.backend.moderation.rekognition;
 
+import com.qaliye.backend.verification.IdentityVerificationProperties;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -27,7 +28,7 @@ import software.amazon.awssdk.services.rekognition.RekognitionClient;
  * </p>
  */
 @Configuration
-@EnableConfigurationProperties(ImageModerationProperties.class)
+@EnableConfigurationProperties({ ImageModerationProperties.class, IdentityVerificationProperties.class })
 public class RekognitionConfig {
 
     @Value("${aws.region:eu-west-2}")

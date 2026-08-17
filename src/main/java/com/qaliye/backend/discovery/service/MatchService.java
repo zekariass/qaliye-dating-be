@@ -37,7 +37,9 @@ public class MatchService {
     private static final String FETCH_ACTIVE_MATCH_BY_ACTION_SQL = """
             SELECT id, user_one_id, user_two_id, status, matched_at, rewind_eligible_until, first_message_at
             FROM matches
-            WHERE created_by_action_id = :actionId
+            WHERE (created_by_action_id = :actionId
+                   OR user_one_like_action_id = :actionId
+                   OR user_two_like_action_id = :actionId)
               AND status = 'ACTIVE'
             FOR UPDATE
             """;

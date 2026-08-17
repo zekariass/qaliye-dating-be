@@ -1,6 +1,7 @@
 package com.qaliye.backend.actions;
 
 import com.qaliye.backend.common.CallerUtils;
+import com.qaliye.backend.discovery.exception.ActionLimitExceededException;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -43,11 +44,17 @@ public class ActionsController {
         return ResponseEntity.ok(Map.of("rewound_user_id", rewoundUserId));
     }
 
-    @ExceptionHandler(DailyLimitReachedException.class)
-    public ResponseEntity<Map<String, Object>> handleDailyLimit(DailyLimitReachedException ex) {
-        return ResponseEntity.unprocessableEntity().body(Map.of(
-                "error", "daily_limit_reached",
-                "limit_type", ex.getLimitType()
+    @ExceptionHandler(ActionLimitExceededException.class)
+    public ResponseEntity<Map<String, Object>> handleActionLimit(ActionLimitExceededException ex) {
+        return ResponseEntity.status(ex.getHttpStatus()).body(Map.of(
+                "error", Map.of(
+                        "code", ex.getErrorCode(),
+                        "message", ex.getMessage(),
+                        "details", Map.of(
+                                "action_type", ex.getActionType(),
+                                "period_type", ex.getPeriodType()
+                        )
+                )
         ));
     }
 

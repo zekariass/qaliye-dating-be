@@ -23,6 +23,7 @@ class RevenueCatWebhookHandlerTest {
 
     @Mock BillingRepository billingRepo;
     @Mock FulfillmentService fulfillmentService;
+    @Mock CreditService creditService;
     @Mock CacheManager cacheManager;
     @Mock Cache subscriptionCache;
     @Mock NamedParameterJdbcTemplate jdbc;
@@ -36,7 +37,7 @@ class RevenueCatWebhookHandlerTest {
     @BeforeEach
     void setUp() {
         lenient().when(cacheManager.getCache("subscriptionFeatures")).thenReturn(subscriptionCache);
-        handler = new RevenueCatWebhookHandler(billingRepo, fulfillmentService, objectMapper, cacheManager, jdbc);
+        handler = new RevenueCatWebhookHandler(billingRepo, fulfillmentService, creditService, objectMapper, cacheManager, jdbc);
     }
 
     // ── 1. Initial purchase creates one active subscription ──────────────────
@@ -497,7 +498,7 @@ class RevenueCatWebhookHandlerTest {
                 "USD", 799, true,
                 "qaliye_premium_monthly",
                 "PREMIUM_MONTHLY", "MONTH", 1, planId,
-                null, null, null, null
+                0L, null, null, null, null
         );
     }
 }

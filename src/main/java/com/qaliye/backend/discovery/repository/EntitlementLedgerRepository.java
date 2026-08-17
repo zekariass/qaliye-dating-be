@@ -63,11 +63,9 @@ public class EntitlementLedgerRepository {
             WHERE id = :lotId AND quantity_remaining > 0
             """;
 
-    private static final String INSERT_CONSUMPTION_RECORD = """
-            INSERT INTO user_entitlement_credit_consumptions
-                (consumption_ledger_entry_id, credit_lot_id, quantity_consumed)
-            VALUES (:ledgerEntryId, :lotId, 1)
-            """;
+    // user_entitlement_credit_consumptions was dropped in V53;
+    // legacy consumption records are no longer written here.
+    private static final String INSERT_CONSUMPTION_RECORD = null;
 
     public int getBalance(UUID userId, String entitlementType) {
         var params = new MapSqlParameterSource()
@@ -103,9 +101,6 @@ public class EntitlementLedgerRepository {
         if (!lotIds.isEmpty() && ledgerEntryId != null) {
             UUID lotId = lotIds.get(0);
             jdbc.update(DECREMENT_LOT, new MapSqlParameterSource("lotId", lotId));
-            jdbc.update(INSERT_CONSUMPTION_RECORD, new MapSqlParameterSource()
-                    .addValue("ledgerEntryId", ledgerEntryId)
-                    .addValue("lotId", lotId));
         }
     }
 }

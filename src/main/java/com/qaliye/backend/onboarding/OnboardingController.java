@@ -31,11 +31,14 @@ public class OnboardingController {
         steps.put("location", s.location());
         steps.put("photo", s.photo());
         steps.put("preferences", s.preferences());
+        steps.put("identity_verification", s.identityVerification());
 
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("is_onboarded", s.isOnboarded());
         resp.put("next_step", s.nextStep());
         resp.put("steps", steps);
+        resp.put("identity_verification_required", s.identityVerificationRequired());
+        resp.put("identity_verification_status", s.identityVerificationStatus());
         resp.put("profile_completion_score", s.profileCompletionScore());
         resp.put("can_complete_onboarding", s.canCompleteOnboarding());
         resp.put("can_enter_discovery", s.canEnterDiscovery());
@@ -50,6 +53,8 @@ public class OnboardingController {
 
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("is_onboarded", true);
+        resp.put("identity_verification_required", s.identityVerificationRequired());
+        resp.put("identity_verification_status", s.identityVerificationStatus());
         resp.put("profile_completion_score", s.profileCompletionScore());
         resp.put("can_enter_discovery", s.canEnterDiscovery());
         resp.put("blocking_reasons", s.blockingReasons());

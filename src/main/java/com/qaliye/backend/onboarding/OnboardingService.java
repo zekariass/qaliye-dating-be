@@ -1,6 +1,7 @@
 package com.qaliye.backend.onboarding;
 
 import com.qaliye.backend.billing.service.BillingMarketResolver;
+import com.qaliye.backend.billing.service.CountrySettingsService;
 import com.qaliye.backend.billing.service.PromotionSignupService;
 import com.qaliye.backend.user.entity.Profile;
 import com.qaliye.backend.user.repository.ProfileRepository;
@@ -31,6 +32,9 @@ public class OnboardingService {
             boolean location,
             boolean photo,
             boolean preferences,
+            boolean identityVerification,
+            boolean identityVerificationRequired,
+            String identityVerificationStatus,
             boolean isOnboarded,
             String nextStep,
             int profileCompletionScore,
@@ -43,15 +47,18 @@ public class OnboardingService {
     private final NamedParameterJdbcTemplate jdbc;
     private final PromotionSignupService promotionSignupService;
     private final BillingMarketResolver marketResolver;
+    private final CountrySettingsService countrySettingsService;
 
     public OnboardingService(ProfileRepository profileRepository,
                              NamedParameterJdbcTemplate jdbc,
                              PromotionSignupService promotionSignupService,
-                             BillingMarketResolver marketResolver) {
+                             BillingMarketResolver marketResolver,
+                             CountrySettingsService countrySettingsService) {
         this.profileRepository = profileRepository;
         this.jdbc = jdbc;
         this.promotionSignupService = promotionSignupService;
         this.marketResolver = marketResolver;
+        this.countrySettingsService = countrySettingsService;
     }
 
     public OnboardingStatus getStatus(UUID userId) {
@@ -94,28 +101,40 @@ public class OnboardingService {
                     && minAge >= 18 && maxAge >= minAge && maxDist > 0;
         }
 
-        boolean canCompleteOnboarding = basicProfile && location && photo && preferences;
+        // 5. Identity verification (always shown; required only if country setting says so)
+        boolean idVerificationRequired = countrySettingsService
+                .getSettingsForUser(userId).identityVerificationRequired();
+        String verificationStatus = jdbc.queryForObject(
+                "SELECT verification_status FROM app_users WHERE id = :uid",
+                Map.of("uid", userId), String.class);
+        boolean identityVerification = "VERIFIED".equals(verificationStatus);
+
+        boolean canCompleteOnboarding = basicProfile && location && photo && preferences
+                && (!idVerificationRequired || identityVerification);
         boolean isOnboarded = profile != null && Boolean.TRUE.equals(profile.getIsOnboarded());
 
         // Next step
         String nextStep;
-        if (!basicProfile)     nextStep = "BASIC_PROFILE";
-        else if (!location)    nextStep = "ADD_LOCATION";
-        else if (!photo)       nextStep = "ADD_PHOTO";
-        else if (!preferences) nextStep = "SET_PREFERENCES";
-        else if (!isOnboarded) nextStep = "COMPLETE";
-        else                   nextStep = "DONE";
+        if (!basicProfile)          nextStep = "BASIC_PROFILE";
+        else if (!location)         nextStep = "ADD_LOCATION";
+        else if (!photo)            nextStep = "ADD_PHOTO";
+        else if (!identityVerification) nextStep = "IDENTITY_VERIFICATION";
+        else if (!preferences)      nextStep = "SET_PREFERENCES";
+        else if (!isOnboarded)      nextStep = "COMPLETE";
+        else                        nextStep = "DONE";
 
         // Blocking reasons
         List<String> blockingReasons = new ArrayList<>();
-        if (!basicProfile)  blockingReasons.add("MISSING_BASIC_PROFILE");
-        if (!location)      blockingReasons.add("MISSING_LOCATION");
-        if (!photo)         blockingReasons.add("MISSING_PRIMARY_PHOTO");
-        if (!preferences)   blockingReasons.add("MISSING_PREFERENCES");
+        if (!basicProfile)          blockingReasons.add("MISSING_BASIC_PROFILE");
+        if (!location)              blockingReasons.add("MISSING_LOCATION");
+        if (!photo)                 blockingReasons.add("MISSING_PRIMARY_PHOTO");
+        if (!preferences)           blockingReasons.add("MISSING_PREFERENCES");
+        if (!identityVerification && idVerificationRequired)  blockingReasons.add("IDENTITY_VERIFICATION_REQUIRED");
 
-        // Can enter discovery: onboarded + visible + ACTIVE user + location + APPROVED primary photo
+        // Can enter discovery: onboarded + visible + ACTIVE user + location + APPROVED primary photo + identity verified (if required)
         boolean canEnterDiscovery = false;
-        if (isOnboarded && location && "APPROVED".equals(primaryPhotoStatus)) {
+        if (isOnboarded && location && "APPROVED".equals(primaryPhotoStatus)
+                && (!idVerificationRequired || identityVerification)) {
             boolean isVisible = Boolean.TRUE.equals(profile.getIsVisible());
             String userStatus = jdbc.queryForObject(
                     "SELECT status FROM app_users WHERE id = :uid", Map.of("uid", userId), String.class);
@@ -126,7 +145,10 @@ public class OnboardingService {
         }
 
         int score = computeScore(profile, userId, basicProfile, location, photo, preferences);
-        return new OnboardingStatus(basicProfile, location, photo, preferences, isOnboarded,
+        log.debug("Onboarding status for user={}: basicProfile={}, location={}, photo={}, preferences={}, idVerificationRequired={}, identityVerification={}, isOnboarded={}, nextStep={}, canComplete={}, canEnterDiscovery={}",
+                userId, basicProfile, location, photo, preferences, idVerificationRequired, identityVerification, isOnboarded, nextStep, canCompleteOnboarding, canEnterDiscovery);
+        return new OnboardingStatus(basicProfile, location, photo, preferences,
+                identityVerification, idVerificationRequired, verificationStatus, isOnboarded,
                 nextStep, score, canCompleteOnboarding, canEnterDiscovery, blockingReasons);
     }
 
@@ -143,13 +165,21 @@ public class OnboardingService {
         String primaryPhotoStatus = photoStatuses.isEmpty() ? null : photoStatuses.get(0);
 
         int score = status.profileCompletionScore();
-        boolean canEnterDiscovery = "APPROVED".equals(primaryPhotoStatus);
+        boolean canEnterDiscovery = "APPROVED".equals(primaryPhotoStatus)
+                && (!status.identityVerificationRequired() || status.identityVerification());
         jdbc.update(
                 "UPDATE profiles SET is_onboarded = TRUE, is_visible = :isVisible, profile_completion_score = :score WHERE user_id = :userId",
                 Map.of("isVisible", canEnterDiscovery, "score", score, "userId", callerId));
 
         List<String> blockingReasons = new ArrayList<>();
-        if (!canEnterDiscovery) blockingReasons.add("PRIMARY_PHOTO_PENDING_REVIEW");
+        if (!canEnterDiscovery) {
+            if (!"APPROVED".equals(primaryPhotoStatus)) {
+                blockingReasons.add("PRIMARY_PHOTO_PENDING_REVIEW");
+            }
+            if (!status.identityVerification() && status.identityVerificationRequired()) {
+                blockingReasons.add("IDENTITY_VERIFICATION_REQUIRED");
+            }
+        }
 
         // Apply signup promotions once when onboarding is completed.
         // applySignupPromotions is idempotent: per-user redemption count prevents double-granting.
@@ -160,7 +190,10 @@ public class OnboardingService {
             log.warn("AUTO_ON_SIGNUP processing failed for user={}: {}", callerId, e.getMessage());
         }
 
-        return new OnboardingStatus(true, true, true, true, true, "DONE",
+        return new OnboardingStatus(true, true, true, true,
+                status.identityVerification(), status.identityVerificationRequired(),
+                status.identityVerificationStatus(),
+                true, "DONE",
                 score, true, canEnterDiscovery, blockingReasons);
     }
 

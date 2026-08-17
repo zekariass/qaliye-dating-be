@@ -1,9 +1,11 @@
 package com.qaliye.backend.chat.exception;
 
-import com.qaliye.backend.discovery.exception.DailyLimitExceededException;
+import com.qaliye.backend.billing.service.CreditService;
+import com.qaliye.backend.discovery.exception.ActionLimitExceededException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -26,13 +28,21 @@ public class ChatExceptionHandler {
         return builder.body(body);
     }
 
-    @ExceptionHandler(DailyLimitExceededException.class)
-    public ResponseEntity<Map<String, Object>> handleDailyLimit(DailyLimitExceededException ex) {
+    @ExceptionHandler(CreditService.InsufficientCreditsException.class)
+    public ResponseEntity<Map<String, Object>> handleInsufficientCredits(CreditService.InsufficientCreditsException ex) {
+        return ResponseEntity.status(HttpStatus.PAYMENT_REQUIRED)
+                .body(Map.of("error", Map.of("code", "insufficient_credits", "message", "You don't have enough credits for this action.")));
+    }
+
+    @ExceptionHandler(ActionLimitExceededException.class)
+    public ResponseEntity<Map<String, Object>> handleActionLimit(ActionLimitExceededException ex) {
         return ResponseEntity.status(ex.getHttpStatus())
                 .body(Map.of("error", Map.of(
                         "code", ex.getErrorCode(),
                         "message", ex.getMessage(),
-                        "details", Map.of("limit_type", ex.getLimitType())
+                        "details", Map.of(
+                                "action_type", ex.getActionType(),
+                                "period_type", ex.getPeriodType())
                 )));
     }
 }

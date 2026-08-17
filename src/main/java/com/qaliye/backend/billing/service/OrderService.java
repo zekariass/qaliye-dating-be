@@ -57,6 +57,7 @@ public class OrderService {
     private final PromotionRepository promotionRepo;
     private final PromotionEligibilityService promotionEligibilityService;
     private final ChapaClient chapaClient;
+    private final CountrySettingsService countrySettingsService;
 
     public OrderService(BillingRepository billingRepo,
                         BillingProperties billingProps,
@@ -67,7 +68,8 @@ public class OrderService {
                         ObjectMapper objectMapper,
                         PromotionRepository promotionRepo,
                         PromotionEligibilityService promotionEligibilityService,
-                        ChapaClient chapaClient) {
+                        ChapaClient chapaClient,
+                        CountrySettingsService countrySettingsService) {
         this.billingRepo = billingRepo;
         this.billingProps = billingProps;
         this.marketResolver = marketResolver;
@@ -78,6 +80,7 @@ public class OrderService {
         this.promotionRepo = promotionRepo;
         this.promotionEligibilityService = promotionEligibilityService;
         this.chapaClient = chapaClient;
+        this.countrySettingsService = countrySettingsService;
     }
 
     @Transactional
@@ -96,8 +99,22 @@ public class OrderService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid_offer"));
 
         // Resolve the user's billing market
-        String platform = request.platform() != null ? request.platform().toUpperCase() : "ANDROID";
+        String platform = normalizePlatform(request.platform());
         BillingMarketResolver.MarketResult market = marketResolver.resolveMarket(userId, platform);
+
+        // Enforce country-level payment mode settings — use the user's actual billing
+        // country, not the resolved market country (which may have fallen back to GLOBAL).
+        CountrySettingsService.CountrySettings settings =
+                countrySettingsService.getSettings(market.billingCountryCode());
+        boolean isSubscriptionOffer = offer.subscriptionProductId() != null;
+        if (isSubscriptionOffer && !settings.subscriptionEnabled()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "subscription_not_available_in_your_country");
+        }
+        if (!isSubscriptionOffer && !settings.creditsEnabled()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "credits_not_available_in_your_country");
+        }
 
         // For ONLINE_PAYMENT: validate the submitted method is the single active gateway method
         BillingRepository.PaymentMethodRow activeOnlineMethod =
@@ -782,5 +799,14 @@ public class OrderService {
                 canRetryVerification, canUploadReceipt, canContactSupport,
                 order.verificationCount()
         );
+    }
+
+    private static String normalizePlatform(String platform) {
+        if (platform == null) return "MOBILE";
+        String upper = platform.toUpperCase();
+        return switch (upper) {
+            case "ANDROID", "IOS" -> "MOBILE";
+            default -> upper;
+        };
     }
 }

@@ -1,7 +1,9 @@
 package com.qaliye.backend.common;
 
+import com.qaliye.backend.billing.service.CreditService;
 import org.postgresql.util.PSQLException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -37,6 +39,11 @@ public class GlobalExceptionHandler {
             return error(400, "AGE_VIOLATION", "User must be at least 18 years old.");
         }
         return error(409, "CONFLICT", "A data conflict occurred.");
+    }
+
+    @ExceptionHandler(CreditService.InsufficientCreditsException.class)
+    public ResponseEntity<Map<String, Object>> handleInsufficientCredits(CreditService.InsufficientCreditsException ex) {
+        return error(402, "insufficient_credits", "You don't have enough credits for this action.");
     }
 
     @ExceptionHandler(ResponseStatusException.class)

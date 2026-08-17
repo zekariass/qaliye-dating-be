@@ -1,13 +1,13 @@
 package com.qaliye.backend.discovery.service;
 
+import com.qaliye.backend.billing.repository.ActionLimitRepository;
+import com.qaliye.backend.billing.service.ActionCostService;
+import com.qaliye.backend.billing.service.CreditService;
 import com.qaliye.backend.discovery.dto.MatchSummaryDto;
 import com.qaliye.backend.discovery.dto.SwipeActionResponse;
-import com.qaliye.backend.discovery.dto.UserPlanEntitlement;
-import com.qaliye.backend.discovery.exception.DailyLimitExceededException;
+import com.qaliye.backend.discovery.exception.ActionLimitExceededException;
 import com.qaliye.backend.discovery.exception.TargetIneligibleException;
-import com.qaliye.backend.discovery.repository.DailyLimitRepository;
 import com.qaliye.backend.discovery.repository.DiscoveryActionRepository;
-import com.qaliye.backend.discovery.repository.EntitlementLedgerRepository;
 import com.qaliye.backend.chat.service.MatchLifecycleService;
 import com.qaliye.backend.notifications.NotificationDispatcher;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
@@ -23,27 +23,27 @@ import java.util.UUID;
 public class SwipeActionService {
 
     private final DiscoveryActionRepository actionRepo;
-    private final DailyLimitRepository dailyLimitRepo;
-    private final EntitlementLedgerRepository ledgerRepo;
+    private final ActionCostService actionCostService;
+    private final ActionLimitRepository actionLimitRepo;
+    private final CreditService creditService;
     private final MatchService matchService;
-    private final PlanEntitlementService entitlementService;
     private final NotificationDispatcher notificationDispatcher;
     private final MatchLifecycleService matchLifecycleService;
     private final NamedParameterJdbcTemplate jdbc;
 
     public SwipeActionService(DiscoveryActionRepository actionRepo,
-                               DailyLimitRepository dailyLimitRepo,
-                               EntitlementLedgerRepository ledgerRepo,
+                               ActionCostService actionCostService,
+                               ActionLimitRepository actionLimitRepo,
+                               CreditService creditService,
                                MatchService matchService,
-                               PlanEntitlementService entitlementService,
                                NotificationDispatcher notificationDispatcher,
                                MatchLifecycleService matchLifecycleService,
                                NamedParameterJdbcTemplate jdbc) {
         this.actionRepo = actionRepo;
-        this.dailyLimitRepo = dailyLimitRepo;
-        this.ledgerRepo = ledgerRepo;
+        this.actionCostService = actionCostService;
+        this.actionLimitRepo = actionLimitRepo;
+        this.creditService = creditService;
         this.matchService = matchService;
-        this.entitlementService = entitlementService;
         this.notificationDispatcher = notificationDispatcher;
         this.matchLifecycleService = matchLifecycleService;
         this.jdbc = jdbc;
@@ -99,18 +99,24 @@ public class SwipeActionService {
             reverseExistingAction(existingAction.get(), actorId);
         }
 
-        UserPlanEntitlement ent = entitlementService.loadEntitlement(actorId);
-        dailyLimitRepo.ensureRowExists(actorId);
-        DailyLimitRepository.DailyLimitRow limits = dailyLimitRepo.lockForUpdate(actorId)
-                .orElseThrow(() -> new IllegalStateException("Daily limits row missing after upsert"));
+        ActionCostService.ActionCostResult cost = actionCostService.evaluate(actorId, "LIKE");
+        if (cost.isBlocked()) {
+            throw new ActionLimitExceededException("LIKES", cost.periodType());
+        }
 
-        if (ent.dailyLikesLimit() != null && limits.likesUsed() >= ent.dailyLikesLimit()) {
-            throw new DailyLimitExceededException("LIKES");
+        if (cost.requiresCredits()) {
+            String idemKey = "like-" + clientActionId;
+            creditService.consumeCredits(actorId, cost.creditCost(), "LIKE", idemKey);
         }
 
         DiscoveryActionRepository.ActionRow action =
                 actionRepo.insertAction(actorId, targetId, "LIKE", clientActionId);
-        dailyLimitRepo.incrementLikes(actorId);
+
+        if (cost.ruleId() != null && cost.limitValue() != null) {
+            actionLimitRepo.ensureExists(actorId, cost.ruleId(), cost.periodStart(), cost.periodEnd());
+            actionLimitRepo.findForUpdate(actorId, cost.ruleId(), cost.periodStart())
+                    .ifPresent(t -> actionLimitRepo.increment(t.id()));
+        }
 
         notificationDispatcher.dispatchLikeNotification(actorId, targetId, action.id());
 
@@ -123,9 +129,9 @@ public class SwipeActionService {
                     notificationDispatcher.dispatchMatchNotification(actorId, targetId, m.matchId()));
         }
 
-        int likesRemaining = ent.dailyLikesLimit() == null
+        int likesRemaining = cost.limitValue() == null
                 ? Integer.MAX_VALUE
-                : Math.max(0, ent.dailyLikesLimit() - limits.likesUsed() - 1);
+                : Math.max(0, cost.limitValue() - cost.currentUsedCount() - 1);
 
         Instant createdAt = action.createdAt() != null ? action.createdAt().toInstant() : Instant.now();
         return new SwipeActionResponse(
@@ -185,17 +191,15 @@ public class SwipeActionService {
             reverseExistingAction(existingAction.get(), actorId);
         }
 
-        UserPlanEntitlement ent = entitlementService.loadEntitlement(actorId);
-        dailyLimitRepo.ensureRowExists(actorId);
-        DailyLimitRepository.DailyLimitRow limits = dailyLimitRepo.lockForUpdate(actorId)
-                .orElseThrow(() -> new IllegalStateException("Daily limits row missing after upsert"));
+        ActionCostService.ActionCostResult cost = actionCostService.evaluate(actorId, "SUPER_LIKE");
+        if (cost.isBlocked()) {
+            throw new ActionLimitExceededException("SUPER_LIKE", cost.periodType());
+        }
 
-        boolean usedCredit = false;
-        if (ent.dailySuperLikesLimit() != null && limits.superLikesUsed() >= ent.dailySuperLikesLimit()) {
-            if (ent.superLikeCredits() <= 0) {
-                throw new DailyLimitExceededException("SUPERLIKES");
-            }
-            usedCredit = true;
+        boolean usedCredit = cost.requiresCredits();
+        if (usedCredit) {
+            String idemKey = "superlike-" + clientActionId;
+            creditService.consumeCredits(actorId, cost.creditCost(), "SUPER_LIKE", idemKey);
         }
 
         DiscoveryActionRepository.ActionRow action =
@@ -203,12 +207,10 @@ public class SwipeActionService {
 
         notificationDispatcher.dispatchSuperLikeNotification(actorId, targetId, action.id());
 
-        if (!usedCredit) {
-            dailyLimitRepo.incrementSuperLikes(actorId);
-        }
-
-        if (usedCredit) {
-            ledgerRepo.consumeCredit(actorId, "SUPERLIKE_CREDIT", action.id(), UUID.randomUUID());
+        if (cost.ruleId() != null && cost.limitValue() != null) {
+            actionLimitRepo.ensureExists(actorId, cost.ruleId(), cost.periodStart(), cost.periodEnd());
+            actionLimitRepo.findForUpdate(actorId, cost.ruleId(), cost.periodStart())
+                    .ifPresent(t -> actionLimitRepo.increment(t.id()));
         }
 
         Optional<DiscoveryActionRepository.ActionRow> mutualAction =
@@ -220,16 +222,16 @@ public class SwipeActionService {
                     notificationDispatcher.dispatchMatchNotification(actorId, targetId, m.matchId()));
         }
 
-        int superLikesRemaining = ent.dailySuperLikesLimit() == null
+        int superLikesRemaining = cost.limitValue() == null
                 ? Integer.MAX_VALUE
-                : Math.max(0, ent.dailySuperLikesLimit() - limits.superLikesUsed() - (usedCredit ? 0 : 1));
-        int creditsRemaining = ent.superLikeCredits() - (usedCredit ? 1 : 0);
+                : Math.max(0, cost.limitValue() - cost.currentUsedCount() - (usedCredit ? 0 : 1));
+        long creditBalance = usedCredit ? creditService.getBalance(actorId) : 0L;
 
         Instant createdAt = action.createdAt() != null ? action.createdAt().toInstant() : Instant.now();
         return new SwipeActionResponse(
                 action.id(), "SUPERLIKE", "ACTIVE",
                 match.isPresent(), match.orElse(null),
-                null, superLikesRemaining, creditsRemaining,
+                null, superLikesRemaining, (int) creditBalance,
                 createdAt, false
         );
     }
@@ -276,12 +278,7 @@ public class SwipeActionService {
 
     private void reverseExistingAction(DiscoveryActionRepository.ActionRow existing, UUID actorId) {
         actionRepo.reverseAction(existing.id());
-        if ("LIKE".equals(existing.actionType())) {
-            dailyLimitRepo.decrementLikes(actorId);
-            matchService.findActiveMatchByAction(existing.id()).ifPresent(match ->
-                    matchLifecycleService.endMatch(match.id(), "CANCELLED_BY_ACTION_CHANGE", actorId));
-        } else if ("SUPERLIKE".equals(existing.actionType())) {
-            dailyLimitRepo.decrementSuperLikes(actorId);
+        if ("LIKE".equals(existing.actionType()) || "SUPERLIKE".equals(existing.actionType())) {
             matchService.findActiveMatchByAction(existing.id()).ifPresent(match ->
                     matchLifecycleService.endMatch(match.id(), "CANCELLED_BY_ACTION_CHANGE", actorId));
         }

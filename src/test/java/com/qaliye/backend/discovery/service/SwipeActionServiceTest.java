@@ -1,11 +1,12 @@
 package com.qaliye.backend.discovery.service;
 
+import com.qaliye.backend.billing.repository.ActionLimitRepository;
+import com.qaliye.backend.billing.service.ActionCostService;
+import com.qaliye.backend.billing.service.CreditService;
 import com.qaliye.backend.discovery.dto.MatchSummaryDto;
-import com.qaliye.backend.discovery.dto.UserPlanEntitlement;
-import com.qaliye.backend.discovery.exception.DailyLimitExceededException;
+import com.qaliye.backend.discovery.exception.ActionLimitExceededException;
 import com.qaliye.backend.discovery.exception.DuplicateActiveActionException;
 import com.qaliye.backend.discovery.exception.TargetIneligibleException;
-import com.qaliye.backend.discovery.repository.DailyLimitRepository;
 import com.qaliye.backend.discovery.repository.DiscoveryActionRepository;
 import com.qaliye.backend.chat.service.MatchLifecycleService;
 import com.qaliye.backend.notifications.NotificationDispatcher;
@@ -36,9 +37,10 @@ import static org.mockito.Mockito.*;
 class SwipeActionServiceTest {
 
     @Mock DiscoveryActionRepository actionRepo;
-    @Mock DailyLimitRepository dailyLimitRepo;
+    @Mock ActionCostService actionCostService;
+    @Mock ActionLimitRepository actionLimitRepo;
+    @Mock CreditService creditService;
     @Mock MatchService matchService;
-    @Mock PlanEntitlementService entitlementService;
     @Mock NotificationDispatcher notificationDispatcher;
     @Mock MatchLifecycleService matchLifecycleService;
     @Mock NamedParameterJdbcTemplate jdbc;
@@ -52,8 +54,8 @@ class SwipeActionServiceTest {
     @BeforeEach
     void setUp() {
         service = new SwipeActionService(
-                actionRepo, dailyLimitRepo, null, matchService,
-                entitlementService, notificationDispatcher, matchLifecycleService, jdbc);
+                actionRepo, actionCostService, actionLimitRepo, creditService,
+                matchService, notificationDispatcher, matchLifecycleService, jdbc);
     }
 
     private void mockTargetEligible() {
@@ -67,10 +69,9 @@ class SwipeActionServiceTest {
         mockTargetEligible();
         when(actionRepo.findByClientActionId(actorId, clientActionId)).thenReturn(Optional.empty());
         when(actionRepo.findActiveByPair(actorId, targetId)).thenReturn(Optional.empty());
-        when(entitlementService.loadEntitlement(actorId)).thenReturn(
-                new UserPlanEntitlement(actorId, "FREE", false, 10, 3, 1, 0, 0, 0, 0));
-        when(dailyLimitRepo.lockForUpdate(actorId)).thenReturn(
-                Optional.of(new DailyLimitRepository.DailyLimitRow(actorId, 0, 0, 0, 0, 0)));
+        when(actionCostService.evaluate(eq(actorId), eq("LIKE"))).thenReturn(
+                new ActionCostService.ActionCostResult(null, 0, true, false, false,
+                        java.time.LocalDate.now(), java.time.LocalDate.now(), 0, null, "DAY"));
         when(actionRepo.insertAction(actorId, targetId, "LIKE", clientActionId)).thenReturn(
                 new DiscoveryActionRepository.ActionRow(
                         UUID.randomUUID(), actorId, targetId, "LIKE", "ACTIVE", clientActionId,
@@ -102,10 +103,9 @@ class SwipeActionServiceTest {
         mockTargetEligible();
         when(actionRepo.findByClientActionId(actorId, clientActionId)).thenReturn(Optional.empty());
         when(actionRepo.findActiveByPair(actorId, targetId)).thenReturn(Optional.empty());
-        when(entitlementService.loadEntitlement(actorId)).thenReturn(
-                new UserPlanEntitlement(actorId, "FREE", false, 10, 3, 1, 0, 0, 0, 0));
-        when(dailyLimitRepo.lockForUpdate(actorId)).thenReturn(
-                Optional.of(new DailyLimitRepository.DailyLimitRow(actorId, 0, 0, 0, 0, 0)));
+        when(actionCostService.evaluate(eq(actorId), eq("LIKE"))).thenReturn(
+                new ActionCostService.ActionCostResult(null, 0, true, false, false,
+                        java.time.LocalDate.now(), java.time.LocalDate.now(), 0, null, "DAY"));
         when(actionRepo.insertAction(actorId, targetId, "LIKE", clientActionId)).thenReturn(
                 new DiscoveryActionRepository.ActionRow(
                         UUID.randomUUID(), actorId, targetId, "LIKE", "ACTIVE", clientActionId,
@@ -123,10 +123,9 @@ class SwipeActionServiceTest {
         mockTargetEligible();
         when(actionRepo.findByClientActionId(actorId, clientActionId)).thenReturn(Optional.empty());
         when(actionRepo.findActiveByPair(actorId, targetId)).thenReturn(Optional.empty());
-        when(entitlementService.loadEntitlement(actorId)).thenReturn(
-                new UserPlanEntitlement(actorId, "FREE", false, 10, 3, 1, 1, 0, 0, 0));
-        when(dailyLimitRepo.lockForUpdate(actorId)).thenReturn(
-                Optional.of(new DailyLimitRepository.DailyLimitRow(actorId, 0, 0, 0, 0, 0)));
+        when(actionCostService.evaluate(eq(actorId), eq("SUPER_LIKE"))).thenReturn(
+                new ActionCostService.ActionCostResult(null, 0, true, false, false,
+                        java.time.LocalDate.now(), java.time.LocalDate.now(), 0, null, "DAY"));
         when(actionRepo.insertAction(actorId, targetId, "SUPERLIKE", clientActionId)).thenReturn(
                 new DiscoveryActionRepository.ActionRow(
                         UUID.randomUUID(), actorId, targetId, "SUPERLIKE", "ACTIVE", clientActionId,

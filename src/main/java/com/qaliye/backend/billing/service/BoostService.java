@@ -2,7 +2,9 @@ package com.qaliye.backend.billing.service;
 
 import com.qaliye.backend.billing.BillingProperties;
 import com.qaliye.backend.billing.dto.BoostActivationResponse;
+import com.qaliye.backend.billing.repository.ActionLimitRepository;
 import com.qaliye.backend.billing.repository.CreditLotRepository;
+import com.qaliye.backend.discovery.exception.ActionLimitExceededException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -23,12 +25,21 @@ public class BoostService {
     private final CreditLotRepository creditLotRepo;
     private final BillingProperties billingProps;
     private final NamedParameterJdbcTemplate jdbc;
+    private final ActionCostService actionCostService;
+    private final CreditService creditService;
+    private final ActionLimitRepository actionLimitRepo;
 
     public BoostService(CreditLotRepository creditLotRepo, BillingProperties billingProps,
-                        NamedParameterJdbcTemplate jdbc) {
+                        NamedParameterJdbcTemplate jdbc,
+                        ActionCostService actionCostService,
+                        CreditService creditService,
+                        ActionLimitRepository actionLimitRepo) {
         this.creditLotRepo = creditLotRepo;
         this.billingProps = billingProps;
         this.jdbc = jdbc;
+        this.actionCostService = actionCostService;
+        this.creditService = creditService;
+        this.actionLimitRepo = actionLimitRepo;
     }
 
     @Transactional
@@ -47,46 +58,38 @@ public class BoostService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "boost_already_active");
         }
 
-        // Consume one BOOST_CREDIT via FIFO lot
-        String idemKey = idempotencyKey != null ? idempotencyKey : "boost-" + UUID.randomUUID();
+        // Evaluate BOOST action cost from subscription_plan_limit_and_cost
+        ActionCostService.ActionCostResult cost = actionCostService.evaluate(userId, "BOOST");
 
-        UUID ledgerEntryId = creditLotRepo.insertLedgerEntry(
-                userId, "BOOST_CREDIT", -1, "CONSUMPTION",
-                null, null, null, idemKey, null, "{}"
-        );
-        if (ledgerEntryId == null) {
-            // Idempotency collision — likely duplicate request; fetch active boost
-            List<CreditLotRepository.ActiveBoostRow> existing = creditLotRepo.findActiveBoost(userId);
-            if (!existing.isEmpty()) {
-                var b = existing.get(0);
-                int remaining = creditLotRepo.getBalance(userId, "BOOST_CREDIT");
-                return new BoostActivationResponse(b.id(), b.startedAt(), b.expiresAt(), remaining);
+        if (cost.isBlocked()) {
+            throw new ActionLimitExceededException("BOOST", cost.periodType());
+        }
+
+        String idemKey = idempotencyKey != null ? "boost-" + idempotencyKey : "boost-" + UUID.randomUUID();
+
+        if (cost.ruleId() != null && cost.limitValue() != null) {
+            // Limited allowance — try to consume one slot
+            actionLimitRepo.ensureExists(userId, cost.ruleId(), cost.periodStart(), cost.periodEnd());
+            boolean incremented = actionLimitRepo
+                    .tryIncrementUnderLimit(userId, cost.ruleId(), cost.periodStart(), cost.limitValue())
+                    .isPresent();
+            if (!incremented && !cost.requiresCredits()) {
+                throw new ActionLimitExceededException("BOOST", cost.periodType());
             }
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "duplicate_boost_request");
         }
 
-        // Find and decrement a lot
-        List<CreditLotRepository.LotRow> lots = creditLotRepo.findOldestValidLot(userId, "BOOST_CREDIT");
-        if (lots.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.PAYMENT_REQUIRED, "insufficient_boost_credits");
+        if (cost.requiresCredits()) {
+            creditService.consumeCredits(userId, cost.creditCost(), "BOOST", idemKey);
         }
 
-        CreditLotRepository.LotRow lot = lots.get(0);
-        int decremented = creditLotRepo.decrementLot(lot.id(), 1);
-        if (decremented == 0) {
-            throw new ResponseStatusException(HttpStatus.PAYMENT_REQUIRED, "insufficient_boost_credits");
-        }
-
-        // Record consumption
-        creditLotRepo.insertConsumption(ledgerEntryId, lot.id(), 1);
-
-        // Create the boost
+        // Create the boost activation record (consumption_ledger_entry_id is nullable)
         CreditLotRepository.BoostInsertRow boost = creditLotRepo.insertBoost(
-                userId, ledgerEntryId, billingProps.getBoostDurationMinutes());
+                userId, null, billingProps.getBoostDurationMinutes());
 
-        int remaining = creditLotRepo.getBalance(userId, "BOOST_CREDIT");
-        log.info("Boost activated for user={}, boostId={}, expires={}", userId, boost.id(), boost.expiresAt());
+        int creditsRemaining = (int) Math.min(creditService.getBalance(userId), Integer.MAX_VALUE);
+        log.info("Boost activated for user={}, boostId={}, expires={}",
+                userId, boost.id(), boost.expiresAt());
 
-        return new BoostActivationResponse(boost.id(), boost.startedAt(), boost.expiresAt(), remaining);
+        return new BoostActivationResponse(boost.id(), boost.startedAt(), boost.expiresAt(), creditsRemaining);
     }
 }

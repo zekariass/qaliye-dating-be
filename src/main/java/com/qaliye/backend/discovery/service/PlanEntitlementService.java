@@ -1,7 +1,6 @@
 package com.qaliye.backend.discovery.service;
 
 import com.qaliye.backend.discovery.dto.UserPlanEntitlement;
-import com.qaliye.backend.discovery.repository.EntitlementLedgerRepository;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -14,32 +13,33 @@ import java.util.UUID;
 public class PlanEntitlementService {
 
     private final NamedParameterJdbcTemplate jdbc;
-    private final EntitlementLedgerRepository ledgerRepo;
 
-    public PlanEntitlementService(NamedParameterJdbcTemplate jdbc,
-                                  EntitlementLedgerRepository ledgerRepo) {
+    public PlanEntitlementService(NamedParameterJdbcTemplate jdbc) {
         this.jdbc = jdbc;
-        this.ledgerRepo = ledgerRepo;
     }
 
     private static final String RESOLVE_LIMITS_SQL = """
             WITH paid_limits AS (
-                SELECT sp.plan_code, sp.plan_kind, spl.limit_type, spl.limit_value
+                SELECT sp.plan_code, sp.plan_kind, fa.code AS limit_type, splac.limit_value
                 FROM user_subscriptions us
-                JOIN subscription_plans sp  ON sp.id  = us.plan_id
-                JOIN subscription_plan_limits spl ON spl.plan_id = sp.id
+                JOIN subscription_plans sp     ON sp.id    = us.plan_id
+                JOIN subscription_plan_limit_and_cost splac ON splac.subscription_plan_id = sp.id
+                JOIN feature_actions fa        ON fa.id    = splac.feature_action_id
                 WHERE us.user_id = :userId
                   AND us.status IN ('ACTIVE', 'PENDING_VERIFICATION')
                   AND sp.is_active = TRUE
+                  AND fa.code IN ('LIKE', 'SUPER_LIKE', 'REWIND', 'VOICE_MESSAGE', 'IMAGE_MESSAGE')
             ),
             free_limits AS (
-                SELECT DISTINCT ON (spl.limit_type)
-                    sp.plan_code, sp.plan_kind, spl.limit_type, spl.limit_value
+                SELECT DISTINCT ON (fa.code)
+                    sp.plan_code, sp.plan_kind, fa.code AS limit_type, splac.limit_value
                 FROM subscription_plans sp
-                JOIN subscription_plan_limits spl ON spl.plan_id = sp.id
+                JOIN subscription_plan_limit_and_cost splac ON splac.subscription_plan_id = sp.id
+                JOIN feature_actions fa ON fa.id = splac.feature_action_id
                 WHERE sp.plan_kind = 'FREE'
                   AND sp.is_active = TRUE
-                ORDER BY spl.limit_type, CASE WHEN sp.country_code = :countryCode THEN 0 ELSE 1 END
+                  AND fa.code IN ('LIKE', 'SUPER_LIKE', 'REWIND', 'VOICE_MESSAGE', 'IMAGE_MESSAGE')
+                ORDER BY fa.code, CASE WHEN sp.country_code = :countryCode THEN 0 ELSE 1 END
             ),
             resolved AS (
                 SELECT plan_code, plan_kind, limit_type, limit_value FROM paid_limits
@@ -50,8 +50,6 @@ public class PlanEntitlementService {
             )
             SELECT plan_code, plan_kind, limit_type, limit_value
             FROM resolved
-            WHERE limit_type IN ('LIKES', 'SUPERLIKES', 'REWINDS',
-                                'VOICE_CHAT_MSGS', 'IMAGE_CHAT_MSGS')
             """;
 
     private static final String GET_USER_COUNTRY_SQL = """
@@ -87,20 +85,17 @@ public class PlanEntitlementService {
             planCode = (String) row.get("plan_code");
             isPaid = "PAID".equals(row.get("plan_kind"));
             switch (limitType) {
-                case "LIKES" -> dailyLikesLimit = limitValue;
-                case "SUPERLIKES" -> dailySuperLikesLimit = limitValue;
-                case "REWINDS" -> dailyRewindsLimit = limitValue;
-                case "VOICE_CHAT_MSGS" -> dailyVoiceChatMsgLimit = limitValue;
-                case "IMAGE_CHAT_MSGS" -> dailyImageChatMsgLimit = limitValue;
+                case "LIKE"          -> dailyLikesLimit = limitValue;
+                case "SUPER_LIKE"    -> dailySuperLikesLimit = limitValue;
+                case "REWIND"        -> dailyRewindsLimit = limitValue;
+                case "VOICE_MESSAGE" -> dailyVoiceChatMsgLimit = limitValue;
+                case "IMAGE_MESSAGE" -> dailyImageChatMsgLimit = limitValue;
             }
         }
-
-        int superLikeCredits = ledgerRepo.getBalance(userId, "SUPERLIKE_CREDIT");
-        int rewindCredits = ledgerRepo.getBalance(userId, "REWIND_CREDIT");
 
         return new UserPlanEntitlement(userId, planCode, isPaid,
                 dailyLikesLimit, dailySuperLikesLimit, dailyRewindsLimit,
                 dailyVoiceChatMsgLimit, dailyImageChatMsgLimit,
-                superLikeCredits, rewindCredits);
+                0, 0);
     }
 }

@@ -110,7 +110,9 @@ public class BillingMarketResolver {
         Long offerCount = jdbc.queryForObject(
                 """
                 SELECT COUNT(*) FROM payment_offers
-                WHERE country_code = :countryCode AND platform = :platform AND is_active = TRUE
+                WHERE country_code = :countryCode
+                  AND (platform = :platform OR platform = 'ALL')
+                  AND is_active = TRUE
                 """,
                 params, Long.class);
         if (offerCount == null || offerCount == 0) return false;
@@ -118,7 +120,9 @@ public class BillingMarketResolver {
         Long methodCount = jdbc.queryForObject(
                 """
                 SELECT COUNT(*) FROM payment_methods
-                WHERE country_code = :countryCode AND platform = :platform AND is_active = TRUE
+                WHERE country_code = :countryCode
+                  AND (platform = :platform OR platform = 'ALL')
+                  AND is_active = TRUE
                 """,
                 params, Long.class);
         return methodCount != null && methodCount > 0;
@@ -129,7 +133,9 @@ public class BillingMarketResolver {
         Long count = jdbc.queryForObject(
                 """
                 SELECT COUNT(*) FROM payment_methods
-                WHERE country_code = :countryCode AND platform = :platform AND is_active = TRUE
+                WHERE country_code = :countryCode
+                  AND (platform = :platform OR platform = 'ALL')
+                  AND is_active = TRUE
                 """,
                 params, Long.class);
         return count != null && count > 0;

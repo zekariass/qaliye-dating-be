@@ -11,8 +11,16 @@ public record EntitlementResponse(
         ActiveBoostInfo activeBoost,
         Map<String, Boolean> features,
         Map<String, Integer> planLimits,
-        int boostDurationMinutes
+        int boostDurationMinutes,
+        CountrySettings countrySettings
 ) {
+
+    public record CountrySettings(
+            String countryCode,
+            boolean subscriptionEnabled,
+            boolean creditsEnabled,
+            boolean identityVerificationRequired
+    ) {}
     public record SubscriptionInfo(
             String status,
             String provider,
@@ -30,6 +38,7 @@ public record EntitlementResponse(
     ) {}
 
     public record CreditsInfo(
+            long creditBalance,
             int boostsAvailable,
             int superLikesAvailable,
             int rewindsAvailable

@@ -266,6 +266,10 @@ image:
       min-confidence: ${IMAGE_NUDITY_MIN_CONFIDENCE:90.0}
       suggestive-content-action: ${IMAGE_SUGGESTIVE_CONTENT_ACTION:MANUAL_REVIEW} # MANUAL_REVIEW, APPROVE or REJECT
 
+identity:
+  verification:
+    similarity-threshold: ${IDENTITY_VERIFICATION_SIMILARITY_THRESHOLD:80.0}
+
 logging:
   level:
     org.springframework.security: DEBUG

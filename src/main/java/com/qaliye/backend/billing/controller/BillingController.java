@@ -2,6 +2,7 @@ package com.qaliye.backend.billing.controller;
 
 import com.qaliye.backend.billing.dto.*;
 import com.qaliye.backend.billing.service.BoostService;
+import com.qaliye.backend.billing.service.CountrySettingsService;
 import com.qaliye.backend.billing.service.EntitlementService;
 import com.qaliye.backend.billing.service.OfferService;
 import com.qaliye.backend.billing.service.OrderService;
@@ -28,15 +29,18 @@ public class BillingController {
     private final OfferService offerService;
     private final OrderService orderService;
     private final BoostService boostService;
+    private final CountrySettingsService countrySettingsService;
 
     public BillingController(EntitlementService entitlementService,
                              OfferService offerService,
                              OrderService orderService,
-                             BoostService boostService) {
+                             BoostService boostService,
+                             CountrySettingsService countrySettingsService) {
         this.entitlementService = entitlementService;
         this.offerService = offerService;
         this.orderService = orderService;
         this.boostService = boostService;
+        this.countrySettingsService = countrySettingsService;
     }
 
     @GetMapping("/entitlements")
@@ -47,35 +51,37 @@ public class BillingController {
 
     @GetMapping("/offers")
     public ResponseEntity<List<OfferDto>> getOffers(
-            @RequestParam(defaultValue = "ANDROID") String platform) {
+            @RequestParam(defaultValue = "MOBILE") String platform) {
         UUID userId = CallerUtils.callerId();
-        List<OfferDto> offers = offerService.getOffers(userId, platform.toUpperCase());
+        String normalized = normalizePlatform(platform);
+        List<OfferDto> offers = offerService.getOffers(userId, normalized);
         log.debug("GET /api/v1/billing/offers for user={}, platform={} returning {} offers: {}",
-                userId, platform, offers.size(), offers);
+                userId, normalized, offers.size(), offers);
         return ResponseEntity.ok(offers);
     }
 
     @GetMapping("/payment-channels")
     public ResponseEntity<PaymentChannelsResponse> getPaymentChannels(
-            @RequestParam(defaultValue = "ANDROID") String platform) {
+            @RequestParam(defaultValue = "MOBILE") String platform) {
         UUID userId = CallerUtils.callerId();
-        return ResponseEntity.ok(offerService.getPaymentChannels(userId, platform.toUpperCase()));
+        return ResponseEntity.ok(offerService.getPaymentChannels(userId, normalizePlatform(platform)));
     }
 
     @GetMapping("/payment-options")
     public ResponseEntity<PaymentOptionsResponse> getPaymentOptions(
-            @RequestParam(defaultValue = "ANDROID") String platform,
+            @RequestParam(defaultValue = "MOBILE") String platform,
             @RequestParam(required = false) String channel) {
         UUID userId = CallerUtils.callerId();
+        String normalized = normalizePlatform(platform);
         PaymentOptionsResponse response;
         if (channel != null && !channel.isBlank()) {
             response = offerService.getPaymentMethodsByChannel(
-                    userId, platform.toUpperCase(), channel.toUpperCase());
+                    userId, normalized, channel.toUpperCase());
         } else {
-            response = offerService.getPaymentOptions(userId, platform.toUpperCase());
+            response = offerService.getPaymentOptions(userId, normalized);
         }
         log.debug("GET /api/v1/billing/payment-options user={} platform={} channel={} response={}",
-                userId, platform, channel, response);
+                userId, normalized, channel, response);
         return ResponseEntity.ok(response);
     }
 
@@ -138,5 +144,20 @@ public class BillingController {
         UUID userId = CallerUtils.callerId();
         String idempotencyKey = request != null ? request.idempotencyKey() : null;
         return ResponseEntity.ok(boostService.activateBoost(userId, idempotencyKey));
+    }
+
+    @GetMapping("/country-settings")
+    public ResponseEntity<CountrySettingsService.CountrySettings> getCountrySettings() {
+        UUID userId = CallerUtils.callerId();
+        return ResponseEntity.ok(countrySettingsService.getSettingsForUser(userId));
+    }
+
+    private static String normalizePlatform(String platform) {
+        if (platform == null) return "MOBILE";
+        String upper = platform.toUpperCase();
+        return switch (upper) {
+            case "ANDROID", "IOS" -> "MOBILE";
+            default -> upper;
+        };
     }
 }

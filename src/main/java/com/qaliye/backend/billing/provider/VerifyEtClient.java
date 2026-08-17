@@ -263,7 +263,7 @@ public class VerifyEtClient {
 
     private void populateCbe(Map<String, Object> payload, Map<String, Object> fields) {
         Object receipt = firstNonNull(fields.get("receiptNumber"), fields.get("referenceNumber"), fields.get("reference"));
-        if (receipt != null) payload.put("recieptNumber", receipt); // verify.et expects this key per spec
+        if (receipt != null) payload.put("receiptNumber", receipt);
         // accountSuffix is optional for legacy FT references but can be forwarded if present
         Object suffix = fields.get("accountSuffix");
         if (suffix != null) payload.put("accountSuffix", suffix);

@@ -38,6 +38,7 @@ public record ProfileMeDto(
         String discoveryMode,
         Boolean isOnboarded,
         Boolean isVerified,
+        String verificationStatus,
         Integer profileCompletionScore,
         DiscoveryPreferencesDto discoveryPreferences,
         String primaryPhotoUrl,

@@ -1,7 +1,6 @@
 package com.qaliye.backend.billing.service;
 
 import com.qaliye.backend.billing.repository.BillingRepository;
-import com.qaliye.backend.billing.repository.CreditLotRepository;
 import com.qaliye.backend.billing.repository.PromotionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,14 +18,11 @@ public class PromotionFulfillmentService {
 
     private final PromotionRepository promotionRepo;
     private final BillingRepository billingRepo;
-    private final CreditLotRepository creditLotRepo;
 
     public PromotionFulfillmentService(PromotionRepository promotionRepo,
-                                        BillingRepository billingRepo,
-                                        CreditLotRepository creditLotRepo) {
+                                        BillingRepository billingRepo) {
         this.promotionRepo = promotionRepo;
         this.billingRepo = billingRepo;
-        this.creditLotRepo = creditLotRepo;
     }
 
     /**
@@ -65,8 +61,6 @@ public class PromotionFulfillmentService {
                 now, now, periodEnd
         );
 
-        grantPromoBoostAllowance(userId, subId, planId, periodEnd);
-
         promotionRepo.fulfillRedemption(redemptionId, subId);
         promotionRepo.incrementFulfilled(campaign.id());
 
@@ -76,21 +70,4 @@ public class PromotionFulfillmentService {
         return subId;
     }
 
-    private void grantPromoBoostAllowance(UUID userId, UUID subId, UUID planId, Instant periodEnd) {
-        try {
-            int boostQty = creditLotRepo.getPlanBoostLimit(planId);
-            if (boostQty <= 0) return;
-            String idempotencyKey = "promo-boost-" + subId;
-            UUID ledgerEntryId = creditLotRepo.insertLedgerEntry(
-                    userId, "BOOST_CREDIT", boostQty, "PROMOTION_GRANT",
-                    null, subId, null,
-                    idempotencyKey, periodEnd, "{\"reason\":\"promotion_grant\"}"
-            );
-            if (ledgerEntryId != null) {
-                creditLotRepo.createLot(userId, "BOOST_CREDIT", ledgerEntryId, boostQty, periodEnd);
-            }
-        } catch (Exception e) {
-            log.warn("Failed to grant boost allowance for promo sub={}: {}", subId, e.getMessage());
-        }
-    }
 }

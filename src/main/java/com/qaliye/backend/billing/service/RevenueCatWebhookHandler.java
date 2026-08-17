@@ -21,17 +21,20 @@ public class RevenueCatWebhookHandler {
 
     private final BillingRepository billingRepo;
     private final FulfillmentService fulfillmentService;
+    private final CreditService creditService;
     private final ObjectMapper objectMapper;
     private final CacheManager cacheManager;
     private final NamedParameterJdbcTemplate jdbc;
 
     public RevenueCatWebhookHandler(BillingRepository billingRepo,
                                      FulfillmentService fulfillmentService,
+                                     CreditService creditService,
                                      ObjectMapper objectMapper,
                                      CacheManager cacheManager,
                                      NamedParameterJdbcTemplate jdbc) {
         this.billingRepo = billingRepo;
         this.fulfillmentService = fulfillmentService;
+        this.creditService = creditService;
         this.objectMapper = objectMapper;
         this.cacheManager = cacheManager;
         this.jdbc = jdbc;
@@ -220,6 +223,9 @@ public class RevenueCatWebhookHandler {
         if (stableSubId != null) {
             billingRepo.updateSubscriptionStatus(stableSubId, "EXPIRED");
         }
+        // Expire any remaining subscription allowance credits immediately
+        String expireIdemKey = "rc-expire-exp-" + (stableSubId != null ? stableSubId : userId.toString());
+        creditService.expireSubscriptionAllowanceLots(userId, null, expireIdemKey);
         resetDiscoveryModeIfIncognito(userId);
         log.info("RevenueCat expiration processed for user={}", userId);
     }

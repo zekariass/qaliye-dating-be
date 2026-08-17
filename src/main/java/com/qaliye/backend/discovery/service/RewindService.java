@@ -1,16 +1,16 @@
 package com.qaliye.backend.discovery.service;
 
+import com.qaliye.backend.billing.repository.ActionLimitRepository;
+import com.qaliye.backend.billing.service.ActionCostService;
+import com.qaliye.backend.billing.service.CreditService;
 import com.qaliye.backend.discovery.dto.DiscoveryProfileDto;
 import com.qaliye.backend.discovery.dto.RewindResponse;
-import com.qaliye.backend.discovery.dto.UserPlanEntitlement;
-import com.qaliye.backend.discovery.exception.DailyLimitExceededException;
+import com.qaliye.backend.discovery.exception.ActionLimitExceededException;
 import com.qaliye.backend.discovery.exception.NoRewindableActionException;
 import com.qaliye.backend.discovery.exception.RewindMatchGracePeriodExpiredException;
 import com.qaliye.backend.discovery.exception.RewindMatchHasMessagesException;
 import com.qaliye.backend.chat.service.MatchLifecycleService;
-import com.qaliye.backend.discovery.repository.DailyLimitRepository;
 import com.qaliye.backend.discovery.repository.DiscoveryActionRepository;
-import com.qaliye.backend.discovery.repository.EntitlementLedgerRepository;
 import com.qaliye.backend.discovery.repository.DiscoveryMatchRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,42 +23,47 @@ import java.util.UUID;
 public class RewindService {
 
     private final DiscoveryActionRepository actionRepo;
-    private final DailyLimitRepository dailyLimitRepo;
-    private final EntitlementLedgerRepository ledgerRepo;
+    private final ActionCostService actionCostService;
+    private final ActionLimitRepository actionLimitRepo;
+    private final CreditService creditService;
     private final MatchService matchService;
-    private final PlanEntitlementService entitlementService;
     private final DiscoveryQueryService queryService;
     private final MatchLifecycleService matchLifecycleService;
 
     public RewindService(DiscoveryActionRepository actionRepo,
-                         DailyLimitRepository dailyLimitRepo,
-                         EntitlementLedgerRepository ledgerRepo,
+                         ActionCostService actionCostService,
+                         ActionLimitRepository actionLimitRepo,
+                         CreditService creditService,
                          MatchService matchService,
-                         PlanEntitlementService entitlementService,
                          DiscoveryQueryService queryService,
                          MatchLifecycleService matchLifecycleService) {
         this.actionRepo = actionRepo;
-        this.dailyLimitRepo = dailyLimitRepo;
-        this.ledgerRepo = ledgerRepo;
+        this.actionCostService = actionCostService;
+        this.actionLimitRepo = actionLimitRepo;
+        this.creditService = creditService;
         this.matchService = matchService;
-        this.entitlementService = entitlementService;
         this.queryService = queryService;
         this.matchLifecycleService = matchLifecycleService;
     }
 
     @Transactional
     public RewindResponse rewind(UUID actorId) {
-        UserPlanEntitlement ent = entitlementService.loadEntitlement(actorId);
-        dailyLimitRepo.ensureRowExists(actorId);
-        DailyLimitRepository.DailyLimitRow limits = dailyLimitRepo.lockForUpdate(actorId)
-                .orElseThrow(() -> new IllegalStateException("Daily limits row missing after upsert"));
+        ActionCostService.ActionCostResult cost = actionCostService.evaluate(actorId, "REWIND");
 
-        boolean usedCredit = false;
-        if (ent.dailyRewindsLimit() != null && limits.rewindsUsed() >= ent.dailyRewindsLimit()) {
-            if (ent.rewindCredits() <= 0) {
-                throw new DailyLimitExceededException("REWINDS");
+        boolean limitExhausted = false;
+        if (cost.ruleId() != null && cost.limitValue() != null) {
+            actionLimitRepo.ensureExists(actorId, cost.ruleId(), cost.periodStart(), cost.periodEnd());
+            boolean incremented = actionLimitRepo
+                    .tryIncrementUnderLimit(actorId, cost.ruleId(), cost.periodStart(), cost.limitValue())
+                    .isPresent();
+            if (!incremented) {
+                if (!cost.requiresCredits()) {
+                    throw new ActionLimitExceededException("REWIND", cost.periodType());
+                }
+                limitExhausted = true;
             }
-            usedCredit = true;
+        } else if (cost.isBlocked()) {
+            throw new ActionLimitExceededException("REWIND", cost.periodType());
         }
 
         DiscoveryActionRepository.ActionRow action = actionRepo.findLastRewindable(actorId)
@@ -85,15 +90,15 @@ public class RewindService {
         }
 
         actionRepo.reverseAction(action.id());
-        dailyLimitRepo.incrementRewinds(actorId);
 
-        if (usedCredit) {
-            ledgerRepo.consumeCredit(actorId, "REWIND_CREDIT", action.id(), UUID.randomUUID());
+        if (cost.requiresCredits()) {
+            String idemKey = "rewind-" + action.id();
+            creditService.consumeCredits(actorId, cost.creditCost(), "REWIND", idemKey);
         }
 
-        int rewindsRemaining = ent.dailyRewindsLimit() == null
+        int rewindsRemaining = cost.limitValue() == null
                 ? Integer.MAX_VALUE
-                : Math.max(0, ent.dailyRewindsLimit() - limits.rewindsUsed() - 1);
+                : Math.max(0, cost.limitValue() - cost.currentUsedCount() - 1);
 
         DiscoveryQueryService.ActorContext ctx = queryService.loadActorContext(actorId);
         DiscoveryProfileDto restoredProfile = ctx != null
