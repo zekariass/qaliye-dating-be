@@ -26,13 +26,14 @@ class OfferServiceTest {
     @Mock BillingRepository billingRepo;
     @Mock BillingMarketResolver marketResolver;
     @Mock PromotionEligibilityService promotionEligibilityService;
+    @Mock CountrySettingsService countrySettingsService;
     OfferService service;
 
     UUID userId = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
-        service = new OfferService(billingRepo, marketResolver, promotionEligibilityService);
+        service = new OfferService(billingRepo, marketResolver, promotionEligibilityService, countrySettingsService);
         lenient().when(billingRepo.getUnlimitedEntitlementTypes(any())).thenReturn(java.util.Set.of());
         lenient().when(promotionEligibilityService.findBestPurchasePromotion(any(), any(), anyInt(), any(), any()))
                 .thenReturn(Optional.empty());
@@ -129,7 +130,7 @@ class OfferServiceTest {
                 "ETB", 49900, false,
                 null, null, null,
                 productCode, "MONTH", 1,
-                null, null, null
+                0L, null, null, null
         );
     }
 

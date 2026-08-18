@@ -49,6 +49,7 @@ class OrderServiceTest {
     @Mock BillingProperties.PaymentInstructions paymentInstructions;
     @Mock BillingProperties.Verifier verifier;
     @Mock ChapaClient chapaClient;
+    @Mock CountrySettingsService countrySettingsService;
 
     OrderService service;
 
@@ -63,7 +64,7 @@ class OrderServiceTest {
     void setUp() {
         service = new OrderService(billingRepo, billingProps, marketResolver,
                 gatewayRegistry, verifyEtClient, fulfillmentService, new ObjectMapper(),
-                promotionRepo, promotionEligibilityService, chapaClient);
+                promotionRepo, promotionEligibilityService, chapaClient, countrySettingsService);
         lenient().when(billingProps.getPaymentOrderExpiryHours()).thenReturn(2);
         lenient().when(billingProps.getPaymentInstructions()).thenReturn(paymentInstructions);
         lenient().when(billingProps.getVerifier()).thenReturn(verifier);
@@ -769,7 +770,7 @@ class OrderServiceTest {
                 currency, price, false,
                 null,
                 "PREMIUM_MONTHLY", "MONTH", 1, UUID.randomUUID(),
-                null, null, null, null
+                0L, null, null, null, null
         );
     }
 
@@ -782,7 +783,7 @@ class OrderServiceTest {
                 currency, price, false,
                 null,
                 "PREMIUM_MONTHLY", "MONTH", 1, UUID.randomUUID(),
-                null, null, null, null
+                0L, null, null, null, null
         );
     }
 

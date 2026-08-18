@@ -24,6 +24,7 @@ class FulfillmentServiceTest {
 
     @Mock BillingRepository billingRepo;
     @Mock CreditLotRepository creditLotRepo;
+    @Mock CreditService creditService;
     @Mock PromotionRepository promotionRepo;
 
     FulfillmentService fulfillmentService;
@@ -38,7 +39,7 @@ class FulfillmentServiceTest {
 
     @BeforeEach
     void setUp() {
-        fulfillmentService = new FulfillmentService(billingRepo, creditLotRepo, promotionRepo);
+        fulfillmentService = new FulfillmentService(billingRepo, creditLotRepo, creditService, promotionRepo);
         lenient().when(creditLotRepo.getPlanBoostLimit(any())).thenReturn(1);
         lenient().when(creditLotRepo.insertLedgerEntry(any(), any(), anyInt(), any(), any(), any(), any(),
                 any(), any(), any())).thenReturn(ledgerEntryId);
@@ -64,7 +65,7 @@ class FulfillmentServiceTest {
                 "ETB", 14900, true,
                 null,
                 "PREMIUM_MONTHLY", "MONTH", 1, planId,
-                null, null, null, null
+                0L, null, null, null, null
         );
     }
 

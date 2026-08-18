@@ -26,7 +26,9 @@ class EntitlementServiceTest {
 
     @Mock BillingRepository billingRepo;
     @Mock CreditLotRepository creditLotRepo;
+    @Mock CreditService creditService;
     @Mock NamedParameterJdbcTemplate jdbc;
+    @Mock CountrySettingsService countrySettingsService;
 
     EntitlementService service;
     ObjectMapper objectMapper = new ObjectMapper();
@@ -37,7 +39,7 @@ class EntitlementServiceTest {
     @BeforeEach
     void setUp() {
         billingProps.setBoostDurationMinutes(60);
-        service = new EntitlementService(billingRepo, creditLotRepo, jdbc, objectMapper, billingProps);
+        service = new EntitlementService(billingRepo, creditLotRepo, creditService, jdbc, objectMapper, billingProps, countrySettingsService);
     }
 
     @Test

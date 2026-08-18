@@ -1,6 +1,9 @@
 package com.qaliye.backend.profile;
 
 import com.qaliye.backend.activity.ActivityStatusService;
+import com.qaliye.backend.billing.repository.ActionLimitRepository;
+import com.qaliye.backend.billing.service.ActionCostService;
+import com.qaliye.backend.billing.service.CreditService;
 import com.qaliye.backend.catalog.CatalogService;
 import com.qaliye.backend.profile.dto.ProfileUpdateRequest;
 import org.junit.jupiter.api.BeforeEach;
@@ -102,12 +105,15 @@ class ProfileServiceResidencyInferenceTest {
         @Mock ProfilePhotoService profilePhotoService;
         @Mock ActivityStatusService activityStatusService;
         @Mock CatalogService catalogService;
+        @Mock ActionCostService actionCostService;
+        @Mock CreditService creditService;
+        @Mock ActionLimitRepository actionLimitRepo;
 
         ProfileService service;
 
         @BeforeEach
         void setUp() {
-            service = new ProfileService(jdbc, profilePhotoService, activityStatusService, catalogService);
+            service = new ProfileService(jdbc, profilePhotoService, activityStatusService, catalogService, actionCostService, creditService, actionLimitRepo);
         }
 
         @Test
@@ -215,12 +221,15 @@ class ProfileServiceResidencyInferenceTest {
         @Mock ProfilePhotoService profilePhotoService;
         @Mock ActivityStatusService activityStatusService;
         @Mock CatalogService catalogService;
+        @Mock ActionCostService actionCostService;
+        @Mock CreditService creditService;
+        @Mock ActionLimitRepository actionLimitRepo;
 
         ProfileService service;
 
         @BeforeEach
         void setUp() {
-            service = new ProfileService(jdbc, profilePhotoService, activityStatusService, catalogService);
+            service = new ProfileService(jdbc, profilePhotoService, activityStatusService, catalogService, actionCostService, creditService, actionLimitRepo);
         }
 
         @Test

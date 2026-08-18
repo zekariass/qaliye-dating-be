@@ -22,6 +22,7 @@ class FulfillmentServiceRevenueCatTest {
 
     @Mock BillingRepository billingRepo;
     @Mock CreditLotRepository creditLotRepo;
+    @Mock CreditService creditService;
     @Mock PromotionRepository promotionRepo;
 
     FulfillmentService fulfillmentService;
@@ -37,7 +38,7 @@ class FulfillmentServiceRevenueCatTest {
 
     @BeforeEach
     void setUp() {
-        fulfillmentService = new FulfillmentService(billingRepo, creditLotRepo, promotionRepo);
+        fulfillmentService = new FulfillmentService(billingRepo, creditLotRepo, creditService, promotionRepo);
         lenient().when(creditLotRepo.getPlanBoostLimit(any())).thenReturn(1);
         lenient().doNothing().when(billingRepo).lockUserRowForUpdate(any());
     }

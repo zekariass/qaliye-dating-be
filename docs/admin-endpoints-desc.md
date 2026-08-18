@@ -23,6 +23,8 @@
 10. [Billing — Promotional Campaigns](#10-billing--promotional-campaigns)
 11. [Transactions — Manual Review](#11-transactions--manual-review)
 12. [Catalog — Languages & Ethnicities](#12-catalog--languages--ethnicities)
+13. [Payment Configuration — CRUD Endpoints](#13-payment-configuration--crud-endpoints)
+14. [Identity Verification Reviews](#14-identity-verification-reviews)
 
 ---
 
@@ -982,6 +984,50 @@ Returns the updated `NotificationCampaign` object with `status: "CANCELLED"`.
 
 Base path: `/api/v1/admin/billing`
 
+### 8.0 List Subscription Products
+
+Retrieves a list of all active subscription products. Admin-only.
+
+**Request**
+
+```
+GET /api/v1/admin/billing/subscription-products
+```
+
+No query parameters.
+
+**Response — `200 OK`**
+
+```json
+[
+  {
+    "id": "b0000000-0000-0000-0000-000000000001",
+    "productCode": "PREMIUM_MONTHLY",
+    "planCode": "PREMIUM",
+    "planName": "Premium",
+    "billingIntervalUnit": "MONTH",
+    "billingIntervalCount": 1,
+    "autoRenewSupported": true,
+    "isActive": true
+  }
+]
+```
+
+**SubscriptionProductDto Fields**
+
+| Field                  | Type    | Description                                      |
+|------------------------|---------|--------------------------------------------------|
+| `id`                   | UUID    | Subscription product ID                          |
+| `productCode`          | string  | Unique product code                              |
+| `planCode`             | string  | Linked plan code                                 |
+| `planName`             | string  | Linked plan name                                 |
+| `billingIntervalUnit`  | string  | `DAY`, `WEEK`, `MONTH`, or `YEAR`                |
+| `billingIntervalCount` | int     | Number of interval units                         |
+| `autoRenewSupported`   | boolean | Whether auto-renew is supported                  |
+| `isActive`             | boolean | Whether the product is active                    |
+
+---
+
 ### 8.1 List Payment Orders
 
 Retrieves a paginated list of payment orders needing admin review. Admin-only.
@@ -996,7 +1042,7 @@ GET /api/v1/admin/billing/orders
 
 | Parameter    | Type   | Required | Default                          | Description                                      |
 |--------------|--------|----------|----------------------------------|--------------------------------------------------|
-| `status`     | string | No       | `MANUAL_REVIEW,RECEIPT_SUBMITTED`| Comma-separated order statuses to filter by      |
+| `status`     | string | No       | `MANUAL_REVIEW,RECEIPT_SUBMITTED,REVIEW_REQUIRED`| Comma-separated order statuses to filter by |
 | `methodCode` | string | No       | —                                | Filter by payment method code                    |
 | `countryCode`| string | No       | —                                | Filter by user's country code (ISO 3166-1 alpha-2)|
 | `page`       | int    | No       | `1`                              | Page number (1-based)                            |
@@ -1010,6 +1056,7 @@ GET /api/v1/admin/billing/orders
 | `VERIFICATION_PENDING` | Manual transfer verification submitted                |
 | `MANUAL_REVIEW`        | Flagged for admin review (bank/amount mismatch, etc.) |
 | `RECEIPT_SUBMITTED`    | Receipt uploaded, awaiting admin review               |
+| `REVIEW_REQUIRED`      | Flagged by verify.et webhook for admin review         |
 | `VERIFIED`             | Admin approved the order                              |
 | `REJECTED`             | Admin rejected the order                              |
 | `CANCELLED`            | Order cancelled (e.g. after refund)                   |
@@ -1108,7 +1155,7 @@ GET /api/v1/admin/billing/orders/{orderId}
 
 ### 8.3 Approve Order
 
-Approves a payment order that is in `MANUAL_REVIEW`, `RECEIPT_SUBMITTED`, or `VERIFICATION_PENDING` status. Upon approval, the order is fulfilled (subscription activated, credits granted, etc.). Admin-only.
+Approves a payment order that is in `MANUAL_REVIEW`, `RECEIPT_SUBMITTED`, `REVIEW_REQUIRED`, or `VERIFICATION_PENDING` status. Upon approval, the order is fulfilled (subscription activated, credits granted, etc.). Admin-only.
 
 **Request**
 
@@ -2151,6 +2198,328 @@ No response body.
 
 ---
 
+### 5.6 Get Photo Queue (Status-Filtered)
+
+Retrieves a list of photos filtered by moderation status. Available to `MODERATOR` or `ADMIN`.
+
+**Request**
+
+```
+GET /api/v1/admin/moderation/photos
+```
+
+**Query Parameters**
+
+| Parameter | Type   | Required | Default    | Description                                         |
+|-----------|--------|----------|------------|-----------------------------------------------------|
+| `status`  | string | No       | `PENDING`  | Filter by moderation status: `PENDING`, `MANUAL_REVIEW`, `APPROVED`, `REJECTED` |
+
+**Response — `200 OK`**
+
+```json
+{
+  "items": [
+    {
+      "id": "880e8400-e29b-41d4-a716-446655440003",
+      "userId": "550e8400-e29b-41d4-a716-446655440000",
+      "imageUrl": "https://storage.example.com/signed-url...",
+      "moderationStatus": "PENDING",
+      "createdAt": "2025-07-22T12:00:00Z",
+      "displayName": "Selam"
+    }
+  ]
+}
+```
+
+**Response Fields (each item in `items` array)**
+
+| Field              | Type   | Description                                         |
+|--------------------|--------|-----------------------------------------------------|
+| `id`               | UUID   | Photo ID                                            |
+| `userId`           | UUID   | Owner user ID                                       |
+| `imageUrl`         | string | Signed URL to view the photo                        |
+| `moderationStatus` | string | Moderation status                                   |
+| `createdAt`        | string | Photo upload timestamp                              |
+| `displayName`      | string | Display name of the photo owner                     |
+
+---
+
+### 5.7 Review Photo
+
+Approves or rejects a photo. Sets `moderation_status` to `APPROVED` or `REJECTED`. Available to `MODERATOR` or `ADMIN`.
+
+**Request**
+
+```
+PATCH /api/v1/admin/moderation/photos/{photoId}
+```
+
+**Path Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `photoId` | UUID | Yes      | Photo ID    |
+
+**Request Body**
+
+```json
+{
+  "status": "APPROVED"
+}
+```
+
+| Field    | Type   | Required | Description                              |
+|----------|--------|----------|------------------------------------------|
+| `status` | string | Yes      | `APPROVED` or `REJECTED`                 |
+
+**Response — `200 OK`**
+
+No response body.
+
+---
+
+### 5.8 Get Report Queue
+
+Retrieves a list of user reports filtered by status. Available to `MODERATOR` or `ADMIN`.
+
+**Request**
+
+```
+GET /api/v1/admin/moderation/reports
+```
+
+**Query Parameters**
+
+| Parameter | Type   | Required | Default    | Description                                         |
+|-----------|--------|----------|------------|-----------------------------------------------------|
+| `status`  | string | No       | `PENDING`  | Filter by report status: `PENDING`, `RESOLVED_NO_ACTION`, `RESOLVED_BANNED` |
+
+**Response — `200 OK`**
+
+```json
+{
+  "items": [
+    {
+      "id": "990e8400-e29b-41d4-a716-446655440015",
+      "reporterUserId": "550e8400-e29b-41d4-a716-446655440000",
+      "reportedUserId": "aa0e8400-e29b-41d4-a716-446655440016",
+      "reportType": "HARASSMENT",
+      "description": "Inappropriate messages",
+      "relatedMessageId": null,
+      "status": "PENDING",
+      "createdAt": "2025-07-22T14:00:00Z",
+      "reportedDisplayName": "John"
+    }
+  ]
+}
+```
+
+**ReportItemDto Fields**
+
+| Field                | Type   | Description                                         |
+|----------------------|--------|-----------------------------------------------------|
+| `id`                 | UUID   | Report ID                                           |
+| `reporterUserId`     | UUID   | User who filed the report                           |
+| `reportedUserId`     | UUID   | User who was reported                               |
+| `reportType`         | string | Type of report (e.g. `HARASSMENT`, `FAKE_PROFILE`) |
+| `description`        | string | Report description (nullable)                       |
+| `relatedMessageId`   | UUID   | Related message ID (nullable)                       |
+| `status`             | string | Report status                                       |
+| `createdAt`          | string | Report creation timestamp                           |
+| `reportedDisplayName`| string | Display name of reported user (nullable)            |
+
+---
+
+### 5.9 Resolve Report
+
+Resolves a user report. If resolution is `RESOLVED_BANNED`, the reported user is banned. Available to `MODERATOR` or `ADMIN`.
+
+**Request**
+
+```
+PATCH /api/v1/admin/moderation/reports/{reportId}
+```
+
+**Path Parameters**
+
+| Parameter  | Type | Required | Description  |
+|------------|------|----------|--------------|
+| `reportId` | UUID | Yes      | Report ID    |
+
+**Request Body**
+
+```json
+{
+  "resolution": "RESOLVED_BANNED",
+  "banReason": "Policy violation"
+}
+```
+
+| Field       | Type   | Required | Description                                              |
+|-------------|--------|----------|----------------------------------------------------------|
+| `resolution`| string | Yes      | `RESOLVED_NO_ACTION` or `RESOLVED_BANNED`                |
+| `banReason` | string | No       | Reason for ban (required when resolution is `RESOLVED_BANNED`) |
+
+**Response — `200 OK`**
+
+No response body.
+
+---
+
+## 14. Identity Verification Reviews
+
+Base path: `/api/v1/admin/identity-reviews`
+
+Admin endpoints for reviewing identity verification requests submitted by users. All endpoints require the ADMIN role.
+
+### 14.1 List Pending Identity Reviews
+
+Retrieves a paginated list of pending identity verification reviews. Admin-only.
+
+**Request**
+
+```
+GET /api/v1/admin/identity-reviews
+```
+
+**Query Parameters**
+
+| Parameter  | Type | Required | Default | Description              |
+|------------|------|----------|---------|--------------------------|
+| `page`     | int  | No       | `1`     | Page number (1-based)    |
+| `pageSize` | int  | No       | `20`    | Items per page (max 100) |
+
+**Response — `200 OK`**
+
+```json
+{
+  "items": [
+    {
+      "id": "bb0e8400-e29b-41d4-a716-446655440017",
+      "userId": "550e8400-e29b-41d4-a716-446655440000",
+      "displayName": "Selam",
+      "gender": "FEMALE",
+      "selfiePath": "identity/user123/selfie.jpg",
+      "profilePhotoPath": "profile/user123/photo.jpg",
+      "createdAt": "2025-07-22T16:00:00Z"
+    }
+  ],
+  "total": 5,
+  "page": 1,
+  "page_size": 20
+}
+```
+
+**ReviewQueueItem Fields**
+
+| Field              | Type   | Description                                         |
+|--------------------|--------|-----------------------------------------------------|
+| `id`               | UUID   | Review ID                                           |
+| `userId`           | UUID   | User who requested verification                     |
+| `displayName`      | string | Display name of the user (nullable)                 |
+| `gender`           | string | Gender of the user (nullable)                       |
+| `selfiePath`       | string | Storage path to the selfie image                    |
+| `profilePhotoPath` | string | Storage path to the user's profile photo (nullable) |
+| `createdAt`        | string | Review submission timestamp                         |
+
+---
+
+### 14.2 Approve Identity Review
+
+Approves a pending identity verification review. Sets the user's `verification_status` to `VERIFIED` and `profiles.is_verified` to `TRUE`. Admin-only.
+
+**Request**
+
+```
+POST /api/v1/admin/identity-reviews/{reviewId}/approve
+```
+
+**Path Parameters**
+
+| Parameter  | Type | Required | Description  |
+|------------|------|----------|--------------|
+| `reviewId` | UUID | Yes      | Review ID    |
+
+**Request Body (optional)**
+
+```json
+{
+  "note": "Selfie matches profile photo."
+}
+```
+
+| Field  | Type   | Required | Description                         |
+|--------|--------|----------|-------------------------------------|
+| `note` | string | No       | Optional reviewer note for audit log|
+
+**Response — `200 OK`**
+
+```json
+{
+  "review_id": "bb0e8400-e29b-41d4-a716-446655440017",
+  "status": "APPROVED",
+  "user_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Errors**
+
+| Status | Error Code              | Description                                  |
+|--------|-------------------------|----------------------------------------------|
+| 404    | `review_not_found`      | Review does not exist                        |
+| 409    | `review_already_processed` | Review has already been approved/rejected |
+| 403    | `admin_access_required` | Caller is not an admin                       |
+
+---
+
+### 14.3 Reject Identity Review
+
+Rejects a pending identity verification review. Sets the user's `verification_status` to `FAILED`. Admin-only.
+
+**Request**
+
+```
+POST /api/v1/admin/identity-reviews/{reviewId}/reject
+```
+
+**Path Parameters**
+
+| Parameter  | Type | Required | Description  |
+|------------|------|----------|--------------|
+| `reviewId` | UUID | Yes      | Review ID    |
+
+**Request Body (optional)**
+
+```json
+{
+  "note": "Selfie does not match profile photo."
+}
+```
+
+| Field  | Type   | Required | Description                         |
+|--------|--------|----------|-------------------------------------|
+| `note` | string | No       | Optional rejection reason for audit log |
+
+**Response — `200 OK`**
+
+```json
+{
+  "review_id": "bb0e8400-e29b-41d4-a716-446655440017",
+  "status": "REJECTED",
+  "user_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Errors**
+
+| Status | Error Code              | Description                                  |
+|--------|-------------------------|----------------------------------------------|
+| 404    | `review_not_found`      | Review does not exist                        |
+| 409    | `review_already_processed` | Review has already been approved/rejected |
+| 403    | `admin_access_required` | Caller is not an admin                       |
+
+---
+
 ## Common Error Responses
 
 All admin endpoints may return the following standard error responses:
@@ -2173,5 +2542,207 @@ Error responses use the Spring `ResponseStatusException` format:
   "error": "Forbidden",
   "message": "admin_access_required",
   "path": "/api/v1/admin/users/550e8400-e29b-41d4-a716-446655440000/status"
+}
+```
+
+---
+
+## 13. Payment Configuration — CRUD Endpoints
+
+All endpoints are under `/api/v1/admin/payment-config` and require the ADMIN role.
+
+### 13.1 Subscription Plans
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET`    | `/subscription-plans`             | List all subscription plans |
+| `GET`    | `/subscription-plans/{id}`        | Get a single subscription plan |
+| `POST`   | `/subscription-plans`             | Create a new subscription plan |
+| `PUT`    | `/subscription-plans/{id}`        | Update a subscription plan (partial update, null fields are ignored) |
+| `DELETE` | `/subscription-plans/{id}`        | Deactivate a subscription plan (soft delete) |
+
+**POST `/subscription-plans`** request body:
+```json
+{
+  "name": "Premium",
+  "planCode": "PREMIUM",
+  "countryCode": "GLOBAL",
+  "planKind": "PAID",
+  "priceMinorUnits": 0,
+  "currency": "USD",
+  "billingInterval": "MONTHLY",
+  "features": "{\"seeWhoLikedYou\": true}",
+  "isActive": true
+}
+```
+
+**PUT `/subscription-plans/{id}`** request body (all fields optional):
+```json
+{
+  "name": "Premium Plus",
+  "features": "{\"seeWhoLikedYou\": true, \"advancedFilters\": true}",
+  "isActive": true
+}
+```
+
+### 13.2 Subscription Products
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET`    | `/subscription-products`             | List all subscription products |
+| `GET`    | `/subscription-products/{id}`        | Get a single subscription product |
+| `POST`   | `/subscription-products`             | Create a new subscription product |
+| `PUT`    | `/subscription-products/{id}`        | Update a subscription product (partial update) |
+| `DELETE` | `/subscription-products/{id}`        | Deactivate a subscription product (soft delete) |
+
+**POST `/subscription-products`** request body:
+```json
+{
+  "planId": "a0000000-0000-0000-0000-000000000002",
+  "productCode": "PREMIUM_MONTHLY",
+  "billingIntervalUnit": "MONTH",
+  "billingIntervalCount": 1,
+  "autoRenewSupported": true,
+  "includedCredits": 0,
+  "isActive": true
+}
+```
+
+### 13.3 Consumable Products
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET`    | `/consumable-products`             | List all consumable products |
+| `GET`    | `/consumable-products/{id}`        | Get a single consumable product |
+| `POST`   | `/consumable-products`             | Create a new consumable product |
+| `PUT`    | `/consumable-products/{id}`        | Update a consumable product (partial update) |
+| `DELETE` | `/consumable-products/{id}`        | Deactivate a consumable product (soft delete) |
+
+**POST `/consumable-products`** request body:
+```json
+{
+  "productCode": "CREDITS_1000",
+  "name": "1,000 Credits",
+  "entitlementType": "CREDIT_PURCHASE",
+  "quantityGranted": 1000,
+  "expiresAfterDays": null,
+  "isActive": true
+}
+```
+
+### 13.4 Payment Offers
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET`    | `/payment-offers`             | List all payment offers |
+| `GET`    | `/payment-offers/{id}`        | Get a single payment offer |
+| `POST`   | `/payment-offers`             | Create a new payment offer |
+| `PUT`    | `/payment-offers/{id}`        | Update a payment offer (partial update) |
+| `DELETE` | `/payment-offers/{id}`        | Deactivate a payment offer (soft delete) |
+
+**POST `/payment-offers`** request body:
+```json
+{
+  "subscriptionProductId": "b0000000-0000-0000-0000-000000000001",
+  "consumableProductId": null,
+  "countryCode": "ET",
+  "platform": "MOBILE",
+  "currency": "ETB",
+  "priceMinorUnits": 14900,
+  "externalProductId": null,
+  "revenuecatOfferingId": null,
+  "revenuecatPackageId": null,
+  "autoRenew": false,
+  "isActive": true
+}
+```
+
+### 13.5 Payment Methods
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET`    | `/payment-methods`             | List all payment methods |
+| `GET`    | `/payment-methods/{id}`        | Get a single payment method |
+| `POST`   | `/payment-methods`             | Create a new payment method |
+| `PUT`    | `/payment-methods/{id}`        | Update a payment method (partial update) |
+| `DELETE` | `/payment-methods/{id}`        | Deactivate a payment method (soft delete) |
+
+**POST `/payment-methods`** request body:
+```json
+{
+  "countryCode": "ET",
+  "platform": "MOBILE",
+  "methodCode": "telebirr",
+  "displayName": "Telebirr",
+  "paymentChannel": "MANUAL_TRANSFER",
+  "paymentMethod": "TELEBIRR",
+  "paymentInstructions": "Send {{EXPECTED_AMOUNT}} {{CURRENCY}} to ...",
+  "isActive": true,
+  "displayOrder": 1,
+  "metadata": "{}",
+  "verificationParams": null,
+  "logoUrl": null
+}
+```
+
+### 13.6 Subscription Plan Limit & Cost
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET`    | `/plan-limit-costs`             | List all plan limit and cost rules |
+| `GET`    | `/plan-limit-costs/{id}`        | Get a single plan limit and cost rule |
+| `POST`   | `/plan-limit-costs`             | Create a new plan limit and cost rule |
+| `PUT`    | `/plan-limit-costs/{id}`        | Update a plan limit and cost rule (partial update) |
+| `DELETE` | `/plan-limit-costs/{id}`        | Delete a plan limit and cost rule (hard delete) |
+
+**POST `/plan-limit-costs`** request body:
+```json
+{
+  "subscriptionPlanId": "a0000000-0000-0000-0000-000000000001",
+  "featureActionId": "uuid-of-feature-action",
+  "memberCreditCost": 0,
+  "actualCreditCost": 0,
+  "limitValue": 50,
+  "periodType": "DAY",
+  "applyCreditAfterLimit": false
+}
+```
+
+### 13.7 Feature Actions
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET`    | `/feature-actions`             | List all feature actions |
+| `GET`    | `/feature-actions/{id}`        | Get a single feature action |
+| `POST`   | `/feature-actions`             | Create a new feature action |
+| `PUT`    | `/feature-actions/{id}`        | Update a feature action (partial update) |
+| `DELETE` | `/feature-actions/{id}`        | Delete a feature action (hard delete) |
+
+**POST `/feature-actions`** request body:
+```json
+{
+  "code": "LIKE",
+  "name": "Like",
+  "type": "ACTION"
+}
+```
+
+### 13.8 Country Settings
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET`    | `/country-settings`             | List all country settings |
+| `GET`    | `/country-settings/{id}`        | Get a single country setting |
+| `POST`   | `/country-settings`             | Create a new country setting |
+| `PUT`    | `/country-settings/{id}`        | Update a country setting (partial update) |
+| `DELETE` | `/country-settings/{id}`        | Delete a country setting (hard delete) |
+
+**POST `/country-settings`** request body:
+```json
+{
+  "countryCode": "ET",
+  "subscriptionEnabled": false,
+  "creditsEnabled": true,
+  "identityVerificationRequired": false
 }
 ```

@@ -1,6 +1,7 @@
 package com.qaliye.backend.billing.service;
 
 import com.qaliye.backend.billing.BillingProperties;
+import com.qaliye.backend.billing.repository.ActionLimitRepository;
 import com.qaliye.backend.billing.repository.CreditLotRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,6 +28,9 @@ class BoostServiceTest {
 
     @Mock CreditLotRepository creditLotRepo;
     @Mock NamedParameterJdbcTemplate jdbc;
+    @Mock ActionCostService actionCostService;
+    @Mock CreditService creditService;
+    @Mock ActionLimitRepository actionLimitRepo;
     BillingProperties billingProps;
     BoostService service;
 
@@ -36,7 +40,7 @@ class BoostServiceTest {
     void setUp() {
         billingProps = new BillingProperties();
         billingProps.setBoostDurationMinutes(30);
-        service = new BoostService(creditLotRepo, billingProps, jdbc);
+        service = new BoostService(creditLotRepo, billingProps, jdbc, actionCostService, creditService, actionLimitRepo);
         lenient().when(jdbc.queryForObject(anyString(), anyMap(), eq(String.class))).thenReturn("PUBLIC");
     }
 
