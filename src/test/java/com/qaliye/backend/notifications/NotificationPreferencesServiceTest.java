@@ -56,7 +56,7 @@ class NotificationPreferencesServiceTest {
         when(prefsRepo.findByUserId(userId)).thenReturn(Optional.of(prefs));
         when(prefsRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        UpdateRequest req = new UpdateRequest(null, null, null, null, null, null,
+        UpdateRequest req = new UpdateRequest(null, null, null, null, null, null, null,
                 true, "v1.0");
         UserNotificationPreferences updated = service.updatePreferences(userId, req);
 
@@ -70,7 +70,7 @@ class NotificationPreferencesServiceTest {
         UserNotificationPreferences prefs = defaultPrefs();
         when(prefsRepo.findByUserId(userId)).thenReturn(Optional.of(prefs));
 
-        UpdateRequest req = new UpdateRequest(null, null, null, null, null, null,
+        UpdateRequest req = new UpdateRequest(null, null, null, null, null, null, null,
                 true, null);
 
         assertThatThrownBy(() -> service.updatePreferences(userId, req))
@@ -83,7 +83,7 @@ class NotificationPreferencesServiceTest {
         UserNotificationPreferences prefs = defaultPrefs();
         when(prefsRepo.findByUserId(userId)).thenReturn(Optional.of(prefs));
 
-        UpdateRequest req = new UpdateRequest(null, null, null, null, null, null,
+        UpdateRequest req = new UpdateRequest(null, null, null, null, null, null, null,
                 true, "   ");
 
         assertThatThrownBy(() -> service.updatePreferences(userId, req))
@@ -99,7 +99,7 @@ class NotificationPreferencesServiceTest {
         when(prefsRepo.findByUserId(userId)).thenReturn(Optional.of(prefs));
         when(prefsRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        UpdateRequest req = new UpdateRequest(null, null, null, null, null, null,
+        UpdateRequest req = new UpdateRequest(null, null, null, null, null, null, null,
                 false, null);
         UserNotificationPreferences updated = service.updatePreferences(userId, req);
 
@@ -112,7 +112,7 @@ class NotificationPreferencesServiceTest {
         when(prefsRepo.findByUserId(userId)).thenReturn(Optional.of(prefs));
         when(prefsRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        UpdateRequest req = new UpdateRequest(false, null, null, null, null, null, null, null);
+        UpdateRequest req = new UpdateRequest(false, null, null, null, null, null, null, null, null);
         UserNotificationPreferences updated = service.updatePreferences(userId, req);
 
         assertThat(updated.isPushEnabled()).isFalse();
@@ -124,7 +124,7 @@ class NotificationPreferencesServiceTest {
         when(prefsRepo.findByUserId(userId)).thenReturn(Optional.of(prefs));
         when(prefsRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        UpdateRequest req = new UpdateRequest(null, null, null, null, null, null, null, null);
+        UpdateRequest req = new UpdateRequest(null, null, null, null, null, null, null, null, null);
         UserNotificationPreferences updated = service.updatePreferences(userId, req);
 
         assertThat(updated.isPushEnabled()).isTrue();
@@ -139,6 +139,7 @@ class NotificationPreferencesServiceTest {
         p.setMatchNotificationsEnabled(true);
         p.setLikeNotificationsEnabled(true);
         p.setSuperlikeNotificationsEnabled(true);
+        p.setSuperMessageEnabled(true);
         p.setMessagePreviewEnabled(false);
         p.setMarketingNotificationsEnabled(false);
         p.setCreatedAt(OffsetDateTime.now());

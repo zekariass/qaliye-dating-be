@@ -51,6 +51,7 @@ public class NotificationPayloadBuilder {
             case "MATCH_CREATED" -> buildMatchCreated(outbox, deviceToken);
             case "LIKE_RECEIVED" -> buildLikeReceived(outbox, deviceToken);
             case "SUPERLIKE_RECEIVED" -> buildSuperLikeReceived(outbox, deviceToken);
+            case "SUPER_MESSAGE_RECEIVED" -> buildSuperMessageReceived(outbox, deviceToken);
             case "ACCOUNT_ALERT" -> buildAccountAlert(outbox, deviceToken);
             case "MARKETING"     -> buildMarketing(outbox, deviceToken);
             default              -> throw new IllegalArgumentException(
@@ -113,6 +114,15 @@ public class NotificationPayloadBuilder {
 
         return new ExpoMessage(deviceToken, "Qaliye", "Someone superliked your profile! ⭐", data,
                 null, null, null, "high", "likes", "notification.mp3");
+    }
+
+    private ExpoMessage buildSuperMessageReceived(OutboxRow outbox, String deviceToken) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("notification_type", "SUPER_MESSAGE_RECEIVED");
+        data.put("super_message_id", extractSuperMessageId(outbox.payloadJson()));
+
+        return new ExpoMessage(deviceToken, "Qaliye", "You received a Super Message! ✨", data,
+                null, null, null, "high", "messages", "notification.mp3");
     }
 
     private ExpoMessage buildAccountAlert(OutboxRow outbox, String deviceToken) {
@@ -182,5 +192,14 @@ public class NotificationPayloadBuilder {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private String extractSuperMessageId(String payloadJson) {
+        if (payloadJson == null || payloadJson.isBlank()) return null;
+        try {
+            var node = new com.fasterxml.jackson.databind.ObjectMapper().readTree(payloadJson);
+            if (node.has("super_message_id")) return node.get("super_message_id").asText();
+        } catch (Exception ignored) {}
+        return null;
     }
 }

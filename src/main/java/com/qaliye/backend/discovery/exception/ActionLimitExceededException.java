@@ -30,6 +30,8 @@ public class ActionLimitExceededException extends DiscoveryException {
             case "RETURN_PASSED_PROFILE" -> "You have reached your " + period + " limit for returning passed profiles.";
             case "SEE_WHO_LIKED_YOU" -> "You have reached your " + period + " limit for seeing who liked you.";
             case "SUPER_MESSAGE" -> "You have reached your " + period + " super message limit.";
+            case "CHANGE_ADDRESS" -> "You have reached your " + period + " limit for changing your address.";
+            case "MESSAGE" -> "You have reached your " + period + " message limit.";
             default -> "You have reached your " + period + " limit for this action.";
         };
     }

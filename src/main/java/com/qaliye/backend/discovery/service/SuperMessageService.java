@@ -227,6 +227,8 @@ public class SuperMessageService {
         log.info("Super message sent: sender={}, receiver={}, messageId={}, actionId={}, creditCost={}",
                 senderId, receiverId, messageId, action.id(), creditCost);
 
+        notificationDispatcher.dispatchSuperMessageNotification(senderId, receiverId, messageId);
+
         UserProfileBrief senderBrief = fetchProfileBrief(senderId);
         UserProfileBrief receiverBrief = fetchProfileBrief(receiverId);
 

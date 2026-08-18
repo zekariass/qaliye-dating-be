@@ -18,5 +18,6 @@ public record LikeItemDto(
         String city,
         String region,
         String countryName,
-        ActivityStatus activityStatus
+        ActivityStatus activityStatus,
+        Instant revealedAt
 ) {}

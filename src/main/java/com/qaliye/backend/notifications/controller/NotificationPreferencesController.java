@@ -27,6 +27,7 @@ public class NotificationPreferencesController {
             boolean matchNotificationsEnabled,
             boolean likeNotificationsEnabled,
             boolean superlikeNotificationsEnabled,
+            boolean superMessageEnabled,
             boolean messagePreviewEnabled,
             boolean marketingNotificationsEnabled,
             OffsetDateTime marketingNotificationsOptedInAt,
@@ -39,6 +40,7 @@ public class NotificationPreferencesController {
             Boolean matchNotificationsEnabled,
             Boolean likeNotificationsEnabled,
             Boolean superlikeNotificationsEnabled,
+            Boolean superMessageEnabled,
             Boolean messagePreviewEnabled,
             Boolean marketingNotificationsEnabled,
             String marketingNotificationsConsentVersion
@@ -66,6 +68,7 @@ public class NotificationPreferencesController {
                         body.matchNotificationsEnabled(),
                         body.likeNotificationsEnabled(),
                         body.superlikeNotificationsEnabled(),
+                        body.superMessageEnabled(),
                         body.messagePreviewEnabled(),
                         body.marketingNotificationsEnabled(),
                         body.marketingNotificationsConsentVersion()
@@ -80,6 +83,7 @@ public class NotificationPreferencesController {
                 p.isMatchNotificationsEnabled(),
                 p.isLikeNotificationsEnabled(),
                 p.isSuperlikeNotificationsEnabled(),
+                p.isSuperMessageEnabled(),
                 p.isMessagePreviewEnabled(),
                 p.isMarketingNotificationsEnabled(),
                 p.getMarketingNotificationsOptedInAt(),

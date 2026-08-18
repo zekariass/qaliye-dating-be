@@ -121,6 +121,29 @@ public class NotificationOutboxService {
         );
     }
 
+    public void createSuperMessageReceivedEvent(UUID superMessageId, UUID recipientUserId,
+                                                UUID actorUserId, OffsetDateTime occurredAt) {
+        String dedupeKey = "super-message:" + superMessageId + ":" + recipientUserId;
+
+        if (outboxRepo.existsByDedupeKey(dedupeKey)) {
+            return;
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("notification_type", "SUPER_MESSAGE_RECEIVED");
+        payload.put("notification_id", UUID.randomUUID().toString());
+        payload.put("super_message_id", superMessageId.toString());
+
+        outboxRepo.insert(
+                UUID.randomUUID(), "SUPER_MESSAGE_RECEIVED",
+                recipientUserId, actorUserId,
+                null, null,
+                null, null,
+                dedupeKey, null,
+                toJson(payload), null, occurredAt
+        );
+    }
+
     public void createAccountAlertEvent(UUID recipientUserId, String alertCode,
                                         UUID businessEventId, OffsetDateTime occurredAt) {
         String dedupeKey = "account-alert:" + alertCode + ":" + recipientUserId

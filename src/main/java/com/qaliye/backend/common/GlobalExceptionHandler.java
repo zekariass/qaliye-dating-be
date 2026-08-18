@@ -1,6 +1,7 @@
 package com.qaliye.backend.common;
 
 import com.qaliye.backend.billing.service.CreditService;
+import com.qaliye.backend.discovery.exception.ActionLimitExceededException;
 import org.postgresql.util.PSQLException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -44,6 +45,16 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(CreditService.InsufficientCreditsException.class)
     public ResponseEntity<Map<String, Object>> handleInsufficientCredits(CreditService.InsufficientCreditsException ex) {
         return error(402, "insufficient_credits", "You don't have enough credits for this action.");
+    }
+
+    @ExceptionHandler(ActionLimitExceededException.class)
+    public ResponseEntity<Map<String, Object>> handleActionLimit(ActionLimitExceededException ex) {
+        return ResponseEntity.status(ex.getHttpStatus())
+                .body(Map.of("error", Map.of(
+                        "code", ex.getErrorCode(),
+                        "message", ex.getMessage(),
+                        "details", Map.of("action_type", ex.getActionType(),
+                                          "period_type", ex.getPeriodType()))));
     }
 
     @ExceptionHandler(ResponseStatusException.class)

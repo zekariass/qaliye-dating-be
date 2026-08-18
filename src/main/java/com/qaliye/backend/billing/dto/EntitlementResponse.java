@@ -12,7 +12,8 @@ public record EntitlementResponse(
         Map<String, Boolean> features,
         Map<String, Integer> planLimits,
         int boostDurationMinutes,
-        CountrySettings countrySettings
+        CountrySettings countrySettings,
+        Map<String, ActionCostInfo> costs
 ) {
 
     public record CountrySettings(
@@ -49,5 +50,13 @@ public record EntitlementResponse(
             Instant startedAt,
             Instant expiresAt,
             long remainingSeconds
+    ) {}
+
+    public record ActionCostInfo(
+            long memberCreditCost,
+            long actualCreditCost,
+            Integer limitValue,
+            String periodType,
+            boolean applyCreditAfterLimit
     ) {}
 }

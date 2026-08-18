@@ -34,6 +34,9 @@ public class UserNotificationPreferences {
     @Column(name = "superlike_notifications_enabled", nullable = false)
     private boolean superlikeNotificationsEnabled = true;
 
+    @Column(name = "super_message_enabled", nullable = false)
+    private boolean superMessageEnabled = true;
+
     @Column(name = "message_preview_enabled", nullable = false)
     private boolean messagePreviewEnabled = false;
 

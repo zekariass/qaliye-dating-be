@@ -79,6 +79,18 @@ public class EntitlementService {
             ORDER BY CASE WHEN sp.country_code = :countryCode THEN 0 ELSE 1 END, fa.code
             """;
 
+    private static final String ACTION_COSTS_SQL = """
+            SELECT fa.code AS action_code,
+                   splac.member_credit_cost,
+                   splac.actual_credit_cost,
+                   splac.limit_value,
+                   splac.period_type,
+                   splac.apply_credit_after_limit
+            FROM subscription_plan_limit_and_cost splac
+            JOIN feature_actions fa ON fa.id = splac.feature_action_id
+            WHERE splac.subscription_plan_id = :planId
+            """;
+
     public EntitlementResponse getEntitlements(UUID userId) {
         Optional<BillingRepository.ActiveSubRow> activeSub = billingRepo.findActiveSubscription(userId);
 
@@ -183,8 +195,23 @@ public class EntitlementService {
                 countrySettings.identityVerificationRequired()
         );
 
+        Map<String, EntitlementResponse.ActionCostInfo> costsMap = new LinkedHashMap<>();
+        if (planId != null) {
+            jdbc.query(ACTION_COSTS_SQL, Map.of("planId", planId), rs -> {
+                String code = rs.getString("action_code");
+                Object limitVal = rs.getObject("limit_value");
+                costsMap.put(code, new EntitlementResponse.ActionCostInfo(
+                        rs.getLong("member_credit_cost"),
+                        rs.getLong("actual_credit_cost"),
+                        limitVal != null ? ((Number) limitVal).intValue() : null,
+                        rs.getString("period_type"),
+                        rs.getBoolean("apply_credit_after_limit")
+                ));
+            });
+        }
+
         return new EntitlementResponse(planCode, subInfo, quotaMap, credits, boostInfo, features, planLimits,
-                billingProps.getBoostDurationMinutes(), settingsDto);
+                billingProps.getBoostDurationMinutes(), settingsDto, costsMap);
     }
 
     private EntitlementResponse.QuotaInfo buildQuota(int used, Integer limit, Instant resetsAt) {

@@ -23,6 +23,7 @@ public class NotificationPreferencesService {
             Boolean matchNotificationsEnabled,
             Boolean likeNotificationsEnabled,
             Boolean superlikeNotificationsEnabled,
+            Boolean superMessageEnabled,
             Boolean messagePreviewEnabled,
             Boolean marketingNotificationsEnabled,
             String marketingNotificationsConsentVersion
@@ -59,6 +60,9 @@ public class NotificationPreferencesService {
         }
         if (req.superlikeNotificationsEnabled() != null) {
             prefs.setSuperlikeNotificationsEnabled(req.superlikeNotificationsEnabled());
+        }
+        if (req.superMessageEnabled() != null) {
+            prefs.setSuperMessageEnabled(req.superMessageEnabled());
         }
         if (req.messagePreviewEnabled() != null) {
             prefs.setMessagePreviewEnabled(req.messagePreviewEnabled());

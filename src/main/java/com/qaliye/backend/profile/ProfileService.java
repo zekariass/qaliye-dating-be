@@ -9,6 +9,7 @@ import com.qaliye.backend.catalog.CatalogService;
 import com.qaliye.backend.catalog.EthnicityOption;
 import com.qaliye.backend.catalog.LanguageOption;
 import com.qaliye.backend.discovery.dto.UpdateDiscoveryPreferencesRequest;
+import com.qaliye.backend.discovery.exception.ActionLimitExceededException;
 import com.qaliye.backend.profile.dto.CulturalDetailsRequest;
 import com.qaliye.backend.profile.dto.DiscoveryPreferencesDto;
 import com.qaliye.backend.profile.dto.OtherUserProfileDto;
@@ -1004,7 +1005,7 @@ public class ProfileService {
                                                HttpStatus blockedStatus, String blockedReason) {
         ActionCostService.ActionCostResult cost = actionCostService.evaluate(userId, actionCode);
         if (cost.isBlocked()) {
-            throw new ResponseStatusException(blockedStatus, blockedReason);
+            throw new ActionLimitExceededException(actionCode, cost.periodType());
         }
         if (cost.ruleId() != null && cost.limitValue() != null) {
             actionLimitRepo.ensureExists(userId, cost.ruleId(), cost.periodStart(), cost.periodEnd());
@@ -1013,7 +1014,7 @@ public class ProfileService {
                     .isPresent();
             if (!incremented) {
                 if (!cost.requiresCredits()) {
-                    throw new ResponseStatusException(blockedStatus, blockedReason);
+                    throw new ActionLimitExceededException(actionCode, cost.periodType());
                 }
                 creditService.consumeCredits(userId, cost.creditCost(), actionCode, idempotencyKey);
             }

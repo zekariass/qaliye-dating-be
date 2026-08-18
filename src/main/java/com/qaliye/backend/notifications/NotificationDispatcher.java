@@ -45,6 +45,14 @@ public class NotificationDispatcher {
         }
     }
 
+    public void dispatchSuperMessageNotification(UUID actorId, UUID targetId, UUID superMessageId) {
+        try {
+            outboxService.createSuperMessageReceivedEvent(superMessageId, targetId, actorId, OffsetDateTime.now());
+        } catch (Exception e) {
+            log.error("dispatchSuperMessageNotification failed for message {}: {}", superMessageId, e.getMessage());
+        }
+    }
+
     public void dispatchMessageNotification(UUID recipientId, UUID matchId,
                                             String senderDisplayName) {
         log.debug("dispatchMessageNotification: use MessageCommandService outbox integration instead; "

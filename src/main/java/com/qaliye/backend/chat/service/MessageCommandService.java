@@ -108,6 +108,9 @@ public class MessageCommandService {
             return handleExistingMessage(existing.get(), matchId, req.getMessageType(), trimmedBody);
         }
 
+        // Step 5: Evaluate and consume MESSAGE action cost (sender only, idempotent via clientMessageId)
+        consumeMessageActionCost(callerId, req.getClientMessageId());
+
         // Steps 7-8: Reserve and increment sequence
         long sequenceNumber = matchRepository.reserveAndIncrementSequence(matchId);
 
@@ -174,6 +177,9 @@ public class MessageCommandService {
         if (existing.isPresent()) {
             return handleExistingMessageWithAttachments(existing.get(), matchId, req.getMessageType(), trimmedBody);
         }
+
+        // Step 4b: Evaluate and consume MESSAGE action cost (sender only, idempotent via clientMessageId)
+        consumeMessageActionCost(callerId, req.getClientMessageId());
 
         // Step 5: Validate and classify files
         List<ValidatedAttachment> validated = validateAndClassifyFiles(safeFiles, durations);
@@ -354,6 +360,28 @@ public class MessageCommandService {
         }
 
         return result;
+    }
+
+    private void consumeMessageActionCost(UUID callerId, UUID clientMessageId) {
+        String idemKey = "msg-" + clientMessageId;
+        ActionCostService.ActionCostResult cost = actionCostService.evaluate(callerId, "MESSAGE");
+        if (cost.isBlocked()) {
+            throw new ActionLimitExceededException("MESSAGE", cost.periodType());
+        }
+        if (cost.ruleId() != null && cost.limitValue() != null) {
+            actionLimitRepo.ensureExists(callerId, cost.ruleId(), cost.periodStart(), cost.periodEnd());
+            boolean incremented = actionLimitRepo
+                    .tryIncrementUnderLimit(callerId, cost.ruleId(), cost.periodStart(), cost.limitValue())
+                    .isPresent();
+            if (!incremented) {
+                if (!cost.requiresCredits()) {
+                    throw new ActionLimitExceededException("MESSAGE", cost.periodType());
+                }
+                creditService.consumeCredits(callerId, cost.creditCost(), "MESSAGE", idemKey);
+            }
+        } else if (cost.requiresCredits()) {
+            creditService.consumeCredits(callerId, cost.creditCost(), "MESSAGE", idemKey);
+        }
     }
 
     private String generateStoragePath(UUID matchId, UUID messageId, String fileName) {
