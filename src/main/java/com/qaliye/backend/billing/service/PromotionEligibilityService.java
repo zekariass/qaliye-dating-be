@@ -35,13 +35,13 @@ public class PromotionEligibilityService {
     // ── PURCHASE: find best discount promotion for an offer ──────────────────
 
     public Optional<AppliedPromotion> findBestPurchasePromotion(
-            UUID userId, UUID subscriptionProductId,
+            UUID userId, UUID productId,
             int offerPriceMinor, String offerCurrency,
             String trustedCountry) {
 
         Instant now = Instant.now();
         List<PromotionRepository.CampaignRow> candidates =
-                promotionRepo.findActivePurchaseCampaigns(subscriptionProductId, trustedCountry, now);
+                promotionRepo.findActivePurchaseCampaigns(productId, trustedCountry, now);
 
         List<AppliedPromotion> eligible = new ArrayList<>();
         for (var campaign : candidates) {

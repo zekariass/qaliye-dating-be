@@ -18,7 +18,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
@@ -58,6 +62,7 @@ public class OrderService {
     private final PromotionEligibilityService promotionEligibilityService;
     private final ChapaClient chapaClient;
     private final CountrySettingsService countrySettingsService;
+    private final TransactionTemplate nestedTxTemplate;
 
     public OrderService(BillingRepository billingRepo,
                         BillingProperties billingProps,
@@ -69,7 +74,8 @@ public class OrderService {
                         PromotionRepository promotionRepo,
                         PromotionEligibilityService promotionEligibilityService,
                         ChapaClient chapaClient,
-                        CountrySettingsService countrySettingsService) {
+                        CountrySettingsService countrySettingsService,
+                        PlatformTransactionManager txManager) {
         this.billingRepo = billingRepo;
         this.billingProps = billingProps;
         this.marketResolver = marketResolver;
@@ -81,6 +87,8 @@ public class OrderService {
         this.promotionEligibilityService = promotionEligibilityService;
         this.chapaClient = chapaClient;
         this.countrySettingsService = countrySettingsService;
+        this.nestedTxTemplate = new TransactionTemplate(txManager);
+        this.nestedTxTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
     }
 
     @Transactional
@@ -143,10 +151,12 @@ public class OrderService {
         PromotionEligibilityService.AppliedPromotion appliedPromotion = null;
         int effectiveAmount = offer.priceMinorUnits();
 
-        if (offer.subscriptionProductId() != null) {
+        UUID productId = offer.subscriptionProductId() != null
+                ? offer.subscriptionProductId() : offer.consumableProductId();
+        if (productId != null) {
             Optional<PromotionEligibilityService.AppliedPromotion> promoOpt =
                     promotionEligibilityService.findBestPurchasePromotion(
-                            userId, offer.subscriptionProductId(),
+                            userId, productId,
                             offer.priceMinorUnits(), offer.currency(), trustedCountry);
             if (promoOpt.isPresent()) {
                 var promo = promoOpt.get();
@@ -155,9 +165,10 @@ public class OrderService {
                 if (reserved) {
                     effectiveAmount = (int) promo.discount().finalAmountMinor();
                     appliedPromotion = promo;
-                    log.info("Promotion applied: user={} campaign={} saving={}",
+                    log.info("Promotion applied: user={} campaign={} saving={} productType={}",
                             userId, promo.campaign().campaignKey(),
-                            promo.discount().discountAmountMinor());
+                            promo.discount().discountAmountMinor(),
+                            offer.subscriptionProductId() != null ? "SUBSCRIPTION" : "CONSUMABLE");
                 }
             }
         }
@@ -204,15 +215,25 @@ public class OrderService {
         }
 
         // Persist promotion redemption after order is created
+        // Use a nested savepoint so a duplicate-key failure doesn't poison the outer transaction
         if (appliedPromotion != null) {
+            final var finalOrder = order;
+            final int finalEffectiveAmount = effectiveAmount;
+            final var finalPromo = appliedPromotion;
             try {
-                String userGender = promotionRepo.getUserGender(userId).orElse(null);
-                promotionRepo.insertRedemption(
-                        appliedPromotion.campaign().id(), userId, offer.id(), order.id(),
-                        "RESERVED", trustedCountry, userGender,
-                        offer.priceMinorUnits(),
-                        appliedPromotion.discount().discountAmountMinor(),
-                        effectiveAmount, offer.currency());
+                nestedTxTemplate.executeWithoutResult(status -> {
+                    String userGender = promotionRepo.getUserGender(userId).orElse(null);
+                    promotionRepo.insertRedemption(
+                            finalPromo.campaign().id(), userId, offer.id(), finalOrder.id(),
+                            "RESERVED", trustedCountry, userGender,
+                            offer.priceMinorUnits(),
+                            finalPromo.discount().discountAmountMinor(),
+                            finalEffectiveAmount, offer.currency());
+                });
+            } catch (DuplicateKeyException e) {
+                log.warn("Duplicate active redemption for user={} campaign={}, proceeding without promotion on order={}",
+                        userId, appliedPromotion.campaign().id(), order.id());
+                promotionRepo.releaseReservation(appliedPromotion.campaign().id());
             } catch (Exception e) {
                 log.error("Failed to insert promotion redemption for order={}: {}", order.id(), e.getMessage());
                 promotionRepo.releaseReservation(appliedPromotion.campaign().id());

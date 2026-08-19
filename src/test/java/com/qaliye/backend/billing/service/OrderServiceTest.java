@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
@@ -50,6 +51,7 @@ class OrderServiceTest {
     @Mock BillingProperties.Verifier verifier;
     @Mock ChapaClient chapaClient;
     @Mock CountrySettingsService countrySettingsService;
+    @Mock PlatformTransactionManager txManager;
 
     OrderService service;
 
@@ -62,9 +64,11 @@ class OrderServiceTest {
 
     @BeforeEach
     void setUp() {
+        lenient().when(txManager.getTransaction(any())).thenReturn(mock(org.springframework.transaction.TransactionStatus.class));
+        lenient().when(txManager.getTransaction(any())).thenAnswer(inv -> mock(org.springframework.transaction.TransactionStatus.class));
         service = new OrderService(billingRepo, billingProps, marketResolver,
                 gatewayRegistry, verifyEtClient, fulfillmentService, new ObjectMapper(),
-                promotionRepo, promotionEligibilityService, chapaClient, countrySettingsService);
+                promotionRepo, promotionEligibilityService, chapaClient, countrySettingsService, txManager);
         lenient().when(billingProps.getPaymentOrderExpiryHours()).thenReturn(2);
         lenient().when(billingProps.getPaymentInstructions()).thenReturn(paymentInstructions);
         lenient().when(billingProps.getVerifier()).thenReturn(verifier);

@@ -126,7 +126,7 @@ class OfferServiceTest {
 
     private BillingRepository.OfferRow createOffer(String productCode) {
         return new BillingRepository.OfferRow(
-                UUID.randomUUID(), null, "ET", "ANDROID",
+                UUID.randomUUID(), null, null, "ET", "ANDROID",
                 "ETB", 49900, false,
                 null, null, null,
                 productCode, "MONTH", 1,

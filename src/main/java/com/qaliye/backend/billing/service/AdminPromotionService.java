@@ -35,7 +35,7 @@ public class AdminPromotionService {
                 null, req.campaignKey(), req.name(), req.description(),
                 req.triggerType(), req.eligibilityType(), req.benefitType(),
                 req.discountType(), req.discountValue(), req.discountCurrency(),
-                req.subscriptionProductId(), req.countryCode(),
+                req.subscriptionProductId(), req.consumableProductId(), req.countryCode(),
                 req.durationDays(), req.newUserWindowDays(),
                 req.maxRedemptions(),
                 req.maxRedemptionsPerUser() != null ? req.maxRedemptionsPerUser() : 1,
@@ -119,9 +119,11 @@ public class AdminPromotionService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "campaign_key_required");
         }
         if (req.triggerType() == null || req.eligibilityType() == null
-                || req.benefitType() == null || req.subscriptionProductId() == null
+                || req.benefitType() == null
+                || (req.subscriptionProductId() == null && req.consumableProductId() == null)
+                || (req.subscriptionProductId() != null && req.consumableProductId() != null)
                 || req.countryCode() == null || req.startsAt() == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "missing_required_fields");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "missing_or_conflicting_required_fields");
         }
         if ("PURCHASE".equals(req.triggerType()) || "AUTO_ON_SIGNUP".equals(req.triggerType())) {
             if (!"FREE_PREMIUM".equals(req.benefitType()) && !"DISCOUNT".equals(req.benefitType())) {
@@ -157,7 +159,7 @@ public class AdminPromotionService {
                 c.id(), c.campaignKey(), c.name(), c.description(),
                 c.triggerType(), c.eligibilityType(), c.benefitType(),
                 c.discountType(), c.discountValue(), c.discountCurrency(),
-                c.subscriptionProductId(), c.countryCode(),
+                c.subscriptionProductId(), c.consumableProductId(), c.countryCode(),
                 c.durationDays(), c.newUserWindowDays(),
                 c.maxRedemptions(), c.maxRedemptionsPerUser(),
                 c.reservedCount(), c.fulfilledCount(),

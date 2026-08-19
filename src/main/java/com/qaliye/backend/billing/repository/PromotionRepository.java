@@ -30,7 +30,7 @@ public class PromotionRepository {
             UUID id, String campaignKey, String name, String description,
             String triggerType, String eligibilityType, String benefitType,
             String discountType, Long discountValue, String discountCurrency,
-            UUID subscriptionProductId, String countryCode,
+            UUID subscriptionProductId, UUID consumableProductId, String countryCode,
             Integer durationDays, Integer newUserWindowDays,
             Integer maxRedemptions, int maxRedemptionsPerUser,
             int reservedCount, int fulfilledCount,
@@ -67,7 +67,7 @@ public class PromotionRepository {
             SELECT id, campaign_key, name, description,
                    trigger_type, eligibility_type, benefit_type,
                    discount_type, discount_value, discount_currency,
-                   subscription_product_id, country_code,
+                   subscription_product_id, consumable_product_id, country_code,
                    duration_days, new_user_window_days,
                    max_redemptions, max_redemptions_per_user,
                    reserved_count, fulfilled_count,
@@ -87,7 +87,7 @@ public class PromotionRepository {
             CAMPAIGN_SELECT + """
             WHERE status = 'ACTIVE'
               AND trigger_type = :triggerType
-              AND subscription_product_id = :productId
+              AND (subscription_product_id = :productId OR consumable_product_id = :productId)
               AND starts_at <= :now
               AND (ends_at IS NULL OR ends_at > :now)
               AND country_code IN (:countryCodes)
@@ -109,7 +109,7 @@ public class PromotionRepository {
             WHERE status = 'ACTIVE'
               AND trigger_type = 'PURCHASE'
               AND benefit_type = 'DISCOUNT'
-              AND subscription_product_id = :productId
+              AND (subscription_product_id = :productId OR consumable_product_id = :productId)
               AND starts_at <= :now
               AND (ends_at IS NULL OR ends_at > :now)
               AND country_code IN (:countryCodes)
@@ -120,14 +120,14 @@ public class PromotionRepository {
             INSERT INTO promotion_campaigns
                 (campaign_key, name, description, trigger_type, eligibility_type, benefit_type,
                  discount_type, discount_value, discount_currency,
-                 subscription_product_id, country_code,
+                 subscription_product_id, consumable_product_id, country_code,
                  duration_days, new_user_window_days,
                  max_redemptions, max_redemptions_per_user, priority,
                  starts_at, ends_at, status, target_gender, created_by_user_id)
             VALUES
                 (:campaignKey, :name, :description, :triggerType, :eligibilityType, :benefitType,
                  :discountType, :discountValue, :discountCurrency,
-                 :subscriptionProductId, :countryCode,
+                 :subscriptionProductId, :consumableProductId, :countryCode,
                  :durationDays, :newUserWindowDays,
                  :maxRedemptions, :maxRedemptionsPerUser, :priority,
                  :startsAt, :endsAt, 'DRAFT', :targetGender, :createdBy)
@@ -173,6 +173,11 @@ public class PromotionRepository {
               AND starts_at <= NOW()
               AND (ends_at IS NULL OR ends_at > NOW())
               AND (max_redemptions IS NULL OR fulfilled_count + reserved_count < max_redemptions)
+              AND (
+                SELECT COUNT(*) FROM promotion_redemptions
+                WHERE campaign_id = :campaignId AND user_id = :userId
+                  AND status IN ('RESERVED', 'PROVIDER_PENDING', 'FULFILLED')
+              ) < :maxPerUser
             """;
 
     private static final String ATOMIC_FULFILL_SQL = """
@@ -193,12 +198,6 @@ public class PromotionRepository {
             UPDATE promotion_campaigns
             SET fulfilled_count = fulfilled_count + 1, updated_at = NOW()
             WHERE id = :campaignId
-            """;
-
-    private static final String COUNT_ACTIVE_REDEMPTIONS_FOR_USER_SQL = """
-            SELECT COUNT(*) FROM promotion_redemptions
-            WHERE campaign_id = :campaignId AND user_id = :userId
-              AND status IN ('RESERVED', 'PROVIDER_PENDING', 'FULFILLED')
             """;
 
     // ── Redemption SQL ───────────────────────────────────────────────────────
@@ -395,6 +394,7 @@ public class PromotionRepository {
                 .addValue("discountValue", proto.discountValue())
                 .addValue("discountCurrency", proto.discountCurrency())
                 .addValue("subscriptionProductId", proto.subscriptionProductId())
+                .addValue("consumableProductId", proto.consumableProductId())
                 .addValue("countryCode", proto.countryCode())
                 .addValue("durationDays", proto.durationDays())
                 .addValue("newUserWindowDays", proto.newUserWindowDays())
@@ -444,14 +444,14 @@ public class PromotionRepository {
     }
 
     public boolean atomicReserveCapacity(UUID campaignId, UUID userId, int maxPerUser) {
-        Integer userCount = jdbc.queryForObject(COUNT_ACTIVE_REDEMPTIONS_FOR_USER_SQL,
-                Map.of("campaignId", campaignId, "userId", userId), Integer.class);
-        if (userCount != null && userCount >= maxPerUser) {
-            log.debug("Per-user redemption limit reached: campaign={} user={} count={}/{}",
-                    campaignId, userId, userCount, maxPerUser);
-            return false;
+        int rows = jdbc.update(ATOMIC_RESERVE_SQL, Map.of(
+                "campaignId", campaignId,
+                "userId", userId,
+                "maxPerUser", maxPerUser));
+        if (rows == 0) {
+            log.debug("Reserve capacity failed (global or per-user limit): campaign={} user={}",
+                    campaignId, userId);
         }
-        int rows = jdbc.update(ATOMIC_RESERVE_SQL, Map.of("campaignId", campaignId));
         return rows > 0;
     }
 
@@ -518,8 +518,8 @@ public class PromotionRepository {
         RedemptionRow r = redemption.get();
         fulfillRedemption(r.id(), subscriptionId);
         fulfillReservation(r.campaignId());
-        log.info("Purchase redemption fulfilled: redemption={} campaign={} order={}",
-                r.id(), r.campaignId(), orderId);
+        log.info("Purchase redemption fulfilled: redemption={} campaign={} order={} subscriptionId={}",
+                r.id(), r.campaignId(), orderId, subscriptionId);
     }
 
     public void cancelRedemptionByOrderId(UUID orderId, String failureCode) {
@@ -638,6 +638,7 @@ public class PromotionRepository {
                 rs.getObject("discount_value") != null ? rs.getLong("discount_value") : null,
                 rs.getString("discount_currency"),
                 rs.getObject("subscription_product_id", UUID.class),
+                rs.getObject("consumable_product_id", UUID.class),
                 rs.getString("country_code"),
                 rs.getObject("duration_days") != null ? rs.getInt("duration_days") : null,
                 rs.getObject("new_user_window_days") != null ? rs.getInt("new_user_window_days") : null,

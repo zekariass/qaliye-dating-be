@@ -32,7 +32,7 @@ public class BillingRepository {
     // ── Offers ──────────────────────────────────────────────────────────────
 
     private static final String FIND_OFFERS_SQL = """
-            SELECT po.id, po.subscription_product_id, po.country_code, po.platform,
+            SELECT po.id, po.subscription_product_id, po.consumable_product_id, po.country_code, po.platform,
                    po.currency, po.price_minor_units, po.auto_renew,
                    po.external_product_id, po.revenuecat_offering_id, po.revenuecat_package_id,
                    sp.product_code AS sub_product_code,
@@ -50,7 +50,7 @@ public class BillingRepository {
             """;
 
     public record OfferRow(
-            UUID id, UUID subscriptionProductId, String countryCode, String platform,
+            UUID id, UUID subscriptionProductId, UUID consumableProductId, String countryCode, String platform,
             String currency, int priceMinorUnits, boolean autoRenew,
             String externalProductId, String revenuecatOfferingId, String revenuecatPackageId,
             String subProductCode, String billingIntervalUnit, Integer billingIntervalCount,
@@ -65,6 +65,7 @@ public class BillingRepository {
         return jdbc.query(FIND_OFFERS_SQL, params, (rs, rowNum) -> new OfferRow(
                 rs.getObject("id", UUID.class),
                 rs.getObject("subscription_product_id", UUID.class),
+                rs.getObject("consumable_product_id", UUID.class),
                 rs.getString("country_code"),
                 rs.getString("platform"),
                 rs.getString("currency"),

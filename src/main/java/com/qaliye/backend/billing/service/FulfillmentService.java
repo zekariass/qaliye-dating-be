@@ -140,6 +140,13 @@ public class FulfillmentService {
         }
 
         log.info("Consumable fulfilled: user={}, type={}, qty={}", userId, offer.entitlementType(), offer.quantityGranted());
+
+        // Fulfill any associated PURCHASE promotion redemption
+        try {
+            promotionRepo.fulfillPurchaseRedemptionByOrderId(order.id(), null);
+        } catch (Exception e) {
+            log.error("Failed to fulfill promotion redemption for consumable order={}: {}", order.id(), e.getMessage());
+        }
     }
 
     private void grantSubscriptionIncludedCredits(UUID userId, UUID subscriptionId,

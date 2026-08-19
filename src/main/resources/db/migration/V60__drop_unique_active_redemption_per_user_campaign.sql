@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS uq_active_redemption_per_user_campaign;

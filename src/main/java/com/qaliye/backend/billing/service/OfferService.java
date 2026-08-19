@@ -130,10 +130,12 @@ public class OfferService {
         PromotionDto promotionDto = null;
         List<ClaimablePromotionDto> claimableDtos = List.of();
 
-        if (row.subscriptionProductId() != null) {
+        UUID productId = row.subscriptionProductId() != null
+                ? row.subscriptionProductId() : row.consumableProductId();
+        if (productId != null) {
             Optional<PromotionEligibilityService.AppliedPromotion> applied =
                     promotionEligibilityService.findBestPurchasePromotion(
-                            userId, row.subscriptionProductId(),
+                            userId, productId,
                             row.priceMinorUnits(), row.currency(), trustedCountry);
             if (applied.isPresent()) {
                 var ap = applied.get();
@@ -144,7 +146,7 @@ public class OfferService {
 
             List<PromotionRepository.CampaignRow> claimable =
                     promotionEligibilityService.findClaimablePromotions(
-                            userId, row.subscriptionProductId(), trustedCountry);
+                            userId, productId, trustedCountry);
             claimableDtos = claimable.stream().map(this::toClaimablePromotionDto).toList();
         }
 

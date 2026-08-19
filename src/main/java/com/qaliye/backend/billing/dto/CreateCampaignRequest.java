@@ -14,6 +14,7 @@ public record CreateCampaignRequest(
         Long discountValue,
         String discountCurrency,
         UUID subscriptionProductId,
+        UUID consumableProductId,
         String countryCode,
         Integer durationDays,
         Integer newUserWindowDays,
