@@ -310,6 +310,9 @@ class MessageCommandServiceAttachmentTest {
         ChatMatchRepository.MatchRow match = buildActiveMatch();
         when(messageRepository.findByIdempotencyKey(callerId, clientMsgId)).thenReturn(Optional.empty());
         when(matchRepository.findByIdForUpdate(matchId)).thenReturn(Optional.of(match));
+        lenient().when(actionCostService.evaluate(any(), any())).thenReturn(
+                new ActionCostService.ActionCostResult(null, 0, true, false, false,
+                        java.time.LocalDate.now(), java.time.LocalDate.now(), 0, null, "DAY"));
     }
 
     private ChatProperties.Attachment buildAttachmentConfig() {

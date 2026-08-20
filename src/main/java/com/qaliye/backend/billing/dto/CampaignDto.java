@@ -28,6 +28,7 @@ public record CampaignDto(
         Instant endsAt,
         String status,
         String targetGender,
+        Long includedCredits,
         Instant createdAt,
         Instant updatedAt
 ) {}

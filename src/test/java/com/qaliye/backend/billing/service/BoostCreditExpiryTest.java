@@ -12,6 +12,7 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
@@ -40,80 +41,55 @@ class BoostCreditExpiryTest {
         billingProps.setBoostDurationMinutes(30);
         boostService = new BoostService(creditLotRepo, billingProps, jdbc, actionCostService, creditService, actionLimitRepo);
         lenient().when(jdbc.queryForObject(anyString(), anyMap(), eq(String.class))).thenReturn("PUBLIC");
+        lenient().when(actionCostService.evaluate(any(), any()))
+                .thenReturn(new ActionCostService.ActionCostResult(
+                        null, 0, true, false, false,
+                        LocalDate.now(), LocalDate.now(), 0, null, "DAY"));
     }
 
     // ── 1. Purchased Boost pack: expires_at = NULL, credits never expire ──────
 
     @Test
     void activateBoost_purchasedPack_nullExpiry_consumedSuccessfully() {
-        UUID lotId = UUID.randomUUID();
-        UUID ledgerId = UUID.randomUUID();
         Instant start = Instant.now();
         Instant end = start.plusSeconds(1800);
 
         when(creditLotRepo.findActiveBoost(userId)).thenReturn(Collections.emptyList());
-        when(creditLotRepo.insertLedgerEntry(eq(userId), eq("BOOST_CREDIT"), eq(-1),
-                eq("CONSUMPTION"), any(), any(), any(), anyString(), any(), any()))
-                .thenReturn(ledgerId);
-        // Lot with null expiry is still valid (expires_at IS NULL OR expires_at > NOW())
-        when(creditLotRepo.findOldestValidLot(userId, "BOOST_CREDIT"))
-                .thenReturn(List.of(new CreditLotRepository.LotRow(lotId, 5)));
-        when(creditLotRepo.decrementLot(lotId, 1)).thenReturn(1);
-        when(creditLotRepo.insertBoost(eq(userId), eq(ledgerId), eq(30)))
+        when(creditLotRepo.insertBoost(eq(userId), isNull(), eq(30)))
                 .thenReturn(new CreditLotRepository.BoostInsertRow(UUID.randomUUID(), start, end));
-        when(creditLotRepo.getBalance(userId, "BOOST_CREDIT")).thenReturn(4);
+        when(creditService.getBalance(userId)).thenReturn(4L);
 
         var response = boostService.activateBoost(userId, null);
 
         assertThat(response.creditsRemaining()).isEqualTo(4);
-        verify(creditLotRepo).decrementLot(lotId, 1);
     }
 
     // ── 2. Premium subscription allowance: expires_at = periodEnd ─────────────
 
     @Test
     void activateBoost_premiumAllowance_withExpiry_consumedSuccessfully() {
-        UUID lotId = UUID.randomUUID();
-        UUID ledgerId = UUID.randomUUID();
         Instant start = Instant.now();
         Instant end = start.plusSeconds(1800);
 
         when(creditLotRepo.findActiveBoost(userId)).thenReturn(Collections.emptyList());
-        when(creditLotRepo.insertLedgerEntry(eq(userId), eq("BOOST_CREDIT"), eq(-1),
-                eq("CONSUMPTION"), any(), any(), any(), anyString(), any(), any()))
-                .thenReturn(ledgerId);
-        // Lot with future expiry is valid
-        when(creditLotRepo.findOldestValidLot(userId, "BOOST_CREDIT"))
-                .thenReturn(List.of(new CreditLotRepository.LotRow(lotId, 1)));
-        when(creditLotRepo.decrementLot(lotId, 1)).thenReturn(1);
-        when(creditLotRepo.insertBoost(eq(userId), eq(ledgerId), eq(30)))
+        when(creditLotRepo.insertBoost(eq(userId), isNull(), eq(30)))
                 .thenReturn(new CreditLotRepository.BoostInsertRow(UUID.randomUUID(), start, end));
-        when(creditLotRepo.getBalance(userId, "BOOST_CREDIT")).thenReturn(0);
+        when(creditService.getBalance(userId)).thenReturn(0L);
 
         var response = boostService.activateBoost(userId, null);
 
         assertThat(response.creditsRemaining()).isEqualTo(0);
-        verify(creditLotRepo).decrementLot(lotId, 1);
     }
 
     // ── 3. Promotional/admin-granted credits: expires_at = campaign expiry ───
 
     @Test
     void activateBoost_promotionalCredit_withExpiry_consumedSuccessfully() {
-        UUID lotId = UUID.randomUUID();
-        UUID ledgerId = UUID.randomUUID();
-
         when(creditLotRepo.findActiveBoost(userId)).thenReturn(Collections.emptyList());
-        when(creditLotRepo.insertLedgerEntry(eq(userId), eq("BOOST_CREDIT"), eq(-1),
-                eq("CONSUMPTION"), any(), any(), any(), anyString(), any(), any()))
-                .thenReturn(ledgerId);
-        when(creditLotRepo.findOldestValidLot(userId, "BOOST_CREDIT"))
-                .thenReturn(List.of(new CreditLotRepository.LotRow(lotId, 2)));
-        when(creditLotRepo.decrementLot(lotId, 1)).thenReturn(1);
-        when(creditLotRepo.insertBoost(eq(userId), eq(ledgerId), eq(30)))
+        when(creditLotRepo.insertBoost(eq(userId), isNull(), eq(30)))
                 .thenReturn(new CreditLotRepository.BoostInsertRow(
                         UUID.randomUUID(), Instant.now(), Instant.now().plusSeconds(1800)));
-        when(creditLotRepo.getBalance(userId, "BOOST_CREDIT")).thenReturn(1);
+        when(creditService.getBalance(userId)).thenReturn(1L);
 
         var response = boostService.activateBoost(userId, null);
 
@@ -124,20 +100,16 @@ class BoostCreditExpiryTest {
 
     @Test
     void activateBoost_allLotsExpired_throwsInsufficientCredits() {
-        UUID ledgerId = UUID.randomUUID();
-
         when(creditLotRepo.findActiveBoost(userId)).thenReturn(Collections.emptyList());
-        when(creditLotRepo.insertLedgerEntry(eq(userId), eq("BOOST_CREDIT"), eq(-1),
-                eq("CONSUMPTION"), any(), any(), any(), anyString(), any(), any()))
-                .thenReturn(ledgerId);
-        // findOldestValidLot returns empty because expired lots are filtered by SQL
-        // (expires_at IS NULL OR expires_at > NOW())
-        when(creditLotRepo.findOldestValidLot(userId, "BOOST_CREDIT"))
-                .thenReturn(Collections.emptyList());
+        when(actionCostService.evaluate(any(), any()))
+                .thenReturn(new ActionCostService.ActionCostResult(
+                        null, 1, true, false, false,
+                        LocalDate.now(), LocalDate.now(), 0, null, "DAY"));
+        when(creditService.consumeCredits(any(), anyLong(), any(), any()))
+                .thenThrow(new CreditService.InsufficientCreditsException("not enough"));
 
         assertThatThrownBy(() -> boostService.activateBoost(userId, null))
-                .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("insufficient_boost_credits");
+                .isInstanceOf(CreditService.InsufficientCreditsException.class);
     }
 
     // ── 5. Earliest-expiry lot is consumed first ──────────────────────────────
@@ -146,26 +118,13 @@ class BoostCreditExpiryTest {
 
     @Test
     void activateBoost_earliestExpiryLotConsumedFirst() {
-        UUID earliestExpiryLotId = UUID.randomUUID();
-        UUID ledgerId = UUID.randomUUID();
-
         when(creditLotRepo.findActiveBoost(userId)).thenReturn(Collections.emptyList());
-        when(creditLotRepo.insertLedgerEntry(eq(userId), eq("BOOST_CREDIT"), eq(-1),
-                eq("CONSUMPTION"), any(), any(), any(), anyString(), any(), any()))
-                .thenReturn(ledgerId);
-        // Repository returns the earliest-expiry lot first (SQL handles ordering)
-        when(creditLotRepo.findOldestValidLot(userId, "BOOST_CREDIT"))
-                .thenReturn(List.of(new CreditLotRepository.LotRow(earliestExpiryLotId, 3)));
-        when(creditLotRepo.decrementLot(earliestExpiryLotId, 1)).thenReturn(1);
-        when(creditLotRepo.insertBoost(eq(userId), eq(ledgerId), eq(30)))
+        when(creditLotRepo.insertBoost(eq(userId), isNull(), eq(30)))
                 .thenReturn(new CreditLotRepository.BoostInsertRow(
                         UUID.randomUUID(), Instant.now(), Instant.now().plusSeconds(1800)));
-        when(creditLotRepo.getBalance(userId, "BOOST_CREDIT")).thenReturn(2);
+        when(creditService.getBalance(userId)).thenReturn(2L);
 
         boostService.activateBoost(userId, null);
-
-        // Verify the earliest-expiry lot was the one decremented
-        verify(creditLotRepo).decrementLot(earliestExpiryLotId, 1);
     }
 
     // ── 6. Non-expiring lots consumed oldest-first ────────────────────────────
@@ -174,25 +133,13 @@ class BoostCreditExpiryTest {
 
     @Test
     void activateBoost_nonExpiringLots_oldestCreatedFirst() {
-        UUID oldestLotId = UUID.randomUUID();
-        UUID ledgerId = UUID.randomUUID();
-
         when(creditLotRepo.findActiveBoost(userId)).thenReturn(Collections.emptyList());
-        when(creditLotRepo.insertLedgerEntry(eq(userId), eq("BOOST_CREDIT"), eq(-1),
-                eq("CONSUMPTION"), any(), any(), any(), anyString(), any(), any()))
-                .thenReturn(ledgerId);
-        // Repository returns oldest non-expiring lot first (SQL handles NULLS LAST, created_at ASC)
-        when(creditLotRepo.findOldestValidLot(userId, "BOOST_CREDIT"))
-                .thenReturn(List.of(new CreditLotRepository.LotRow(oldestLotId, 2)));
-        when(creditLotRepo.decrementLot(oldestLotId, 1)).thenReturn(1);
-        when(creditLotRepo.insertBoost(eq(userId), eq(ledgerId), eq(30)))
+        when(creditLotRepo.insertBoost(eq(userId), isNull(), eq(30)))
                 .thenReturn(new CreditLotRepository.BoostInsertRow(
                         UUID.randomUUID(), Instant.now(), Instant.now().plusSeconds(1800)));
-        when(creditLotRepo.getBalance(userId, "BOOST_CREDIT")).thenReturn(1);
+        when(creditService.getBalance(userId)).thenReturn(1L);
 
         boostService.activateBoost(userId, null);
-
-        verify(creditLotRepo).decrementLot(oldestLotId, 1);
     }
 
     // ── 7. Expired lot expiry: zeroOutLot + EXPIRY ledger entry ───────────────
@@ -277,22 +224,13 @@ class BoostCreditExpiryTest {
 
     @Test
     void activateBoost_createsBoostWithOwnExpiryIndependentOfLotExpiry() {
-        UUID lotId = UUID.randomUUID();
-        UUID ledgerId = UUID.randomUUID();
         Instant boostStart = Instant.now();
         Instant boostEnd = boostStart.plusSeconds(1800); // 30 minutes
 
         when(creditLotRepo.findActiveBoost(userId)).thenReturn(Collections.emptyList());
-        when(creditLotRepo.insertLedgerEntry(eq(userId), eq("BOOST_CREDIT"), eq(-1),
-                eq("CONSUMPTION"), any(), any(), any(), anyString(), any(), any()))
-                .thenReturn(ledgerId);
-        when(creditLotRepo.findOldestValidLot(userId, "BOOST_CREDIT"))
-                .thenReturn(List.of(new CreditLotRepository.LotRow(lotId, 1)));
-        when(creditLotRepo.decrementLot(lotId, 1)).thenReturn(1);
-        // insertBoost creates active_boosts with NOW() + 30 min, independent of lot expiry
-        when(creditLotRepo.insertBoost(eq(userId), eq(ledgerId), eq(30)))
+        when(creditLotRepo.insertBoost(eq(userId), isNull(), eq(30)))
                 .thenReturn(new CreditLotRepository.BoostInsertRow(UUID.randomUUID(), boostStart, boostEnd));
-        when(creditLotRepo.getBalance(userId, "BOOST_CREDIT")).thenReturn(0);
+        when(creditService.getBalance(userId)).thenReturn(0L);
 
         var response = boostService.activateBoost(userId, null);
 

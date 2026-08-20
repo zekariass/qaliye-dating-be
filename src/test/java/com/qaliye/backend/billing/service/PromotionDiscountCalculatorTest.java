@@ -29,7 +29,7 @@ class PromotionDiscountCalculatorTest {
                 null, null, null, 1,
                 0, 0, 0,
                 Instant.now().minusSeconds(60), null,
-                "ACTIVE", null, null, Instant.now(), Instant.now()
+                "ACTIVE", null, null, null, Instant.now(), Instant.now()
         );
     }
 
@@ -97,7 +97,7 @@ class PromotionDiscountCalculatorTest {
                 30, null, null, 1,
                 0, 0, 0,
                 Instant.now().minusSeconds(60), null,
-                "ACTIVE", null, null, Instant.now(), Instant.now()
+                "ACTIVE", null, null, null, Instant.now(), Instant.now()
         );
         assertThatThrownBy(() -> calculator.calculate(c, 49900, "ETB"))
                 .isInstanceOf(IllegalArgumentException.class);

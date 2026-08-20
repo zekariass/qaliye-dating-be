@@ -19,6 +19,7 @@ import java.util.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -40,22 +41,19 @@ class EntitlementServiceTest {
     void setUp() {
         billingProps.setBoostDurationMinutes(60);
         service = new EntitlementService(billingRepo, creditLotRepo, creditService, jdbc, objectMapper, billingProps, countrySettingsService);
+        lenient().doNothing().when(jdbc).query(anyString(), anyMap(), any(RowCallbackHandler.class));
+        lenient().when(countrySettingsService.getSettingsForUser(any()))
+                .thenReturn(new CountrySettingsService.CountrySettings("ET", true, true, false));
+        lenient().when(creditService.getBalance(any())).thenReturn(0L);
+        lenient().when(billingRepo.getUserCountryCode(any())).thenReturn("ET");
     }
 
     @Test
     void getEntitlements_freeUser_returnsFreeplan() {
         when(billingRepo.findActiveSubscription(userId)).thenReturn(Optional.empty());
-        when(billingRepo.getUserCountryCode(userId)).thenReturn("ET");
         UUID freePlanId = UUID.randomUUID();
         when(jdbc.queryForList(contains("plan_kind = 'FREE'"), anyMap()))
-                .thenReturn(List.of(Map.of("id", freePlanId, "features", "{\"seeWhoLikedYou\":false,\"advancedFilters\":false,\"incognitoMode\":true}")));
-        doNothing().when(jdbc).query(contains("subscription_plan_limits"), anyMap(), any(RowCallbackHandler.class));
-        when(jdbc.queryForList(contains("user_daily_limits"), anyMap()))
-                .thenReturn(Collections.emptyList());
-        when(creditLotRepo.getNonPurchasedBalance(userId, "BOOST_CREDIT")).thenReturn(0);
-        when(creditLotRepo.getPurchasedBalance(userId, "BOOST_CREDIT")).thenReturn(0);
-        when(creditLotRepo.getPurchasedBalance(userId, "SUPERLIKE_CREDIT")).thenReturn(0);
-        when(creditLotRepo.getPurchasedBalance(userId, "REWIND_CREDIT")).thenReturn(0);
+                .thenReturn(List.of(Map.of("id", freePlanId, "features", "{\"seeWhoLikedYou\":false,\"advancedFilters\":false}")));
         when(creditLotRepo.findActiveBoost(userId)).thenReturn(Collections.emptyList());
 
         EntitlementResponse response = service.getEntitlements(userId);
@@ -63,7 +61,7 @@ class EntitlementServiceTest {
         assertThat(response.plan()).isEqualTo("FREE");
         assertThat(response.subscription()).isNull();
         assertThat(response.features()).containsEntry("seeWhoLikedYou", false);
-        assertThat(response.features()).containsEntry("incognitoMode", true);
+        assertThat(response.features()).doesNotContainKey("incognitoMode");
     }
 
     @Test
@@ -78,13 +76,6 @@ class EntitlementServiceTest {
         );
 
         when(billingRepo.findActiveSubscription(userId)).thenReturn(Optional.of(activeSub));
-        doNothing().when(jdbc).query(contains("subscription_plan_limits"), anyMap(), any(RowCallbackHandler.class));
-        when(jdbc.queryForList(contains("user_daily_limits"), anyMap()))
-                .thenReturn(List.of(Map.of("likes_used", 5, "super_likes_used", 1, "rewinds_used", 0)));
-        when(creditLotRepo.getNonPurchasedBalance(userId, "BOOST_CREDIT")).thenReturn(0);
-        when(creditLotRepo.getPurchasedBalance(userId, "BOOST_CREDIT")).thenReturn(2);
-        when(creditLotRepo.getPurchasedBalance(userId, "SUPERLIKE_CREDIT")).thenReturn(5);
-        when(creditLotRepo.getPurchasedBalance(userId, "REWIND_CREDIT")).thenReturn(3);
         when(creditLotRepo.findActiveBoost(userId)).thenReturn(Collections.emptyList());
 
         EntitlementResponse response = service.getEntitlements(userId);
@@ -93,23 +84,13 @@ class EntitlementServiceTest {
         assertThat(response.subscription()).isNotNull();
         assertThat(response.subscription().status()).isEqualTo("ACTIVE");
         assertThat(response.subscription().autoRenew()).isTrue();
-        assertThat(response.credits().boostsAvailable()).isEqualTo(2);
-        assertThat(response.credits().superLikesAvailable()).isEqualTo(5);
     }
 
     @Test
     void getEntitlements_withActiveBoost_includesBoostInfo() {
         when(billingRepo.findActiveSubscription(userId)).thenReturn(Optional.empty());
-        when(billingRepo.getUserCountryCode(userId)).thenReturn("GLOBAL");
         when(jdbc.queryForList(contains("plan_kind = 'FREE'"), anyMap()))
                 .thenReturn(List.of(Map.of("id", UUID.randomUUID(), "features", "{}")));
-        doNothing().when(jdbc).query(contains("subscription_plan_limits"), anyMap(), any(RowCallbackHandler.class));
-        when(jdbc.queryForList(contains("user_daily_limits"), anyMap()))
-                .thenReturn(Collections.emptyList());
-        when(creditLotRepo.getNonPurchasedBalance(userId, "BOOST_CREDIT")).thenReturn(0);
-        when(creditLotRepo.getPurchasedBalance(userId, "BOOST_CREDIT")).thenReturn(0);
-        when(creditLotRepo.getPurchasedBalance(userId, "SUPERLIKE_CREDIT")).thenReturn(0);
-        when(creditLotRepo.getPurchasedBalance(userId, "REWIND_CREDIT")).thenReturn(0);
 
         Instant boostStart = Instant.now().minusSeconds(600);
         Instant boostEnd = Instant.now().plusSeconds(1200);

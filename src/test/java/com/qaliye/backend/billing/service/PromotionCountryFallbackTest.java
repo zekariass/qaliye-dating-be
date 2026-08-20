@@ -20,6 +20,7 @@ import static org.mockito.Mockito.when;
 class PromotionCountryFallbackTest {
 
     @Mock PromotionRepository promotionRepo;
+    @Mock CountrySettingsService countrySettingsService;
 
     PromotionDiscountCalculator calculator;
     PromotionEligibilityService service;
@@ -30,7 +31,7 @@ class PromotionCountryFallbackTest {
     @BeforeEach
     void setUp() {
         calculator = new PromotionDiscountCalculator();
-        service = new PromotionEligibilityService(promotionRepo, calculator);
+        service = new PromotionEligibilityService(promotionRepo, calculator, countrySettingsService);
     }
 
     private PromotionRepository.CampaignRow campaign(String countryCode, String triggerType, String benefitType) {
@@ -42,7 +43,7 @@ class PromotionCountryFallbackTest {
                 30, null, 100, 1,
                 0, 0, 10,
                 Instant.now().minusSeconds(60), null,
-                "ACTIVE", null, null, Instant.now(), Instant.now()
+                "ACTIVE", null, null, null, Instant.now(), Instant.now()
         );
     }
 
@@ -55,7 +56,7 @@ class PromotionCountryFallbackTest {
                 null, null, 100, 1,
                 0, 0, 10,
                 Instant.now().minusSeconds(60), null,
-                "ACTIVE", null, null, Instant.now(), Instant.now()
+                "ACTIVE", null, null, null, Instant.now(), Instant.now()
         );
     }
 
@@ -103,10 +104,10 @@ class PromotionCountryFallbackTest {
     void findSignupPromotions_etUser_returnsBothEtAndGlobal() {
         var etCampaign = campaign("ET", "AUTO_ON_SIGNUP", "FREE_PREMIUM");
         var globalCampaign = campaign("GLOBAL", "AUTO_ON_SIGNUP", "FREE_PREMIUM");
-        when(promotionRepo.findActiveCampaignsByTriggerAndProduct(eq("AUTO_ON_SIGNUP"), eq(productId), eq("ET"), any()))
+        when(promotionRepo.findActiveCampaignsByTrigger(eq("AUTO_ON_SIGNUP"), eq("ET"), any()))
                 .thenReturn(List.of(etCampaign, globalCampaign));
 
-        var result = service.findSignupPromotions(userId, productId, "ET");
+        var result = service.findSignupPromotions(userId, "ET");
 
         assertThat(result).hasSize(2);
         assertThat(result.get(0).countryCode()).isEqualTo("ET");
@@ -116,10 +117,10 @@ class PromotionCountryFallbackTest {
     @Test
     void findSignupPromotions_globalUser_returnsOnlyGlobal() {
         var globalCampaign = campaign("GLOBAL", "AUTO_ON_SIGNUP", "FREE_PREMIUM");
-        when(promotionRepo.findActiveCampaignsByTriggerAndProduct(eq("AUTO_ON_SIGNUP"), eq(productId), eq("GLOBAL"), any()))
+        when(promotionRepo.findActiveCampaignsByTrigger(eq("AUTO_ON_SIGNUP"), eq("GLOBAL"), any()))
                 .thenReturn(List.of(globalCampaign));
 
-        var result = service.findSignupPromotions(userId, productId, "GLOBAL");
+        var result = service.findSignupPromotions(userId, "GLOBAL");
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).countryCode()).isEqualTo("GLOBAL");
@@ -196,6 +197,8 @@ class PromotionCountryFallbackTest {
 
     @Test
     void findAllEligiblePromotions_etUser_returnsBothEtAndGlobal() {
+        when(countrySettingsService.getSettings("ET"))
+                .thenReturn(new CountrySettingsService.CountrySettings("ET", true, true, false));
         var etCampaign = campaign("ET", "USER_CLAIM", "FREE_PREMIUM");
         var globalCampaign = campaign("GLOBAL", "USER_CLAIM", "FREE_PREMIUM");
         when(promotionRepo.findActiveCampaignsByTrigger(eq("USER_CLAIM"), eq("ET"), any()))
@@ -212,6 +215,8 @@ class PromotionCountryFallbackTest {
 
     @Test
     void findAllEligiblePromotions_globalUser_returnsOnlyGlobal() {
+        when(countrySettingsService.getSettings("GLOBAL"))
+                .thenReturn(new CountrySettingsService.CountrySettings("GLOBAL", true, true, false));
         var globalCampaign = campaign("GLOBAL", "USER_CLAIM", "FREE_PREMIUM");
         when(promotionRepo.findActiveCampaignsByTrigger(eq("USER_CLAIM"), eq("GLOBAL"), any()))
                 .thenReturn(List.of(globalCampaign));

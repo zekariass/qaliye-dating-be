@@ -19,5 +19,6 @@ public record EligiblePromotionDto(
         int fulfilledCount,
         String endsAt,
         String targetGender,
+        Long includedCredits,
         boolean canRedeem
 ) {}

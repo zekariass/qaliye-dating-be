@@ -22,6 +22,7 @@ import static org.mockito.Mockito.when;
 class PromotionEligibilityServiceTest {
 
     @Mock PromotionRepository promotionRepo;
+    @Mock CountrySettingsService countrySettingsService;
 
     PromotionDiscountCalculator calculator;
     PromotionEligibilityService service;
@@ -32,7 +33,7 @@ class PromotionEligibilityServiceTest {
     @BeforeEach
     void setUp() {
         calculator = new PromotionDiscountCalculator();
-        service = new PromotionEligibilityService(promotionRepo, calculator);
+        service = new PromotionEligibilityService(promotionRepo, calculator, countrySettingsService);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
@@ -48,7 +49,7 @@ class PromotionEligibilityServiceTest {
                 null, newUserWindowDays, 100, 1,
                 0, 0, 10,
                 Instant.now().minusSeconds(60), null,
-                "ACTIVE", null, null, Instant.now(), Instant.now()
+                "ACTIVE", null, null, null, Instant.now(), Instant.now()
         );
     }
 
@@ -63,7 +64,7 @@ class PromotionEligibilityServiceTest {
                 30, newUserWindowDays, 50, 1,
                 0, 0, 5,
                 Instant.now().minusSeconds(60), null,
-                "ACTIVE", null, null, Instant.now(), Instant.now()
+                "ACTIVE", null, null, null, Instant.now(), Instant.now()
         );
     }
 
@@ -103,7 +104,7 @@ class PromotionEligibilityServiceTest {
                 0, 0, 0,
                 Instant.now().minusSeconds(7200),
                 Instant.now().minusSeconds(60), // ends_at in the past
-                "ACTIVE", null, null, Instant.now(), Instant.now()
+                "ACTIVE", null, null, null, Instant.now(), Instant.now()
         );
         when(promotionRepo.findActivePurchaseCampaigns(eq(productId), eq("ET"), any()))
                 .thenReturn(List.of(c));
@@ -185,7 +186,7 @@ class PromotionEligibilityServiceTest {
                 null, null, 10, 1,
                 5, 5, 0, // reservedCount + fulfilledCount = max_redemptions
                 Instant.now().minusSeconds(60), null,
-                "ACTIVE", null, null, Instant.now(), Instant.now()
+                "ACTIVE", null, null, null, Instant.now(), Instant.now()
         );
         when(promotionRepo.findActivePurchaseCampaigns(eq(productId), eq("ET"), any()))
                 .thenReturn(List.of(c));
@@ -258,12 +259,12 @@ class PromotionEligibilityServiceTest {
                 30, null, 50, 1,
                 0, 0, 100, // priority=100
                 Instant.now().minusSeconds(60), null,
-                "ACTIVE", null, null, Instant.now(), Instant.now()
+                "ACTIVE", null, null, null, Instant.now(), Instant.now()
         );
-        when(promotionRepo.findActiveCampaignsByTriggerAndProduct(eq("AUTO_ON_SIGNUP"), eq(productId), eq("ET"), any()))
+        when(promotionRepo.findActiveCampaignsByTrigger(eq("AUTO_ON_SIGNUP"), eq("ET"), any()))
                 .thenReturn(List.of(low, high));
 
-        var result = service.findSignupPromotions(userId, productId, "ET");
+        var result = service.findSignupPromotions(userId, "ET");
 
         assertThat(result).hasSize(2);
         assertThat(result.get(0).campaignKey()).isEqualTo("high-prio");

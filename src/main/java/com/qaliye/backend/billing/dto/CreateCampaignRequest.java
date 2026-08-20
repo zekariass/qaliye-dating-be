@@ -23,5 +23,6 @@ public record CreateCampaignRequest(
         Integer priority,
         Instant startsAt,
         Instant endsAt,
-        String targetGender
+        String targetGender,
+        Long includedCredits
 ) {}

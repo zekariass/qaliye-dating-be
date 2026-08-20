@@ -86,7 +86,8 @@ public class PromotionController {
     }
 
     private EligiblePromotionDto toDto(PromotionRepository.CampaignRow c) {
-        boolean canRedeem = "USER_CLAIM".equals(c.triggerType()) && "FREE_PREMIUM".equals(c.benefitType());
+        boolean canRedeem = "USER_CLAIM".equals(c.triggerType())
+                && ("FREE_PREMIUM".equals(c.benefitType()) || "CREDITS".equals(c.benefitType()));
         return new EligiblePromotionDto(
                 c.id(), c.campaignKey(), c.name(), c.description(),
                 c.triggerType(), c.benefitType(),
@@ -95,6 +96,7 @@ public class PromotionController {
                 c.maxRedemptions(), c.reservedCount(), c.fulfilledCount(),
                 c.endsAt() != null ? ISO_FMT.format(c.endsAt()) : null,
                 c.targetGender(),
+                c.includedCredits(),
                 canRedeem
         );
     }

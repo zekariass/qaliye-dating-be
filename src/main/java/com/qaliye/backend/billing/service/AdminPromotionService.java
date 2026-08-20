@@ -42,7 +42,7 @@ public class AdminPromotionService {
                 0, 0,
                 req.priority() != null ? req.priority() : 0,
                 req.startsAt(), req.endsAt(),
-                "DRAFT", req.targetGender(), adminUserId, null, null
+                "DRAFT", req.targetGender(), req.includedCredits(), adminUserId, null, null
         );
 
         UUID id = promotionRepo.insertCampaign(proto, adminUserId);
@@ -118,15 +118,23 @@ public class AdminPromotionService {
         if (req.campaignKey() == null || req.campaignKey().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "campaign_key_required");
         }
+        boolean isCredits = "CREDITS".equals(req.benefitType());
         if (req.triggerType() == null || req.eligibilityType() == null
                 || req.benefitType() == null
-                || (req.subscriptionProductId() == null && req.consumableProductId() == null)
+                || (!isCredits && req.subscriptionProductId() == null && req.consumableProductId() == null)
                 || (req.subscriptionProductId() != null && req.consumableProductId() != null)
+                || (isCredits && (req.subscriptionProductId() != null || req.consumableProductId() != null))
                 || req.countryCode() == null || req.startsAt() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "missing_or_conflicting_required_fields");
         }
-        if ("PURCHASE".equals(req.triggerType()) || "AUTO_ON_SIGNUP".equals(req.triggerType())) {
-            if (!"FREE_PREMIUM".equals(req.benefitType()) && !"DISCOUNT".equals(req.benefitType())) {
+        if ("PURCHASE".equals(req.triggerType())) {
+            if (!"FREE_PREMIUM".equals(req.benefitType()) && !"DISCOUNT".equals(req.benefitType())
+                    && !"CREDITS".equals(req.benefitType())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid_benefit_type");
+            }
+        }
+        if ("AUTO_ON_SIGNUP".equals(req.triggerType())) {
+            if (!"FREE_PREMIUM".equals(req.benefitType()) && !"CREDITS".equals(req.benefitType())) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid_benefit_type");
             }
         }
@@ -138,6 +146,11 @@ public class AdminPromotionService {
         if ("DISCOUNT".equals(req.benefitType())) {
             if (req.discountType() == null || req.discountValue() == null) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "discount_fields_required");
+            }
+        }
+        if ("CREDITS".equals(req.benefitType())) {
+            if (req.includedCredits() == null || req.includedCredits() <= 0) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "included_credits_required");
             }
         }
         if ("NEW_USER".equals(req.eligibilityType())) {
@@ -164,7 +177,7 @@ public class AdminPromotionService {
                 c.maxRedemptions(), c.maxRedemptionsPerUser(),
                 c.reservedCount(), c.fulfilledCount(),
                 c.priority(), c.startsAt(), c.endsAt(),
-                c.status(), c.targetGender(), c.createdAt(), c.updatedAt()
+                c.status(), c.targetGender(), c.includedCredits(), c.createdAt(), c.updatedAt()
         );
     }
 

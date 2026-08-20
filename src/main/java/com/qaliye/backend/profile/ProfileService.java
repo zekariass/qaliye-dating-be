@@ -184,7 +184,8 @@ public class ProfileService {
                     Map.of("userId", userId), String.class);
             if (!"INCOGNITO".equals(currentMode)) {
                 evaluateAndConsumeActionCost(userId, "INCOGNITO_MODE",
-                        "incognito-" + userId, HttpStatus.PAYMENT_REQUIRED, "incognito_mode_not_available");
+                        "incognito-" + userId + "-" + System.currentTimeMillis(),
+                        HttpStatus.PAYMENT_REQUIRED, "incognito_mode_not_available");
             }
         }
 
@@ -1012,13 +1013,11 @@ public class ProfileService {
             boolean incremented = actionLimitRepo
                     .tryIncrementUnderLimit(userId, cost.ruleId(), cost.periodStart(), cost.limitValue())
                     .isPresent();
-            if (!incremented) {
-                if (!cost.requiresCredits()) {
-                    throw new ActionLimitExceededException(actionCode, cost.periodType());
-                }
-                creditService.consumeCredits(userId, cost.creditCost(), actionCode, idempotencyKey);
+            if (!incremented && !cost.requiresCredits()) {
+                throw new ActionLimitExceededException(actionCode, cost.periodType());
             }
-        } else if (cost.requiresCredits()) {
+        }
+        if (cost.requiresCredits()) {
             creditService.consumeCredits(userId, cost.creditCost(), actionCode, idempotencyKey);
         }
     }

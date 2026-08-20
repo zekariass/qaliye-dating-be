@@ -18,11 +18,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.dao.DuplicateKeyException;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
@@ -62,7 +58,6 @@ public class OrderService {
     private final PromotionEligibilityService promotionEligibilityService;
     private final ChapaClient chapaClient;
     private final CountrySettingsService countrySettingsService;
-    private final TransactionTemplate nestedTxTemplate;
 
     public OrderService(BillingRepository billingRepo,
                         BillingProperties billingProps,
@@ -74,8 +69,7 @@ public class OrderService {
                         PromotionRepository promotionRepo,
                         PromotionEligibilityService promotionEligibilityService,
                         ChapaClient chapaClient,
-                        CountrySettingsService countrySettingsService,
-                        PlatformTransactionManager txManager) {
+                        CountrySettingsService countrySettingsService) {
         this.billingRepo = billingRepo;
         this.billingProps = billingProps;
         this.marketResolver = marketResolver;
@@ -87,8 +81,6 @@ public class OrderService {
         this.promotionEligibilityService = promotionEligibilityService;
         this.chapaClient = chapaClient;
         this.countrySettingsService = countrySettingsService;
-        this.nestedTxTemplate = new TransactionTemplate(txManager);
-        this.nestedTxTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
     }
 
     @Transactional
@@ -177,6 +169,29 @@ public class OrderService {
         Instant expiresAt = Instant.now().plus(billingProps.getPaymentOrderExpiryHours(), ChronoUnit.HOURS);
         String instructionSnapshot = buildOnlinePaymentSnapshot(method, offer, orderReference, expiresAt);
 
+        // Insert redemption in its own REQUIRES_NEW transaction so it commits independently
+        // of the outer JPA transaction (JPA transactions don't support savepoints).
+        // payment_order_id is set to null here and linked after the order row is created.
+        UUID redemptionId = null;
+        if (appliedPromotion != null) {
+            final var finalPromo = appliedPromotion;
+            try {
+                String userGender = promotionRepo.getUserGender(userId).orElse(null);
+                redemptionId = promotionRepo.insertRedemptionRequiresNew(
+                        finalPromo.campaign().id(), userId, offer.id(),
+                        "RESERVED", trustedCountry, userGender,
+                        offer.priceMinorUnits(),
+                        finalPromo.discount().discountAmountMinor(),
+                        effectiveAmount, offer.currency());
+            } catch (Exception e) {
+                log.warn("Promotion redemption insert failed for user={} campaign={}, falling back to full price: {}",
+                        userId, appliedPromotion.campaign().id(), e.getMessage());
+                promotionRepo.releaseReservation(appliedPromotion.campaign().id());
+                appliedPromotion = null;
+                effectiveAmount = offer.priceMinorUnits();
+            }
+        }
+
         String initialStatus = "AWAITING_PAYMENT";
         String checkoutUrl = null;
         String providerRef = null;
@@ -191,6 +206,9 @@ public class OrderService {
             checkoutUrl = checkout.checkoutUrl();
             providerRef = checkout.txRef();
         } catch (ResponseStatusException e) {
+            if (redemptionId != null) {
+                promotionRepo.cancelRedemptionRequiresNew(redemptionId, "order_cancelled", "Chapa checkout failed");
+            }
             if (appliedPromotion != null) {
                 promotionRepo.releaseReservation(appliedPromotion.campaign().id());
             }
@@ -202,42 +220,20 @@ public class OrderService {
         }
 
         BillingRepository.OrderRow order = billingRepo.insertOrder(
-                userId, offer.id(), method.id(),
+                UUID.randomUUID(), userId, offer.id(), method.id(),
                 orderReference, initialStatus,
                 effectiveAmount, offer.currency(),
                 instructionSnapshot, checkoutUrl, expiresAt,
                 request.idempotencyKey()
         );
 
+        if (redemptionId != null) {
+            promotionRepo.setRedemptionOrderId(redemptionId, order.id());
+        }
+
         if (checkoutUrl != null && "AWAITING_PAYMENT".equals(initialStatus)) {
             billingRepo.updateOrderWithCheckout(order.id(), "AWAITING_PAYMENT", checkoutUrl, providerRef);
             order = billingRepo.findOrderById(order.id()).orElse(order);
-        }
-
-        // Persist promotion redemption after order is created
-        // Use a nested savepoint so a duplicate-key failure doesn't poison the outer transaction
-        if (appliedPromotion != null) {
-            final var finalOrder = order;
-            final int finalEffectiveAmount = effectiveAmount;
-            final var finalPromo = appliedPromotion;
-            try {
-                nestedTxTemplate.executeWithoutResult(status -> {
-                    String userGender = promotionRepo.getUserGender(userId).orElse(null);
-                    promotionRepo.insertRedemption(
-                            finalPromo.campaign().id(), userId, offer.id(), finalOrder.id(),
-                            "RESERVED", trustedCountry, userGender,
-                            offer.priceMinorUnits(),
-                            finalPromo.discount().discountAmountMinor(),
-                            finalEffectiveAmount, offer.currency());
-                });
-            } catch (DuplicateKeyException e) {
-                log.warn("Duplicate active redemption for user={} campaign={}, proceeding without promotion on order={}",
-                        userId, appliedPromotion.campaign().id(), order.id());
-                promotionRepo.releaseReservation(appliedPromotion.campaign().id());
-            } catch (Exception e) {
-                log.error("Failed to insert promotion redemption for order={}: {}", order.id(), e.getMessage());
-                promotionRepo.releaseReservation(appliedPromotion.campaign().id());
-            }
         }
 
         return toOrderResponse(order, instructionSnapshot);
@@ -550,7 +546,7 @@ public class OrderService {
         String instructionSnapshot = buildManualTransferSnapshot(method, request.additionalNotes());
 
         BillingRepository.OrderRow order = billingRepo.insertOrder(
-                userId, offer.id(), method.id(),
+                UUID.randomUUID(), userId, offer.id(), method.id(),
                 orderReference, "RECEIPT_SUBMITTED",
                 offer.priceMinorUnits(), offer.currency(),
                 instructionSnapshot, null, expiresAt,

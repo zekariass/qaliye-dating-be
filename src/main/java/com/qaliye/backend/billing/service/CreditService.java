@@ -338,6 +338,42 @@ public class CreditService {
     }
 
     /**
+     * Grants credits awarded by a promotion redemption. Non-expiring lot. Idempotent on idempotencyKey.
+     *
+     * @param userId           recipient
+     * @param amount           credits to grant
+     * @param redemptionId     the promotion redemption UUID (for audit)
+     * @param idempotencyKey   prevents double-grant on retries
+     * @return true if credits were granted, false if duplicate
+     */
+    @Transactional
+    public boolean grantPromotionCredits(UUID userId, long amount, UUID redemptionId, String idempotencyKey) {
+        if (amount <= 0) return true;
+        ensureBalanceRowExists(userId);
+
+        Long newBalance = jdbc.queryForObject(
+                "UPDATE user_credit_balances SET balance = balance + :amount, updated_at = CURRENT_TIMESTAMP "
+                        + "WHERE user_id = :userId RETURNING balance",
+                new MapSqlParameterSource().addValue("userId", userId).addValue("amount", amount),
+                Long.class);
+        if (newBalance == null) return false;
+
+        UUID ledgerEntryId = insertLedgerEntry(userId, "PROMOTION", amount,
+                newBalance, "PROMOTION", redemptionId, null, idempotencyKey);
+        if (ledgerEntryId == null) {
+            jdbc.update("UPDATE user_credit_balances SET balance = balance - :amount, "
+                            + "updated_at = CURRENT_TIMESTAMP WHERE user_id = :userId",
+                    new MapSqlParameterSource().addValue("userId", userId).addValue("amount", amount));
+            log.info("grantPromotionCredits: duplicate idempotencyKey={}, skipped", idempotencyKey);
+            return false;
+        }
+
+        insertCreditLot(userId, "PROMOTION", ledgerEntryId, amount, null);
+        log.info("Granted promotion credits: user={}, amount={}, redemption={}", userId, amount, redemptionId);
+        return true;
+    }
+
+    /**
      * Deducts credits for an action. Allocates across credit lots using FIFO expiry order.
      * Throws {@link InsufficientCreditsException} if the balance is too low.
      *

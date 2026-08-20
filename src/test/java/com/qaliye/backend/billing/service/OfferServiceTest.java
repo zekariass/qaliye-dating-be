@@ -39,6 +39,8 @@ class OfferServiceTest {
                 .thenReturn(Optional.empty());
         lenient().when(promotionEligibilityService.findClaimablePromotions(any(), any(), any()))
                 .thenReturn(List.of());
+        lenient().when(countrySettingsService.getSettings(any()))
+                .thenReturn(new CountrySettingsService.CountrySettings("ET", true, true, false));
     }
 
     @Test

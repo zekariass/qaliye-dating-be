@@ -46,6 +46,10 @@ public class PromotionSignupService {
             log.info("AUTO_ON_SIGNUP: found {} campaign(s) for country={} user={}", allProducts.size(), trustedCountry, userId);
 
             for (PromotionRepository.CampaignRow campaign : allProducts) {
+                if (!"FREE_PREMIUM".equals(campaign.benefitType())
+                        && !"CREDITS".equals(campaign.benefitType())) {
+                    continue;
+                }
                 Instant now = Instant.now();
                 if (!eligibilityService.checkEligibility(userId, campaign, trustedCountry, now)) {
                     log.info("AUTO_ON_SIGNUP: user={} not eligible for campaign={}", userId, campaign.campaignKey());
@@ -65,8 +69,12 @@ public class PromotionSignupService {
                             "RESERVED", trustedCountry, userGender,
                             0L, 0L, 0L, null
                     );
-                    fulfillmentService.grantFreePromotion(userId, campaign, redemptionId, trustedCountry);
-                    log.info("AUTO_ON_SIGNUP promotion applied: user={} campaign={}", userId, campaign.campaignKey());
+                    if ("CREDITS".equals(campaign.benefitType())) {
+                        fulfillmentService.grantCreditsPromotion(userId, campaign, redemptionId);
+                    } else {
+                        fulfillmentService.grantFreePromotion(userId, campaign, redemptionId, trustedCountry);
+                    }
+                    log.info("AUTO_ON_SIGNUP promotion applied: user={} campaign={} benefit={}", userId, campaign.campaignKey(), campaign.benefitType());
                     break; // grant only the first (highest priority) eligible campaign
                 } catch (Exception e) {
                     log.warn("AUTO_ON_SIGNUP grant failed for campaign={} user={}: {}", campaign.campaignKey(), userId, e.getMessage(), e);

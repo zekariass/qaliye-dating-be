@@ -373,13 +373,11 @@ public class MessageCommandService {
             boolean incremented = actionLimitRepo
                     .tryIncrementUnderLimit(callerId, cost.ruleId(), cost.periodStart(), cost.limitValue())
                     .isPresent();
-            if (!incremented) {
-                if (!cost.requiresCredits()) {
-                    throw new ActionLimitExceededException("MESSAGE", cost.periodType());
-                }
-                creditService.consumeCredits(callerId, cost.creditCost(), "MESSAGE", idemKey);
+            if (!incremented && !cost.requiresCredits()) {
+                throw new ActionLimitExceededException("MESSAGE", cost.periodType());
             }
-        } else if (cost.requiresCredits()) {
+        }
+        if (cost.requiresCredits()) {
             creditService.consumeCredits(callerId, cost.creditCost(), "MESSAGE", idemKey);
         }
     }

@@ -118,13 +118,28 @@ public class ActionCostService {
         List<ActionCostResult> results = jdbc.query(RESOLVE_PLAN_RULE_SQL, params, (rs, rn) -> {
             UUID ruleId             = rs.getObject("rule_id", UUID.class);
             long memberCost         = rs.getLong("member_credit_cost");
+            boolean memberWasNull   = rs.wasNull();
             long actualCost         = rs.getLong("actual_credit_cost");
+            boolean actualWasNull   = rs.wasNull();
             Object limitValObj      = rs.getObject("limit_value");
             Integer limitValue      = limitValObj != null ? ((Number) limitValObj).intValue() : null;
             String periodType       = rs.getString("period_type");
             boolean applyAfter      = rs.getBoolean("apply_credit_after_limit");
             Object subPeriodStart   = rs.getObject("current_period_start");
             Object subPeriodEnd     = rs.getObject("current_period_end");
+
+            // Apply default cost values:
+            // - If actual_credit_cost is NULL, default to member_credit_cost
+            // - If member_credit_cost is NULL, default to actual_credit_cost
+            // - If both are NULL, default to 0
+            if (memberWasNull && actualWasNull) {
+                memberCost = 0;
+                actualCost = 0;
+            } else if (memberWasNull) {
+                memberCost = actualCost;
+            } else if (actualWasNull) {
+                actualCost = memberCost;
+            }
 
             LocalDate[] period = resolvePeriod(periodType, subPeriodStart, subPeriodEnd);
             LocalDate periodStart = period[0];

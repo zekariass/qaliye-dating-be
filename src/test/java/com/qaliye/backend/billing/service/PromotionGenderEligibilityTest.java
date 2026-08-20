@@ -21,6 +21,7 @@ import static org.mockito.Mockito.when;
 class PromotionGenderEligibilityTest {
 
     @Mock PromotionRepository promotionRepo;
+    @Mock CountrySettingsService countrySettingsService;
 
     PromotionDiscountCalculator calculator;
     PromotionEligibilityService service;
@@ -31,7 +32,7 @@ class PromotionGenderEligibilityTest {
     @BeforeEach
     void setUp() {
         calculator = new PromotionDiscountCalculator();
-        service = new PromotionEligibilityService(promotionRepo, calculator);
+        service = new PromotionEligibilityService(promotionRepo, calculator, countrySettingsService);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
@@ -45,7 +46,7 @@ class PromotionGenderEligibilityTest {
                 30, null, 100, 1,
                 0, 0, 10,
                 Instant.now().minusSeconds(60), null,
-                "ACTIVE", targetGender, null, Instant.now(), Instant.now()
+                "ACTIVE", targetGender, null, null, Instant.now(), Instant.now()
         );
     }
 
@@ -58,7 +59,7 @@ class PromotionGenderEligibilityTest {
                 null, null, 100, 1,
                 0, 0, 10,
                 Instant.now().minusSeconds(60), null,
-                "ACTIVE", targetGender, null, Instant.now(), Instant.now()
+                "ACTIVE", targetGender, null, null, Instant.now(), Instant.now()
         );
     }
 
@@ -232,7 +233,7 @@ class PromotionGenderEligibilityTest {
                 maleCampaign.maxRedemptions(), maleCampaign.maxRedemptionsPerUser(),
                 maleCampaign.reservedCount(), maleCampaign.fulfilledCount(),
                 maleCampaign.priority(), maleCampaign.startsAt(), maleCampaign.endsAt(),
-                maleCampaign.status(), maleCampaign.targetGender(), maleCampaign.createdByUserId(),
+                maleCampaign.status(), maleCampaign.targetGender(), maleCampaign.includedCredits(), maleCampaign.createdByUserId(),
                 maleCampaign.createdAt(), maleCampaign.updatedAt()
         );
         var femaleCampaign = genderCampaign("FEMALE");
@@ -245,14 +246,14 @@ class PromotionGenderEligibilityTest {
                 femaleCampaign.maxRedemptions(), femaleCampaign.maxRedemptionsPerUser(),
                 femaleCampaign.reservedCount(), femaleCampaign.fulfilledCount(),
                 femaleCampaign.priority(), femaleCampaign.startsAt(), femaleCampaign.endsAt(),
-                femaleCampaign.status(), femaleCampaign.targetGender(), femaleCampaign.createdByUserId(),
+                femaleCampaign.status(), femaleCampaign.targetGender(), femaleCampaign.includedCredits(), femaleCampaign.createdByUserId(),
                 femaleCampaign.createdAt(), femaleCampaign.updatedAt()
         );
-        when(promotionRepo.findActiveCampaignsByTriggerAndProduct(eq("AUTO_ON_SIGNUP"), eq(productId), eq("ET"), any()))
+        when(promotionRepo.findActiveCampaignsByTrigger(eq("AUTO_ON_SIGNUP"), eq("ET"), any()))
                 .thenReturn(List.of(maleCampaign, femaleCampaign));
         when(promotionRepo.getUserGender(userId)).thenReturn(Optional.of("FEMALE"));
 
-        var result = service.findSignupPromotions(userId, productId, "ET");
+        var result = service.findSignupPromotions(userId, "ET");
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).targetGender()).isEqualTo("FEMALE");
@@ -270,7 +271,7 @@ class PromotionGenderEligibilityTest {
                 30, null, 10, 1,
                 5, 5, 10, // reserved + fulfilled = max
                 Instant.now().minusSeconds(60), null,
-                "ACTIVE", "MALE", null, Instant.now(), Instant.now()
+                "ACTIVE", "MALE", null, null, Instant.now(), Instant.now()
         );
         var femaleAvailable = new PromotionRepository.CampaignRow(
                 UUID.randomUUID(), "female-avail", "Female Available", null,
@@ -280,7 +281,7 @@ class PromotionGenderEligibilityTest {
                 30, null, 10, 1,
                 0, 0, 10,
                 Instant.now().minusSeconds(60), null,
-                "ACTIVE", "FEMALE", null, Instant.now(), Instant.now()
+                "ACTIVE", "FEMALE", null, null, Instant.now(), Instant.now()
         );
         when(promotionRepo.findActiveCampaignsByTriggerAndProduct(eq("USER_CLAIM"), eq(productId), eq("ET"), any()))
                 .thenReturn(List.of(maleFull, femaleAvailable));
@@ -302,7 +303,7 @@ class PromotionGenderEligibilityTest {
                 30, null, 10, 1,
                 5, 5, 10,
                 Instant.now().minusSeconds(60), null,
-                "ACTIVE", "MALE", null, Instant.now(), Instant.now()
+                "ACTIVE", "MALE", null, null, Instant.now(), Instant.now()
         );
         when(promotionRepo.findActiveCampaignsByTriggerAndProduct(eq("USER_CLAIM"), eq(productId), eq("ET"), any()))
                 .thenReturn(List.of(maleFull));

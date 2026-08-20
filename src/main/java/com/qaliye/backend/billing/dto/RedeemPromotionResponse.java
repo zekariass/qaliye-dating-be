@@ -10,5 +10,6 @@ public record RedeemPromotionResponse(
         String planCode,
         Integer durationDays,
         Instant periodEnd,
+        Long creditsGranted,
         String message
 ) {}

@@ -20,11 +20,14 @@ public class PromotionEligibilityService {
 
     private final PromotionRepository promotionRepo;
     private final PromotionDiscountCalculator calculator;
+    private final CountrySettingsService countrySettingsService;
 
     public PromotionEligibilityService(PromotionRepository promotionRepo,
-                                        PromotionDiscountCalculator calculator) {
+                                        PromotionDiscountCalculator calculator,
+                                        CountrySettingsService countrySettingsService) {
         this.promotionRepo = promotionRepo;
         this.calculator = calculator;
+        this.countrySettingsService = countrySettingsService;
     }
 
     public record AppliedPromotion(
@@ -89,16 +92,16 @@ public class PromotionEligibilityService {
     // ── AUTO_ON_SIGNUP: find all qualifying campaigns for a new user ─────────
 
     public List<PromotionRepository.CampaignRow> findSignupPromotions(
-            UUID userId, UUID subscriptionProductId, String trustedCountry) {
+            UUID userId, String trustedCountry) {
 
         Instant now = Instant.now();
         List<PromotionRepository.CampaignRow> candidates =
-                promotionRepo.findActiveCampaignsByTriggerAndProduct(
-                        "AUTO_ON_SIGNUP", subscriptionProductId, trustedCountry, now);
+                promotionRepo.findActiveCampaignsByTrigger("AUTO_ON_SIGNUP", trustedCountry, now);
 
         List<PromotionRepository.CampaignRow> eligible = new ArrayList<>();
         for (var campaign : candidates) {
-            if (!"FREE_PREMIUM".equals(campaign.benefitType())) continue;
+            if (!"FREE_PREMIUM".equals(campaign.benefitType())
+                    && !"CREDITS".equals(campaign.benefitType())) continue;
             if (checkEligibility(userId, campaign, trustedCountry, now)) {
                 eligible.add(campaign);
             }
@@ -111,12 +114,15 @@ public class PromotionEligibilityService {
 
     public List<PromotionRepository.CampaignRow> findAllEligiblePromotions(UUID userId, String trustedCountry) {
         Instant now = Instant.now();
+        CountrySettingsService.CountrySettings settings = countrySettingsService.getSettings(trustedCountry);
         List<PromotionRepository.CampaignRow> result = new ArrayList<>();
 
         List<PromotionRepository.CampaignRow> claimable =
                 promotionRepo.findActiveCampaignsByTrigger("USER_CLAIM", trustedCountry, now);
         for (var campaign : claimable) {
-            if (!"FREE_PREMIUM".equals(campaign.benefitType())) continue;
+            if (!"FREE_PREMIUM".equals(campaign.benefitType())
+                    && !"CREDITS".equals(campaign.benefitType())) continue;
+            if (!isAllowedByCountrySettings(campaign, settings)) continue;
             if (checkEligibility(userId, campaign, trustedCountry, now)) {
                 result.add(campaign);
             }
@@ -126,12 +132,20 @@ public class PromotionEligibilityService {
                 promotionRepo.findActiveCampaignsByTrigger("PURCHASE", trustedCountry, now);
         for (var campaign : purchase) {
             if (!"DISCOUNT".equals(campaign.benefitType())) continue;
+            if (!isAllowedByCountrySettings(campaign, settings)) continue;
             if (checkEligibility(userId, campaign, trustedCountry, now)) {
                 result.add(campaign);
             }
         }
 
         return result;
+    }
+
+    private boolean isAllowedByCountrySettings(PromotionRepository.CampaignRow campaign,
+                                                CountrySettingsService.CountrySettings settings) {
+        if (campaign.subscriptionProductId() != null && !settings.subscriptionEnabled()) return false;
+        if (campaign.consumableProductId() != null && !settings.creditsEnabled()) return false;
+        return true;
     }
 
     // ── Core eligibility check ───────────────────────────────────────────────
@@ -157,6 +171,17 @@ public class PromotionEligibilityService {
                 && (campaign.fulfilledCount() + campaign.reservedCount()) >= campaign.maxRedemptions()) {
             return false;
         }
+
+        int userRedemptionCount = promotionRepo.countActiveRedemptionsForUser(campaign.id(), userId);
+        if (userRedemptionCount >= campaign.maxRedemptionsPerUser()) {
+            log.debug("Per-user redemption limit reached: campaign={} user={} count={}/{}",
+                    campaign.id(), userId, userRedemptionCount, campaign.maxRedemptionsPerUser());
+            return false;
+        }
+
+        log.debug("Promotion eligible: campaign={} user={} userRedemptions={}/{} globalUsed={}/{}",
+                campaign.campaignKey(), userId, userRedemptionCount, campaign.maxRedemptionsPerUser(),
+                campaign.fulfilledCount() + campaign.reservedCount(), campaign.maxRedemptions());
 
         return true;
     }

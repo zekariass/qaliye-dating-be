@@ -42,7 +42,7 @@ public class PromotionService {
         if (!"USER_CLAIM".equals(campaign.triggerType())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "promotion_not_claimable");
         }
-        if (!"FREE_PREMIUM".equals(campaign.benefitType())) {
+        if (!"FREE_PREMIUM".equals(campaign.benefitType()) && !"CREDITS".equals(campaign.benefitType())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "promotion_type_unsupported");
         }
         if (!"ACTIVE".equals(campaign.status())) {
@@ -81,6 +81,22 @@ public class PromotionService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "promotion_already_redeemed");
         }
 
+        if ("CREDITS".equals(campaign.benefitType())) {
+            try {
+                fulfillmentService.grantCreditsPromotion(userId, campaign, redemptionId);
+            } catch (Exception e) {
+                promotionRepo.cancelRedemption(redemptionId, "grant_failed", e.getMessage());
+                promotionRepo.releaseReservation(campaign.id());
+                String reason = e.getMessage() != null ? e.getMessage() : "grant_failed";
+                throw new ResponseStatusException(HttpStatus.CONFLICT, reason);
+            }
+            log.info("USER_CLAIM CREDITS redeemed: user={} campaign={} credits={}",
+                    userId, campaignKey, campaign.includedCredits());
+            return new RedeemPromotionResponse(
+                    redemptionId, null, campaignKey, null, null, null,
+                    campaign.includedCredits(), "Promotion redeemed successfully");
+        }
+
         UUID subId;
         try {
             subId = fulfillmentService.grantFreePromotion(userId, campaign, redemptionId, trustedCountry);
@@ -93,16 +109,12 @@ public class PromotionService {
 
         Instant periodEnd = now.plus(campaign.durationDays(), ChronoUnit.DAYS);
 
-        log.info("USER_CLAIM redeemed: user={} campaign={} sub={}", userId, campaignKey, subId);
+        log.info("USER_CLAIM FREE_PREMIUM redeemed: user={} campaign={} sub={}", userId, campaignKey, subId);
 
         return new RedeemPromotionResponse(
-                redemptionId,
-                subId,
-                campaignKey,
-                null,
-                campaign.durationDays(),
-                periodEnd,
-                "Promotion redeemed successfully"
+                redemptionId, subId, campaignKey, null,
+                campaign.durationDays(), periodEnd,
+                campaign.includedCredits(), "Promotion redeemed successfully"
         );
     }
 }

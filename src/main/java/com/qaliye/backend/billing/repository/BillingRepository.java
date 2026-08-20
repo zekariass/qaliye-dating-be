@@ -336,12 +336,12 @@ public class BillingRepository {
 
     private static final String INSERT_ORDER_SQL = """
             INSERT INTO payment_orders
-                (user_id, payment_offer_id, payment_method_id, order_reference, status,
+                (id, user_id, payment_offer_id, payment_method_id, order_reference, status,
                  expected_amount_minor_units, expected_currency,
                  payment_instruction_snapshot, provider_checkout_url, expires_at,
                  idempotency_key, verification_count)
             VALUES
-                (:userId, :paymentOfferId, :paymentMethodId, :orderReference, :status,
+                (:id, :userId, :paymentOfferId, :paymentMethodId, :orderReference, :status,
                  :expectedAmount, :expectedCurrency,
                  :instructionSnapshot::jsonb, :providerCheckoutUrl, :expiresAt,
                  :idempotencyKey, :verificationCount)
@@ -408,12 +408,13 @@ public class BillingRepository {
             String providerVerificationRequestId, Integer verificationCount
     ) {}
 
-    public OrderRow insertOrder(UUID userId, UUID paymentOfferId, UUID paymentMethodId,
+    public OrderRow insertOrder(UUID orderId, UUID userId, UUID paymentOfferId, UUID paymentMethodId,
                                 String orderReference, String status,
                                 int expectedAmount, String expectedCurrency,
                                 String instructionSnapshot, String providerCheckoutUrl,
                                 Instant expiresAt, String idempotencyKey) {
         var params = new MapSqlParameterSource()
+                .addValue("id", orderId)
                 .addValue("userId", userId)
                 .addValue("paymentOfferId", paymentOfferId)
                 .addValue("paymentMethodId", paymentMethodId)
@@ -426,7 +427,7 @@ public class BillingRepository {
                 .addValue("expiresAt", java.sql.Timestamp.from(expiresAt))
                 .addValue("idempotencyKey", idempotencyKey)
                 .addValue("verificationCount", 0);
-        UUID orderId = jdbc.queryForObject(INSERT_ORDER_SQL, params,
+        jdbc.queryForObject(INSERT_ORDER_SQL, params,
                 (rs, rowNum) -> rs.getObject("id", UUID.class));
         return findOrderById(orderId).orElseThrow();
     }

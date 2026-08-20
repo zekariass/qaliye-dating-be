@@ -5,6 +5,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Types;
 import java.time.Instant;
@@ -35,7 +37,7 @@ public class PromotionRepository {
             Integer maxRedemptions, int maxRedemptionsPerUser,
             int reservedCount, int fulfilledCount,
             int priority, Instant startsAt, Instant endsAt,
-            String status, String targetGender, UUID createdByUserId,
+            String status, String targetGender, Long includedCredits, UUID createdByUserId,
             Instant createdAt, Instant updatedAt
     ) {}
 
@@ -72,7 +74,7 @@ public class PromotionRepository {
                    max_redemptions, max_redemptions_per_user,
                    reserved_count, fulfilled_count,
                    priority, starts_at, ends_at, status,
-                   target_gender, created_by_user_id,
+                   target_gender, included_credits, created_by_user_id,
                    created_at, updated_at
             FROM promotion_campaigns
             """;
@@ -123,14 +125,14 @@ public class PromotionRepository {
                  subscription_product_id, consumable_product_id, country_code,
                  duration_days, new_user_window_days,
                  max_redemptions, max_redemptions_per_user, priority,
-                 starts_at, ends_at, status, target_gender, created_by_user_id)
+                 starts_at, ends_at, status, target_gender, included_credits, created_by_user_id)
             VALUES
                 (:campaignKey, :name, :description, :triggerType, :eligibilityType, :benefitType,
                  :discountType, :discountValue, :discountCurrency,
                  :subscriptionProductId, :consumableProductId, :countryCode,
                  :durationDays, :newUserWindowDays,
                  :maxRedemptions, :maxRedemptionsPerUser, :priority,
-                 :startsAt, :endsAt, 'DRAFT', :targetGender, :createdBy)
+                 :startsAt, :endsAt, 'DRAFT', :targetGender, :includedCredits, :createdBy)
             RETURNING id
             """;
 
@@ -231,6 +233,12 @@ public class PromotionRepository {
             UPDATE promotion_redemptions
             SET status = 'FULFILLED', subscription_id = :subscriptionId,
                 fulfilled_at = NOW(), updated_at = NOW()
+            WHERE id = :id
+            """;
+
+    private static final String UPDATE_REDEMPTION_ORDER_ID_SQL = """
+            UPDATE promotion_redemptions
+            SET payment_order_id = :orderId, updated_at = NOW()
             WHERE id = :id
             """;
 
@@ -404,6 +412,7 @@ public class PromotionRepository {
                 .addValue("startsAt", proto.startsAt() != null ? java.sql.Timestamp.from(proto.startsAt()) : null)
                 .addValue("endsAt", proto.endsAt() != null ? java.sql.Timestamp.from(proto.endsAt()) : null)
                 .addValue("targetGender", proto.targetGender())
+                .addValue("includedCredits", proto.includedCredits())
                 .addValue("createdBy", createdBy);
         return jdbc.queryForObject(INSERT_CAMPAIGN_SQL, params, UUID.class);
     }
@@ -459,6 +468,18 @@ public class PromotionRepository {
         jdbc.update(ATOMIC_FULFILL_SQL, Map.of("campaignId", campaignId));
     }
 
+    private static final String COUNT_ACTIVE_REDEMPTIONS_FOR_USER_SQL = """
+            SELECT COUNT(*) FROM promotion_redemptions
+            WHERE campaign_id = :campaignId AND user_id = :userId
+              AND status IN ('RESERVED', 'PROVIDER_PENDING', 'FULFILLED')
+            """;
+
+    public int countActiveRedemptionsForUser(UUID campaignId, UUID userId) {
+        Integer count = jdbc.queryForObject(COUNT_ACTIVE_REDEMPTIONS_FOR_USER_SQL,
+                Map.of("campaignId", campaignId, "userId", userId), Integer.class);
+        return count != null ? count : 0;
+    }
+
     public void releaseReservation(UUID campaignId) {
         jdbc.update(RELEASE_RESERVATION_SQL, Map.of("campaignId", campaignId));
     }
@@ -468,6 +489,21 @@ public class PromotionRepository {
     }
 
     // ── Redemption methods ───────────────────────────────────────────────────
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public UUID insertRedemptionRequiresNew(UUID campaignId, UUID userId, UUID paymentOfferId,
+                                            String status, String eligibilityCountry, String eligibilityGender,
+                                            long originalAmount, long discountAmount, long finalAmount,
+                                            String currency) {
+        return insertRedemption(campaignId, userId, paymentOfferId, null,
+                status, eligibilityCountry, eligibilityGender,
+                originalAmount, discountAmount, finalAmount, currency);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void cancelRedemptionRequiresNew(UUID redemptionId, String failureCode, String failureReason) {
+        cancelRedemption(redemptionId, failureCode, failureReason);
+    }
 
     public UUID insertRedemption(UUID campaignId, UUID userId, UUID paymentOfferId, UUID paymentOrderId,
                                   String status, String eligibilityCountry, String eligibilityGender,
@@ -489,8 +525,14 @@ public class PromotionRepository {
     }
 
     public void fulfillRedemption(UUID redemptionId, UUID subscriptionId) {
-        jdbc.update(UPDATE_REDEMPTION_FULFILLED_SQL,
-                Map.of("id", redemptionId, "subscriptionId", subscriptionId));
+        var params = new MapSqlParameterSource()
+                .addValue("id", redemptionId)
+                .addValue("subscriptionId", subscriptionId);
+        jdbc.update(UPDATE_REDEMPTION_FULFILLED_SQL, params);
+    }
+
+    public void setRedemptionOrderId(UUID redemptionId, UUID orderId) {
+        jdbc.update(UPDATE_REDEMPTION_ORDER_ID_SQL, Map.of("id", redemptionId, "orderId", orderId));
     }
 
     public void cancelRedemption(UUID redemptionId, String failureCode, String failureReason) {
@@ -652,6 +694,7 @@ public class PromotionRepository {
                         ? rs.getObject("ends_at", java.time.OffsetDateTime.class).toInstant() : null,
                 rs.getString("status"),
                 rs.getString("target_gender"),
+                rs.getObject("included_credits") != null ? rs.getLong("included_credits") : null,
                 rs.getObject("created_by_user_id", UUID.class),
                 rs.getObject("created_at", java.time.OffsetDateTime.class).toInstant(),
                 rs.getObject("updated_at", java.time.OffsetDateTime.class).toInstant()

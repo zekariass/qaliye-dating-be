@@ -21,7 +21,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
-import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
@@ -51,7 +50,6 @@ class OrderServiceTest {
     @Mock BillingProperties.Verifier verifier;
     @Mock ChapaClient chapaClient;
     @Mock CountrySettingsService countrySettingsService;
-    @Mock PlatformTransactionManager txManager;
 
     OrderService service;
 
@@ -64,11 +62,9 @@ class OrderServiceTest {
 
     @BeforeEach
     void setUp() {
-        lenient().when(txManager.getTransaction(any())).thenReturn(mock(org.springframework.transaction.TransactionStatus.class));
-        lenient().when(txManager.getTransaction(any())).thenAnswer(inv -> mock(org.springframework.transaction.TransactionStatus.class));
         service = new OrderService(billingRepo, billingProps, marketResolver,
                 gatewayRegistry, verifyEtClient, fulfillmentService, new ObjectMapper(),
-                promotionRepo, promotionEligibilityService, chapaClient, countrySettingsService, txManager);
+                promotionRepo, promotionEligibilityService, chapaClient, countrySettingsService);
         lenient().when(billingProps.getPaymentOrderExpiryHours()).thenReturn(2);
         lenient().when(billingProps.getPaymentInstructions()).thenReturn(paymentInstructions);
         lenient().when(billingProps.getVerifier()).thenReturn(verifier);
@@ -77,6 +73,8 @@ class OrderServiceTest {
         lenient().when(paymentInstructions.getAccountNumber()).thenReturn("100012345");
         lenient().when(paymentInstructions.getBankName()).thenReturn("CBE");
         lenient().when(marketResolver.resolveMarket(any(), any())).thenReturn(ET_ANDROID);
+        lenient().when(countrySettingsService.getSettings(any()))
+                .thenReturn(new CountrySettingsService.CountrySettings("ET", true, true, false));
         lenient().when(mockGateway.getMethodCode()).thenReturn("chapa");
         lenient().when(mockGateway.isConfigured()).thenReturn(true);
     }
@@ -93,7 +91,7 @@ class OrderServiceTest {
         when(gatewayRegistry.resolve("chapa")).thenReturn(mockGateway);
         when(mockGateway.createCheckout(anyString(), anyInt(), anyString(), anyString()))
                 .thenReturn(new LocalOnlinePaymentGateway.CheckoutResult("https://chapa.co/pay/xxx", "QAL-TXREF"));
-        when(billingRepo.insertOrder(eq(userId), eq(offerId), eq(methodId),
+        when(billingRepo.insertOrder(any(), eq(userId), eq(offerId), eq(methodId),
                 anyString(), anyString(), anyInt(), anyString(),
                 anyString(), anyString(), any(), any()))
                 .thenReturn(order);
@@ -294,7 +292,7 @@ class OrderServiceTest {
 
         when(billingRepo.findOfferById(offerId)).thenReturn(Optional.of(offer));
         when(billingRepo.findPaymentMethodById(methodId)).thenReturn(Optional.of(method));
-        when(billingRepo.insertOrder(any(), any(), any(), anyString(), eq("RECEIPT_SUBMITTED"),
+        when(billingRepo.insertOrder(any(), any(), any(), any(), anyString(), eq("RECEIPT_SUBMITTED"),
                 anyInt(), anyString(), anyString(), any(), any(), any())).thenReturn(order);
         when(billingRepo.insertProof(any(), any(), any(), any(), any(), any(), anyInt(), any()))
                 .thenReturn(UUID.randomUUID());

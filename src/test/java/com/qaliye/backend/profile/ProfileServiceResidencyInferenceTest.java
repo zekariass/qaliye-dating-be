@@ -114,6 +114,11 @@ class ProfileServiceResidencyInferenceTest {
         @BeforeEach
         void setUp() {
             service = new ProfileService(jdbc, profilePhotoService, activityStatusService, catalogService, actionCostService, creditService, actionLimitRepo);
+            lenient().when(actionCostService.evaluate(any(), anyString()))
+                    .thenReturn(new ActionCostService.ActionCostResult(
+                            UUID.randomUUID(), 0, true, false, false,
+                            java.time.LocalDate.now(), java.time.LocalDate.now(),
+                            0, null, "DAY"));
         }
 
         @Test

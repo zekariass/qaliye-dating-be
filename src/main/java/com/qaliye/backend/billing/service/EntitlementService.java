@@ -248,7 +248,6 @@ public class EntitlementService {
         Map<String, Boolean> defaults = new LinkedHashMap<>();
         defaults.put("seeWhoLikedYou", false);
         defaults.put("advancedFilters", false);
-        defaults.put("incognitoMode", false);
         return defaults;
     }
 

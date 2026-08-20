@@ -55,7 +55,7 @@ class PromotionServiceTest {
                 30, null, 100, 1,
                 0, 0, 0,
                 Instant.now().minusSeconds(60), null,
-                "ACTIVE", null, null, Instant.now(), Instant.now()
+                "ACTIVE", null, null, null, Instant.now(), Instant.now()
         );
     }
 
@@ -112,7 +112,7 @@ class PromotionServiceTest {
                 30, null, 100, 1,
                 0, 0, 0,
                 Instant.now().minusSeconds(60), null,
-                "PAUSED", null, null, Instant.now(), Instant.now()
+                "PAUSED", null, null, null, Instant.now(), Instant.now()
         );
         when(promotionRepo.findCampaignByKey("promo-key")).thenReturn(Optional.of(campaign));
 

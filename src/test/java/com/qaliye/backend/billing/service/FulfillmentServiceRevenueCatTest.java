@@ -41,6 +41,8 @@ class FulfillmentServiceRevenueCatTest {
         fulfillmentService = new FulfillmentService(billingRepo, creditLotRepo, creditService, promotionRepo);
         lenient().when(creditLotRepo.getPlanBoostLimit(any())).thenReturn(1);
         lenient().doNothing().when(billingRepo).lockUserRowForUpdate(any());
+        lenient().when(creditLotRepo.insertLedgerEntry(any(), any(), anyInt(), any(), any(), any(), any(),
+                any(), any(), any())).thenReturn(ledgerEntryId);
     }
 
     // ── 1. Initial purchase: no active sub → insert new ──────────────────────
@@ -54,9 +56,11 @@ class FulfillmentServiceRevenueCatTest {
                 .thenReturn(subId);
         when(billingRepo.findTransactionByProviderTxId("APPLE_APP_STORE", "txn_123"))
                 .thenReturn(Optional.empty());
-        when(creditLotRepo.insertLedgerEntry(any(), any(), anyInt(), any(), any(), any(), any(),
-                any(), any(), any()))
-                .thenReturn(ledgerEntryId);
+        when(billingRepo.findOfferById(offerId)).thenReturn(Optional.of(new BillingRepository.FullOfferRow(
+                offerId, UUID.randomUUID(), null, "ET", "IOS",
+                "USD", 0, true, "com.qaliye.premium",
+                "PREMIUM", "MONTH", 1, planId,
+                1, null, null, null, null)));
 
         UUID result = fulfillmentService.fulfillRevenueCatSubscription(
                 userId, "orig_123", "txn_123", planId, offerId,
@@ -68,7 +72,8 @@ class FulfillmentServiceRevenueCatTest {
         verify(billingRepo).insertTransaction(eq(userId), eq(subId), isNull(), eq(offerId), isNull(),
                 eq("SUBSCRIPTION"), eq("PURCHASE"), eq(0), eq("USD"),
                 eq("APPLE_APP_STORE"), eq("txn_123"), isNull(), isNull(), eq("COMPLETED"));
-        verify(creditLotRepo).createLot(eq(userId), eq("BOOST_CREDIT"), eq(ledgerEntryId), eq(1), eq(periodEnd));
+        verify(creditService).grantSubscriptionAllowance(eq(userId), eq(1L), eq(subId),
+                eq("rc-credits-orig_123-2025-01-01T00:00:00Z"), eq(periodEnd));
         org.junit.jupiter.api.Assertions.assertEquals(subId, result);
     }
 
@@ -84,10 +89,6 @@ class FulfillmentServiceRevenueCatTest {
                 .thenReturn(List.of(existing));
         when(billingRepo.findTransactionByProviderTxId("APPLE_APP_STORE", "txn_new"))
                 .thenReturn(Optional.empty());
-        when(creditLotRepo.insertLedgerEntry(any(), any(), anyInt(), any(), any(), any(), any(),
-                any(), any(), any()))
-                .thenReturn(ledgerEntryId);
-
         UUID result = fulfillmentService.fulfillRevenueCatSubscription(
                 userId, "orig_123", "txn_new", planId, offerId,
                 periodStart, periodEnd, "APPLE_APP_STORE", true, "RENEWAL");
@@ -113,10 +114,6 @@ class FulfillmentServiceRevenueCatTest {
                 .thenReturn(List.of(existing));
         when(billingRepo.findTransactionByProviderTxId("APPLE_APP_STORE", "txn_123"))
                 .thenReturn(Optional.of(existingTxId));
-        when(creditLotRepo.insertLedgerEntry(any(), any(), anyInt(), any(), any(), any(), any(),
-                any(), any(), any()))
-                .thenReturn(ledgerEntryId);
-
         fulfillmentService.fulfillRevenueCatSubscription(
                 userId, "orig_123", "txn_123", planId, offerId,
                 periodStart, periodEnd, "APPLE_APP_STORE", true, "PURCHASE");
@@ -137,10 +134,6 @@ class FulfillmentServiceRevenueCatTest {
                 .thenReturn(List.of(existing));
         when(billingRepo.findTransactionByProviderTxId("APPLE_APP_STORE", "txn_restore"))
                 .thenReturn(Optional.empty());
-        when(creditLotRepo.insertLedgerEntry(any(), any(), anyInt(), any(), any(), any(), any(),
-                any(), any(), any()))
-                .thenReturn(ledgerEntryId);
-
         UUID result = fulfillmentService.fulfillRevenueCatSubscription(
                 userId, "orig_123", "txn_restore", planId, offerId,
                 periodStart, periodEnd, "APPLE_APP_STORE", true, "PURCHASE");
@@ -173,10 +166,6 @@ class FulfillmentServiceRevenueCatTest {
                 .thenReturn(newSubId);
         when(billingRepo.findTransactionByProviderTxId("APPLE_APP_STORE", "txn_new"))
                 .thenReturn(Optional.empty());
-        when(creditLotRepo.insertLedgerEntry(any(), any(), anyInt(), any(), any(), any(), any(),
-                any(), any(), any()))
-                .thenReturn(ledgerEntryId);
-
         UUID result = fulfillmentService.fulfillRevenueCatSubscription(
                 userId, "orig_new", "txn_new", newPlanId, newOfferId,
                 periodStart, periodEnd, "APPLE_APP_STORE", true, "UPGRADE");
@@ -200,10 +189,6 @@ class FulfillmentServiceRevenueCatTest {
                 .thenReturn(List.of(active));
         when(billingRepo.findTransactionByProviderTxId("APPLE_APP_STORE", "txn_new"))
                 .thenReturn(Optional.empty());
-        when(creditLotRepo.insertLedgerEntry(any(), any(), anyInt(), any(), any(), any(), any(),
-                any(), any(), any()))
-                .thenReturn(ledgerEntryId);
-
         UUID result = fulfillmentService.fulfillRevenueCatSubscription(
                 userId, "orig_123", "txn_new", planId, offerId,
                 periodStart, periodEnd, "APPLE_APP_STORE", true, "PURCHASE");
@@ -233,10 +218,6 @@ class FulfillmentServiceRevenueCatTest {
                 .thenReturn(List.of(oldExpired, currentActive));
         when(billingRepo.findTransactionByProviderTxId("APPLE_APP_STORE", "txn_new"))
                 .thenReturn(Optional.empty());
-        when(creditLotRepo.insertLedgerEntry(any(), any(), anyInt(), any(), any(), any(), any(),
-                any(), any(), any()))
-                .thenReturn(ledgerEntryId);
-
         UUID result = fulfillmentService.fulfillRevenueCatSubscription(
                 userId, "orig_123", "txn_new", planId, offerId,
                 periodStart, periodEnd, "APPLE_APP_STORE", true, "PURCHASE");
@@ -272,16 +253,17 @@ class FulfillmentServiceRevenueCatTest {
                 .thenReturn(List.of(existing));
         when(billingRepo.findTransactionByProviderTxId("APPLE_APP_STORE", "txn_123"))
                 .thenReturn(Optional.of(UUID.randomUUID()));
-        when(creditLotRepo.insertLedgerEntry(any(), any(), anyInt(), any(), any(), any(), any(),
-                eq("rc-boost-orig_123-2025-01-01T00:00:00Z"), any(), any()))
-                .thenReturn(ledgerEntryId);
+        when(billingRepo.findOfferById(offerId)).thenReturn(Optional.of(new BillingRepository.FullOfferRow(
+                offerId, UUID.randomUUID(), null, "ET", "IOS",
+                "USD", 0, true, "com.qaliye.premium",
+                "PREMIUM", "MONTH", 1, planId,
+                1, null, null, null, null)));
 
         fulfillmentService.fulfillRevenueCatSubscription(
                 userId, "orig_123", "txn_123", planId, offerId,
                 periodStart, periodEnd, "APPLE_APP_STORE", true, "PURCHASE");
 
-        verify(creditLotRepo).insertLedgerEntry(eq(userId), eq("BOOST_CREDIT"), eq(1),
-                eq("SUBSCRIPTION_ALLOWANCE"), eq(null), eq(subId), eq(null),
-                eq("rc-boost-orig_123-2025-01-01T00:00:00Z"), eq(periodEnd), any());
+        verify(creditService).grantSubscriptionAllowance(eq(userId), eq(1L), eq(subId),
+                eq("rc-credits-orig_123-2025-01-01T00:00:00Z"), eq(periodEnd));
     }
 }
