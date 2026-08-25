@@ -14,6 +14,8 @@ public record CreatePaymentOfferRequest(
         @NotBlank String currency,
         @NotNull @Positive int priceMinorUnits,
         String externalProductId,
+        String appleProductId,
+        String googleProductId,
         String revenuecatOfferingId,
         String revenuecatPackageId,
         Boolean autoRenew,

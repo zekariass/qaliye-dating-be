@@ -152,7 +152,8 @@ public class AdminPaymentConfigService {
         enforceAdmin(adminId);
         UUID id = repo.createPaymentOffer(req.subscriptionProductId(), req.consumableProductId(),
                 req.countryCode(), req.platform(), req.currency(), req.priceMinorUnits(),
-                req.externalProductId(), req.revenuecatOfferingId(), req.revenuecatPackageId(),
+                req.externalProductId(), req.appleProductId(), req.googleProductId(),
+                req.revenuecatOfferingId(), req.revenuecatPackageId(),
                 req.autoRenew(), req.isActive());
         return repo.findPaymentOfferById(id).orElseThrow();
     }
@@ -161,7 +162,8 @@ public class AdminPaymentConfigService {
         enforceAdmin(adminId);
         int rows = repo.updatePaymentOffer(id, req.subscriptionProductId(), req.consumableProductId(),
                 req.countryCode(), req.platform(), req.currency(), req.priceMinorUnits(),
-                req.externalProductId(), req.revenuecatOfferingId(), req.revenuecatPackageId(),
+                req.externalProductId(), req.appleProductId(), req.googleProductId(),
+                req.revenuecatOfferingId(), req.revenuecatPackageId(),
                 req.autoRenew(), req.isActive());
         if (rows == 0) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "payment_offer_not_found");
         return repo.findPaymentOfferById(id).orElseThrow();

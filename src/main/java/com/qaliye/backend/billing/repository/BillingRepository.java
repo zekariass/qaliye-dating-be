@@ -34,7 +34,8 @@ public class BillingRepository {
     private static final String FIND_OFFERS_SQL = """
             SELECT po.id, po.subscription_product_id, po.consumable_product_id, po.country_code, po.platform,
                    po.currency, po.price_minor_units, po.auto_renew,
-                   po.external_product_id, po.revenuecat_offering_id, po.revenuecat_package_id,
+                   po.external_product_id, po.apple_product_id, po.google_product_id,
+                   po.revenuecat_offering_id, po.revenuecat_package_id,
                    sp.product_code AS sub_product_code,
                    sp.billing_interval_unit, sp.billing_interval_count,
                    COALESCE(sp.included_credits, 0) AS included_credits,
@@ -52,7 +53,8 @@ public class BillingRepository {
     public record OfferRow(
             UUID id, UUID subscriptionProductId, UUID consumableProductId, String countryCode, String platform,
             String currency, int priceMinorUnits, boolean autoRenew,
-            String externalProductId, String revenuecatOfferingId, String revenuecatPackageId,
+            String externalProductId, String appleProductId, String googleProductId,
+            String revenuecatOfferingId, String revenuecatPackageId,
             String subProductCode, String billingIntervalUnit, Integer billingIntervalCount,
             long includedCredits,
             String conProductCode, String entitlementType, Integer quantityGranted
@@ -72,6 +74,8 @@ public class BillingRepository {
                 rs.getInt("price_minor_units"),
                 rs.getBoolean("auto_renew"),
                 rs.getString("external_product_id"),
+                rs.getString("apple_product_id"),
+                rs.getString("google_product_id"),
                 rs.getString("revenuecat_offering_id"),
                 rs.getString("revenuecat_package_id"),
                 rs.getString("sub_product_code"),
@@ -90,6 +94,7 @@ public class BillingRepository {
             SELECT po.id, po.subscription_product_id, po.consumable_product_id,
                    po.country_code, po.platform,
                    po.currency, po.price_minor_units, po.external_product_id,
+                   po.apple_product_id, po.google_product_id,
                    po.revenuecat_offering_id, po.revenuecat_package_id, po.auto_renew,
                    sp.product_code AS sub_product_code,
                    sp.billing_interval_unit, sp.billing_interval_count, sp.plan_id,
@@ -106,7 +111,7 @@ public class BillingRepository {
             UUID id, UUID subscriptionProductId, UUID consumableProductId,
             String countryCode, String platform,
             String currency, int priceMinorUnits, boolean autoRenew,
-            String externalProductId,
+            String externalProductId, String appleProductId, String googleProductId,
             String subProductCode, String billingIntervalUnit, Integer billingIntervalCount, UUID planId,
             long includedCredits,
             String conProductCode, String entitlementType, Integer quantityGranted, Integer expiresAfterDays
@@ -124,6 +129,8 @@ public class BillingRepository {
                 rs.getInt("price_minor_units"),
                 rs.getBoolean("auto_renew"),
                 rs.getString("external_product_id"),
+                rs.getString("apple_product_id"),
+                rs.getString("google_product_id"),
                 rs.getString("sub_product_code"),
                 rs.getString("billing_interval_unit"),
                 rs.getObject("billing_interval_count") != null ? rs.getInt("billing_interval_count") : null,
@@ -142,6 +149,7 @@ public class BillingRepository {
             SELECT po.id, po.subscription_product_id, po.consumable_product_id,
                    po.country_code, po.platform,
                    po.currency, po.price_minor_units, po.external_product_id,
+                   po.apple_product_id, po.google_product_id,
                    po.revenuecat_offering_id, po.revenuecat_package_id, po.auto_renew,
                    sp.product_code AS sub_product_code,
                    sp.billing_interval_unit, sp.billing_interval_count, sp.plan_id,
@@ -151,14 +159,16 @@ public class BillingRepository {
             FROM payment_offers po
             LEFT JOIN subscription_products sp ON sp.id = po.subscription_product_id
             LEFT JOIN consumable_products cp ON cp.id = po.consumable_product_id
-            WHERE po.external_product_id = :externalProductId
+            WHERE (po.external_product_id = :productId
+                   OR po.apple_product_id = :productId
+                   OR po.google_product_id = :productId)
               AND po.revenuecat_offering_id IS NOT NULL
               AND po.is_active = TRUE
             LIMIT 1
             """;
 
-    public Optional<FullOfferRow> findOfferByExternalProductId(String externalProductId) {
-        var params = new MapSqlParameterSource("externalProductId", externalProductId);
+    public Optional<FullOfferRow> findOfferByExternalProductId(String productId) {
+        var params = new MapSqlParameterSource("productId", productId);
         return jdbc.query(FIND_OFFER_BY_EXTERNAL_ID_SQL, params, (rs, rowNum) -> new FullOfferRow(
                 rs.getObject("id", UUID.class),
                 rs.getObject("subscription_product_id", UUID.class),
@@ -169,6 +179,8 @@ public class BillingRepository {
                 rs.getInt("price_minor_units"),
                 rs.getBoolean("auto_renew"),
                 rs.getString("external_product_id"),
+                rs.getString("apple_product_id"),
+                rs.getString("google_product_id"),
                 rs.getString("sub_product_code"),
                 rs.getString("billing_interval_unit"),
                 rs.getObject("billing_interval_count") != null ? rs.getInt("billing_interval_count") : null,

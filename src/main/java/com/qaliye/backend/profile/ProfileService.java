@@ -1,5 +1,6 @@
 package com.qaliye.backend.profile;
 
+import java.util.Objects;
 import com.qaliye.backend.activity.ActivityStatus;
 import com.qaliye.backend.activity.ActivityStatusService;
 import com.qaliye.backend.billing.repository.ActionLimitRepository;
@@ -846,6 +847,7 @@ public class ProfileService {
         String primaryPhotoUrl = photos.stream()
                 .filter(ph -> Boolean.TRUE.equals(ph.isPrimary()))
                 .map(ProfilePhotoDto::signedUrl)
+                .filter(Objects::nonNull)
                 .findFirst().orElse(null);
 
         RelationInfo relationInfo = resolveRelationInfo(callerId, targetUserId);

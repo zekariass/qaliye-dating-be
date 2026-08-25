@@ -58,7 +58,7 @@ class FulfillmentServiceRevenueCatTest {
                 .thenReturn(Optional.empty());
         when(billingRepo.findOfferById(offerId)).thenReturn(Optional.of(new BillingRepository.FullOfferRow(
                 offerId, UUID.randomUUID(), null, "ET", "IOS",
-                "USD", 0, true, "com.qaliye.premium",
+                "USD", 0, true, "com.qaliye.premium", null, null,
                 "PREMIUM", "MONTH", 1, planId,
                 1, null, null, null, null)));
 
@@ -255,7 +255,7 @@ class FulfillmentServiceRevenueCatTest {
                 .thenReturn(Optional.of(UUID.randomUUID()));
         when(billingRepo.findOfferById(offerId)).thenReturn(Optional.of(new BillingRepository.FullOfferRow(
                 offerId, UUID.randomUUID(), null, "ET", "IOS",
-                "USD", 0, true, "com.qaliye.premium",
+                "USD", 0, true, "com.qaliye.premium", null, null,
                 "PREMIUM", "MONTH", 1, planId,
                 1, null, null, null, null)));
 

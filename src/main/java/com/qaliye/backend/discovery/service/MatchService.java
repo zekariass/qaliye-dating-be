@@ -10,6 +10,8 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -112,6 +114,12 @@ public class MatchService {
         return new MatchSummaryDto(matchRow.id(), matchedAt, rewindEligibleUntil, otherUser);
     }
 
+    public MatchSummaryDto buildMatchSummaryFromRow(DiscoveryMatchRepository.MatchRow matchRow, UUID actorId) {
+        UUID targetId = matchRow.userOneId().equals(actorId)
+                ? matchRow.userTwoId() : matchRow.userOneId();
+        return buildMatchSummary(matchRow, actorId, targetId);
+    }
+
     private MatchedUserSummaryDto loadUserSummary(UUID userId) {
         var params = new MapSqlParameterSource("userId", userId);
         return jdbc.query(FETCH_DISPLAY_NAME_SQL, params, rs -> {
@@ -121,5 +129,55 @@ public class MatchService {
             String photoUrl = (bucket != null && path != null) ? signingService.sign(bucket, path) : null;
             return new MatchedUserSummaryDto(userId, rs.getString("display_name"), photoUrl);
         });
+    }
+
+    private record OrphanedPair(UUID userAId, UUID userAActionId, UUID userBId, UUID userBActionId) {}
+
+    private static final String FIND_ORPHANED_MUTUAL_LIKES_SQL = """
+            SELECT
+                a.actor_user_id   AS user_a_id,
+                a.id              AS user_a_action_id,
+                a.target_user_id  AS user_b_id,
+                b.id              AS user_b_action_id
+            FROM user_discovery_actions a
+            JOIN user_discovery_actions b
+                ON b.actor_user_id = a.target_user_id
+               AND b.target_user_id = a.actor_user_id
+               AND b.action_type IN ('LIKE', 'SUPERLIKE')
+               AND b.status = 'ACTIVE'
+            WHERE a.action_type IN ('LIKE', 'SUPERLIKE')
+              AND a.status = 'ACTIVE'
+              AND a.actor_user_id < a.target_user_id
+              AND NOT EXISTS (
+                  SELECT 1 FROM matches m
+                  WHERE m.status = 'ACTIVE'
+                    AND m.user_one_id = a.actor_user_id
+                    AND m.user_two_id = a.target_user_id
+              )
+            """;
+
+    @org.springframework.transaction.annotation.Transactional
+    public int reconcileOrphanedMutualLikes() {
+        List<OrphanedPair> orphans = jdbc.query(FIND_ORPHANED_MUTUAL_LIKES_SQL, Map.of(),
+                (rs, rowNum) -> new OrphanedPair(
+                        rs.getObject("user_a_id", UUID.class),
+                        rs.getObject("user_a_action_id", UUID.class),
+                        rs.getObject("user_b_id", UUID.class),
+                        rs.getObject("user_b_action_id", UUID.class)));
+
+        int created = 0;
+        for (OrphanedPair pair : orphans) {
+            try {
+                matchRepo.insertMatch(
+                        pair.userAId(), pair.userBId(),
+                        pair.userAActionId(), pair.userBActionId(),
+                        pair.userBActionId(),
+                        props.getRewind().matchGracePeriodMinutes());
+                created++;
+            } catch (Exception e) {
+                // Skip pairs that fail (e.g. block constraint, concurrent insert)
+            }
+        }
+        return created;
     }
 }

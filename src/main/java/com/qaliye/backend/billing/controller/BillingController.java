@@ -54,7 +54,7 @@ public class BillingController {
             @RequestParam(defaultValue = "MOBILE") String platform) {
         UUID userId = CallerUtils.callerId();
         String normalized = normalizePlatform(platform);
-        List<OfferDto> offers = offerService.getOffers(userId, normalized);
+        List<OfferDto> offers = offerService.getOffers(userId, normalized, platform);
         log.debug("GET /api/v1/billing/offers for user={}, platform={} returning {} offers: {}",
                 userId, normalized, offers.size(), offers);
         return ResponseEntity.ok(offers);

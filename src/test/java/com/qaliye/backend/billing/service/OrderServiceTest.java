@@ -770,7 +770,7 @@ class OrderServiceTest {
                 offerId, UUID.randomUUID(), null,
                 country, platform,
                 currency, price, false,
-                null,
+                null, null, null,
                 "PREMIUM_MONTHLY", "MONTH", 1, UUID.randomUUID(),
                 0L, null, null, null, null
         );
@@ -783,7 +783,7 @@ class OrderServiceTest {
                 offerId, subscriptionProductId, null,
                 country, platform,
                 currency, price, false,
-                null,
+                null, null, null,
                 "PREMIUM_MONTHLY", "MONTH", 1, UUID.randomUUID(),
                 0L, null, null, null, null
         );

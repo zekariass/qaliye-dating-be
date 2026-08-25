@@ -63,7 +63,7 @@ class FulfillmentServiceTest {
                 offerId, UUID.randomUUID(), null,
                 "ET", "ANDROID",
                 "ETB", 14900, true,
-                null,
+                null, null, null,
                 "PREMIUM_MONTHLY", "MONTH", 1, planId,
                 0L, null, null, null, null
         );

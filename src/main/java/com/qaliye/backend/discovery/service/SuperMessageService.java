@@ -5,6 +5,7 @@ import com.qaliye.backend.billing.service.ActionCostService;
 import com.qaliye.backend.billing.service.CreditService;
 import com.qaliye.backend.chat.repository.ChatMatchRepository;
 import com.qaliye.backend.chat.repository.ChatMessageRepository;
+import com.qaliye.backend.discovery.dto.MatchSummaryDto;
 import com.qaliye.backend.discovery.dto.SuperMessageActionResponse;
 import com.qaliye.backend.discovery.dto.SuperMessageResponse;
 import com.qaliye.backend.discovery.dto.SwipeActionResponse;
@@ -45,14 +46,18 @@ public class SuperMessageService {
             SELECT pm.id, pm.sender_id, pm.receiver_id, pm.message, pm.action_type, pm.credit_cost,
                    pm.status, pm.viewed_at, pm.responded_at, pm.match_id, pm.created_at,
                    sp.display_name AS sender_name, spp.storage_bucket AS sender_bucket, spp.storage_path AS sender_path,
-                   rp.display_name AS receiver_name, rpp.storage_bucket AS receiver_bucket, rpp.storage_path AS receiver_path
+                   rp.display_name AS receiver_name, rpp.storage_bucket AS receiver_bucket, rpp.storage_path AS receiver_path,
+                   (sau.status = 'DELETED') AS sender_deleted,
+                   (rau.status = 'DELETED') AS receiver_deleted
             FROM pre_match_messages pm
             LEFT JOIN profiles sp ON sp.user_id = pm.sender_id
             LEFT JOIN profile_photos spp ON spp.user_id = pm.sender_id AND spp.is_primary = TRUE
                     AND spp.moderation_status = 'APPROVED' AND spp.deleted_at IS NULL
+            LEFT JOIN app_users sau ON sau.id = pm.sender_id
             LEFT JOIN profiles rp ON rp.user_id = pm.receiver_id
             LEFT JOIN profile_photos rpp ON rpp.user_id = pm.receiver_id AND rpp.is_primary = TRUE
                     AND rpp.moderation_status = 'APPROVED' AND rpp.deleted_at IS NULL
+            LEFT JOIN app_users rau ON rau.id = pm.receiver_id
             WHERE pm.sender_id = :senderId AND pm.idempotency_key = :idempotencyKey
             """;
 
@@ -60,14 +65,18 @@ public class SuperMessageService {
             SELECT pm.id, pm.sender_id, pm.receiver_id, pm.message, pm.action_type, pm.credit_cost,
                    pm.status, pm.viewed_at, pm.responded_at, pm.match_id, pm.created_at,
                    sp.display_name AS sender_name, spp.storage_bucket AS sender_bucket, spp.storage_path AS sender_path,
-                   rp.display_name AS receiver_name, rpp.storage_bucket AS receiver_bucket, rpp.storage_path AS receiver_path
+                   rp.display_name AS receiver_name, rpp.storage_bucket AS receiver_bucket, rpp.storage_path AS receiver_path,
+                   (sau.status = 'DELETED') AS sender_deleted,
+                   (rau.status = 'DELETED') AS receiver_deleted
             FROM pre_match_messages pm
             LEFT JOIN profiles sp ON sp.user_id = pm.sender_id
             LEFT JOIN profile_photos spp ON spp.user_id = pm.sender_id AND spp.is_primary = TRUE
                     AND spp.moderation_status = 'APPROVED' AND spp.deleted_at IS NULL
+            LEFT JOIN app_users sau ON sau.id = pm.sender_id
             LEFT JOIN profiles rp ON rp.user_id = pm.receiver_id
             LEFT JOIN profile_photos rpp ON rpp.user_id = pm.receiver_id AND rpp.is_primary = TRUE
                     AND rpp.moderation_status = 'APPROVED' AND rpp.deleted_at IS NULL
+            LEFT JOIN app_users rau ON rau.id = pm.receiver_id
             WHERE pm.id = :id
             """;
 
@@ -75,16 +84,21 @@ public class SuperMessageService {
             SELECT pm.id, pm.sender_id, pm.receiver_id, pm.message, pm.action_type, pm.credit_cost,
                    pm.status, pm.viewed_at, pm.responded_at, pm.match_id, pm.created_at,
                    sp.display_name AS sender_name, spp.storage_bucket AS sender_bucket, spp.storage_path AS sender_path,
-                   rp.display_name AS receiver_name, rpp.storage_bucket AS receiver_bucket, rpp.storage_path AS receiver_path
+                   rp.display_name AS receiver_name, rpp.storage_bucket AS receiver_bucket, rpp.storage_path AS receiver_path,
+                   (sau.status = 'DELETED') AS sender_deleted,
+                   (rau.status = 'DELETED') AS receiver_deleted
             FROM pre_match_messages pm
             LEFT JOIN profiles sp ON sp.user_id = pm.sender_id
             LEFT JOIN profile_photos spp ON spp.user_id = pm.sender_id AND spp.is_primary = TRUE
                     AND spp.moderation_status = 'APPROVED' AND spp.deleted_at IS NULL
+            LEFT JOIN app_users sau ON sau.id = pm.sender_id
             LEFT JOIN profiles rp ON rp.user_id = pm.receiver_id
             LEFT JOIN profile_photos rpp ON rpp.user_id = pm.receiver_id AND rpp.is_primary = TRUE
                     AND rpp.moderation_status = 'APPROVED' AND rpp.deleted_at IS NULL
+            JOIN app_users rau ON rau.id = pm.receiver_id
             WHERE pm.sender_id = :userId
               AND pm.status NOT IN ('ACCEPTED', 'PASSED')
+              AND rau.status <> 'DELETED'
             ORDER BY pm.created_at DESC
             LIMIT :limit OFFSET :offset
             """;
@@ -93,16 +107,21 @@ public class SuperMessageService {
             SELECT pm.id, pm.sender_id, pm.receiver_id, pm.message, pm.action_type, pm.credit_cost,
                    pm.status, pm.viewed_at, pm.responded_at, pm.match_id, pm.created_at,
                    sp.display_name AS sender_name, spp.storage_bucket AS sender_bucket, spp.storage_path AS sender_path,
-                   rp.display_name AS receiver_name, rpp.storage_bucket AS receiver_bucket, rpp.storage_path AS receiver_path
+                   rp.display_name AS receiver_name, rpp.storage_bucket AS receiver_bucket, rpp.storage_path AS receiver_path,
+                   (sau.status = 'DELETED') AS sender_deleted,
+                   (rau.status = 'DELETED') AS receiver_deleted
             FROM pre_match_messages pm
             LEFT JOIN profiles sp ON sp.user_id = pm.sender_id
             LEFT JOIN profile_photos spp ON spp.user_id = pm.sender_id AND spp.is_primary = TRUE
                     AND spp.moderation_status = 'APPROVED' AND spp.deleted_at IS NULL
+            JOIN app_users sau ON sau.id = pm.sender_id
             LEFT JOIN profiles rp ON rp.user_id = pm.receiver_id
             LEFT JOIN profile_photos rpp ON rpp.user_id = pm.receiver_id AND rpp.is_primary = TRUE
                     AND rpp.moderation_status = 'APPROVED' AND rpp.deleted_at IS NULL
+            LEFT JOIN app_users rau ON rau.id = pm.receiver_id
             WHERE pm.receiver_id = :userId
               AND pm.status NOT IN ('ACCEPTED', 'PASSED')
+              AND sau.status <> 'DELETED'
             ORDER BY pm.created_at DESC
             LIMIT :limit OFFSET :offset
             """;
@@ -143,6 +162,7 @@ public class SuperMessageService {
     private final NotificationDispatcher notificationDispatcher;
     private final ChatMatchRepository chatMatchRepository;
     private final ChatMessageRepository chatMessageRepository;
+    private final MatchService matchService;
 
     public SuperMessageService(NamedParameterJdbcTemplate jdbc,
                                 ActionCostService actionCostService,
@@ -153,7 +173,8 @@ public class SuperMessageService {
                                 SwipeActionService swipeActionService,
                                 NotificationDispatcher notificationDispatcher,
                                 ChatMatchRepository chatMatchRepository,
-                                ChatMessageRepository chatMessageRepository) {
+                                ChatMessageRepository chatMessageRepository,
+                                MatchService matchService) {
         this.jdbc = jdbc;
         this.actionCostService = actionCostService;
         this.creditService = creditService;
@@ -164,6 +185,7 @@ public class SuperMessageService {
         this.notificationDispatcher = notificationDispatcher;
         this.chatMatchRepository = chatMatchRepository;
         this.chatMessageRepository = chatMessageRepository;
+        this.matchService = matchService;
     }
 
     @Transactional
@@ -228,6 +250,26 @@ public class SuperMessageService {
                 senderId, receiverId, messageId, action.id(), creditCost);
 
         notificationDispatcher.dispatchSuperMessageNotification(senderId, receiverId, messageId);
+
+        // Check for mutual like and create match if the receiver already liked the sender
+        UUID lo = senderId.compareTo(receiverId) < 0 ? senderId : receiverId;
+        UUID hi = senderId.compareTo(receiverId) < 0 ? receiverId : senderId;
+        jdbc.queryForObject(
+                "SELECT pg_advisory_xact_lock(hashtext(:pairKey))",
+                new MapSqlParameterSource("pairKey", lo.toString() + ":" + hi.toString()),
+                Object.class);
+
+        Optional<DiscoveryActionRepository.ActionRow> mutualAction =
+                actionRepo.findMutualActiveLike(senderId, receiverId);
+        if (mutualAction.isPresent()) {
+            Optional<MatchSummaryDto> match = matchService.tryCreateMatch(
+                    senderId, receiverId, action.id(), mutualAction.get().id());
+            match.ifPresent(m -> {
+                notificationDispatcher.dispatchMatchNotification(senderId, receiverId, m.matchId());
+                log.info("Match created from super message: sender={}, receiver={}, matchId={}",
+                        senderId, receiverId, m.matchId());
+            });
+        }
 
         UserProfileBrief senderBrief = fetchProfileBrief(senderId);
         UserProfileBrief receiverBrief = fetchProfileBrief(receiverId);
@@ -414,14 +456,19 @@ public class SuperMessageService {
         Instant respondedAt = toInstant(row.get("responded_at"));
         Instant createdAt = toInstant(row.get("created_at"));
 
+        boolean senderDeleted = booleanFromRow(row, "sender_deleted");
+        boolean receiverDeleted = booleanFromRow(row, "receiver_deleted");
+
         UserProfileBrief senderBrief = buildProfileBrief(senderId,
                 (String) row.get("sender_name"),
                 (String) row.get("sender_bucket"),
-                (String) row.get("sender_path"));
+                (String) row.get("sender_path"),
+                senderDeleted);
         UserProfileBrief receiverBrief = buildProfileBrief(receiverId,
                 (String) row.get("receiver_name"),
                 (String) row.get("receiver_bucket"),
-                (String) row.get("receiver_path"));
+                (String) row.get("receiver_path"),
+                receiverDeleted);
 
         return new SuperMessageResponse(
                 id, senderId, receiverId, senderBrief, receiverBrief, message, actionType,
@@ -437,20 +484,31 @@ public class SuperMessageService {
         return null;
     }
 
+    private boolean booleanFromRow(Map<String, Object> row, String key) {
+        Object val = row.get(key);
+        if (val == null) return false;
+        if (val instanceof Boolean b) return b;
+        if (val instanceof Number n) return n.intValue() != 0;
+        return false;
+    }
+
     private UserProfileBrief buildProfileBrief(UUID userId, String displayName,
-                                                String bucket, String path) {
+                                                String bucket, String path,
+                                                boolean deleted) {
         String photoUrl = null;
         if (bucket != null && path != null) {
             photoUrl = signingService.sign(bucket, path);
         }
-        return new UserProfileBrief(userId, displayName, photoUrl);
+        return new UserProfileBrief(userId, displayName, photoUrl, deleted);
     }
 
     private static final String FETCH_PROFILE_BRIEF_SQL = """
-            SELECT p.display_name, pp.storage_bucket, pp.storage_path
+            SELECT p.display_name, pp.storage_bucket, pp.storage_path,
+                   (au.status = 'DELETED') AS deleted
             FROM profiles p
             LEFT JOIN profile_photos pp ON pp.user_id = p.user_id AND pp.is_primary = TRUE
                     AND pp.moderation_status = 'APPROVED' AND pp.deleted_at IS NULL
+            LEFT JOIN app_users au ON au.id = p.user_id
             WHERE p.user_id = :userId
             """;
 
@@ -458,12 +516,13 @@ public class SuperMessageService {
         List<Map<String, Object>> rows = jdbc.queryForList(
                 FETCH_PROFILE_BRIEF_SQL, new MapSqlParameterSource("userId", userId));
         if (rows.isEmpty()) {
-            return new UserProfileBrief(userId, null, null);
+            return new UserProfileBrief(userId, null, null, false);
         }
         Map<String, Object> row = rows.get(0);
         return buildProfileBrief(userId,
                 (String) row.get("display_name"),
                 (String) row.get("storage_bucket"),
-                (String) row.get("storage_path"));
+                (String) row.get("storage_path"),
+                booleanFromRow(row, "deleted"));
     }
 }

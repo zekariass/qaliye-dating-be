@@ -42,5 +42,5 @@ application-local.yml
 .env.test.example
 
 
-notes.tx
+notes.txt
 aws-rootkey.csv

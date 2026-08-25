@@ -120,6 +120,8 @@ public class SwipeActionService {
 
         notificationDispatcher.dispatchLikeNotification(actorId, targetId, action.id());
 
+        acquirePairLock(actorId, targetId);
+
         Optional<DiscoveryActionRepository.ActionRow> mutualAction =
                 actionRepo.findMutualActiveLike(actorId, targetId);
         Optional<MatchSummaryDto> match = Optional.empty();
@@ -207,6 +209,8 @@ public class SwipeActionService {
 
         notificationDispatcher.dispatchSuperLikeNotification(actorId, targetId, action.id());
 
+        acquirePairLock(actorId, targetId);
+
         if (cost.ruleId() != null && cost.limitValue() != null) {
             actionLimitRepo.ensureExists(actorId, cost.ruleId(), cost.periodStart(), cost.periodEnd());
             actionLimitRepo.findForUpdate(actorId, cost.ruleId(), cost.periodStart())
@@ -287,11 +291,26 @@ public class SwipeActionService {
     private SwipeActionResponse buildIdempotentResponse(DiscoveryActionRepository.ActionRow existing,
                                                          UUID actorId, String actionType) {
         Instant createdAt = existing.createdAt() != null ? existing.createdAt().toInstant() : Instant.now();
+        MatchSummaryDto matchSummary = null;
+        if ("LIKE".equals(actionType) || "SUPERLIKE".equals(actionType)) {
+            matchSummary = matchService.findActiveMatchByAction(existing.id())
+                    .map(mr -> matchService.buildMatchSummaryFromRow(mr, actorId))
+                    .orElse(null);
+        }
         return new SwipeActionResponse(
                 existing.id(), existing.actionType(), "ACTIVE",
-                false, null, null, null, null,
+                matchSummary != null, matchSummary, null, null, null,
                 createdAt, true
         );
+    }
+
+    private void acquirePairLock(UUID actorId, UUID targetId) {
+        UUID lo = actorId.compareTo(targetId) < 0 ? actorId : targetId;
+        UUID hi = actorId.compareTo(targetId) < 0 ? targetId : actorId;
+        jdbc.queryForObject(
+                "SELECT pg_advisory_xact_lock(hashtext(:pairKey))",
+                new MapSqlParameterSource("pairKey", lo.toString() + ":" + hi.toString()),
+                Object.class);
     }
 
     private void checkRoleIsolation(UUID actorId, String targetRole) {

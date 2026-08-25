@@ -43,6 +43,7 @@ public class AdminPaymentConfigRepository {
             UUID id, UUID subscriptionProductId, UUID consumableProductId,
             String countryCode, String platform, String currency,
             Integer priceMinorUnits, String externalProductId,
+            String appleProductId, String googleProductId,
             String revenuecatOfferingId, String revenuecatPackageId,
             Boolean autoRenew, Boolean isActive
     ) {}
@@ -390,8 +391,8 @@ public class AdminPaymentConfigRepository {
 
     private static final String SELECT_OFFERS = """
             SELECT id, subscription_product_id, consumable_product_id, country_code, platform,
-                   currency, price_minor_units, external_product_id, revenuecat_offering_id,
-                   revenuecat_package_id, auto_renew, is_active
+                   currency, price_minor_units, external_product_id, apple_product_id, google_product_id,
+                   revenuecat_offering_id, revenuecat_package_id, auto_renew, is_active
             FROM payment_offers
             ORDER BY country_code, platform, currency, price_minor_units
             """;
@@ -406,6 +407,8 @@ public class AdminPaymentConfigRepository {
                 rs.getString("currency"),
                 rs.getInt("price_minor_units"),
                 rs.getString("external_product_id"),
+                rs.getString("apple_product_id"),
+                rs.getString("google_product_id"),
                 rs.getString("revenuecat_offering_id"),
                 rs.getString("revenuecat_package_id"),
                 rs.getBoolean("auto_renew"),
@@ -415,8 +418,8 @@ public class AdminPaymentConfigRepository {
 
     private static final String FIND_OFFER_BY_ID = """
             SELECT id, subscription_product_id, consumable_product_id, country_code, platform,
-                   currency, price_minor_units, external_product_id, revenuecat_offering_id,
-                   revenuecat_package_id, auto_renew, is_active
+                   currency, price_minor_units, external_product_id, apple_product_id, google_product_id,
+                   revenuecat_offering_id, revenuecat_package_id, auto_renew, is_active
             FROM payment_offers WHERE id = :id
             """;
 
@@ -430,6 +433,8 @@ public class AdminPaymentConfigRepository {
                 rs.getString("currency"),
                 rs.getInt("price_minor_units"),
                 rs.getString("external_product_id"),
+                rs.getString("apple_product_id"),
+                rs.getString("google_product_id"),
                 rs.getString("revenuecat_offering_id"),
                 rs.getString("revenuecat_package_id"),
                 rs.getBoolean("auto_renew"),
@@ -440,18 +445,19 @@ public class AdminPaymentConfigRepository {
     private static final String INSERT_OFFER = """
             INSERT INTO payment_offers
                 (subscription_product_id, consumable_product_id, country_code, platform,
-                 currency, price_minor_units, external_product_id, revenuecat_offering_id,
-                 revenuecat_package_id, auto_renew, is_active)
+                 currency, price_minor_units, external_product_id, apple_product_id, google_product_id,
+                 revenuecat_offering_id, revenuecat_package_id, auto_renew, is_active)
             VALUES
                 (:subscriptionProductId, :consumableProductId, :countryCode, :platform,
-                 :currency, :priceMinorUnits, :externalProductId, :revenuecatOfferingId,
-                 :revenuecatPackageId, :autoRenew, :isActive)
+                 :currency, :priceMinorUnits, :externalProductId, :appleProductId, :googleProductId,
+                 :revenuecatOfferingId, :revenuecatPackageId, :autoRenew, :isActive)
             RETURNING id
             """;
 
     public UUID createPaymentOffer(UUID subscriptionProductId, UUID consumableProductId, String countryCode,
                                     String platform, String currency, int priceMinorUnits,
-                                    String externalProductId, String revenuecatOfferingId,
+                                    String externalProductId, String appleProductId, String googleProductId,
+                                    String revenuecatOfferingId,
                                     String revenuecatPackageId, Boolean autoRenew, Boolean isActive) {
         var params = new MapSqlParameterSource()
                 .addValue("subscriptionProductId", subscriptionProductId)
@@ -461,6 +467,8 @@ public class AdminPaymentConfigRepository {
                 .addValue("currency", currency)
                 .addValue("priceMinorUnits", priceMinorUnits)
                 .addValue("externalProductId", externalProductId)
+                .addValue("appleProductId", appleProductId)
+                .addValue("googleProductId", googleProductId)
                 .addValue("revenuecatOfferingId", revenuecatOfferingId)
                 .addValue("revenuecatPackageId", revenuecatPackageId)
                 .addValue("autoRenew", autoRenew != null ? autoRenew : false)
@@ -477,6 +485,8 @@ public class AdminPaymentConfigRepository {
                 currency = COALESCE(:currency, currency),
                 price_minor_units = COALESCE(:priceMinorUnits, price_minor_units),
                 external_product_id = COALESCE(:externalProductId, external_product_id),
+                apple_product_id = COALESCE(:appleProductId, apple_product_id),
+                google_product_id = COALESCE(:googleProductId, google_product_id),
                 revenuecat_offering_id = COALESCE(:revenuecatOfferingId, revenuecat_offering_id),
                 revenuecat_package_id = COALESCE(:revenuecatPackageId, revenuecat_package_id),
                 auto_renew = COALESCE(:autoRenew, auto_renew),
@@ -488,6 +498,7 @@ public class AdminPaymentConfigRepository {
     public int updatePaymentOffer(UUID id, UUID subscriptionProductId, UUID consumableProductId,
                                    String countryCode, String platform, String currency,
                                    Integer priceMinorUnits, String externalProductId,
+                                   String appleProductId, String googleProductId,
                                    String revenuecatOfferingId, String revenuecatPackageId,
                                    Boolean autoRenew, Boolean isActive) {
         var params = new MapSqlParameterSource()
@@ -499,6 +510,8 @@ public class AdminPaymentConfigRepository {
                 .addValue("currency", currency)
                 .addValue("priceMinorUnits", priceMinorUnits)
                 .addValue("externalProductId", externalProductId)
+                .addValue("appleProductId", appleProductId)
+                .addValue("googleProductId", googleProductId)
                 .addValue("revenuecatOfferingId", revenuecatOfferingId)
                 .addValue("revenuecatPackageId", revenuecatPackageId)
                 .addValue("autoRenew", autoRenew)

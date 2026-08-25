@@ -496,7 +496,7 @@ class RevenueCatWebhookHandlerTest {
                 offerId, UUID.randomUUID(), null,
                 "GLOBAL", "IOS",
                 "USD", 799, true,
-                "qaliye_premium_monthly",
+                "qaliye_premium_monthly", null, null,
                 "PREMIUM_MONTHLY", "MONTH", 1, planId,
                 0L, null, null, null, null
         );

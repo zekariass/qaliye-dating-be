@@ -221,6 +221,15 @@ public class SwipeService {
                 (rs, rowNum) -> rs.getObject("id", UUID.class));
         UUID newActionId = insertedIds.get(0);
 
+        // Acquire advisory lock on the canonical user pair to prevent a race
+        // condition where both users like each other simultaneously and neither
+        // transaction sees the other's uncommitted like, resulting in no match.
+        UUID[] canonicalPair = canonical(callerId, targetId);
+        jdbc.queryForObject(
+                "SELECT pg_advisory_xact_lock(hashtext(:pairKey))",
+                Map.of("pairKey", canonicalPair[0].toString() + ":" + canonicalPair[1].toString()),
+                Object.class);
+
         // Check for reciprocal like/superlike
         List<UUID> reciprocalIds = jdbc.query(CHECK_RECIPROCAL_SQL,
                 Map.of("targetId", targetId, "callerId", callerId),

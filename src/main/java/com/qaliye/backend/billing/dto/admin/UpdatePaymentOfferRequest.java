@@ -10,6 +10,8 @@ public record UpdatePaymentOfferRequest(
         String currency,
         Integer priceMinorUnits,
         String externalProductId,
+        String appleProductId,
+        String googleProductId,
         String revenuecatOfferingId,
         String revenuecatPackageId,
         Boolean autoRenew,

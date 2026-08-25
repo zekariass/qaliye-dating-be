@@ -68,6 +68,10 @@ public class OfferService {
     }
 
     public List<OfferDto> getOffers(UUID userId, String platform) {
+        return getOffers(userId, platform, platform);
+    }
+
+    public List<OfferDto> getOffers(UUID userId, String platform, String clientPlatform) {
         BillingMarketResolver.MarketResult market = marketResolver.resolveMarket(userId, platform);
         int methodCount = billingRepo.countActivePaymentMethods(
                 market.resolvedCountryCode(), market.platform());
@@ -111,7 +115,7 @@ public class OfferService {
                     }
                     return true;
                 })
-                .map(o -> toOfferDto(o, methodCount, userId, trustedCountry))
+                .map(o -> toOfferDto(o, methodCount, userId, trustedCountry, clientPlatform))
                 .toList();
 
         log.debug("getOffers returning {} offers (filtered {} by country settings + unlimited consumables)",
@@ -120,7 +124,7 @@ public class OfferService {
     }
 
     private OfferDto toOfferDto(BillingRepository.OfferRow row, int methodCount,
-                                  UUID userId, String trustedCountry) {
+                                  UUID userId, String trustedCountry, String clientPlatform) {
         String productCode = row.subProductCode() != null ? row.subProductCode() : row.conProductCode();
         String productType = row.subProductCode() != null ? "SUBSCRIPTION" : "CONSUMABLE";
         String displayPrice = formatPrice(row.priceMinorUnits(), row.currency());
@@ -150,6 +154,8 @@ public class OfferService {
             claimableDtos = claimable.stream().map(this::toClaimablePromotionDto).toList();
         }
 
+        String externalProductId = resolveExternalProductId(row, clientPlatform);
+
         return new OfferDto(
                 row.id(),
                 productCode,
@@ -164,7 +170,7 @@ public class OfferService {
                 row.billingIntervalUnit(),
                 row.includedCredits(),
                 row.autoRenew(),
-                row.externalProductId(),
+                externalProductId,
                 row.revenuecatOfferingId(),
                 row.revenuecatPackageId(),
                 methodCount > 0,
@@ -172,6 +178,19 @@ public class OfferService {
                 promotionDto,
                 claimableDtos
         );
+    }
+
+    private static String resolveExternalProductId(BillingRepository.OfferRow row, String clientPlatform) {
+        if (clientPlatform != null) {
+            String upper = clientPlatform.toUpperCase();
+            if ("IOS".equals(upper) && !isBlank(row.appleProductId())) return row.appleProductId();
+            if ("ANDROID".equals(upper) && !isBlank(row.googleProductId())) return row.googleProductId();
+        }
+        return isBlank(row.externalProductId()) ? null : row.externalProductId();
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.isBlank();
     }
 
     private PromotionDto toPromotionDto(PromotionEligibilityService.AppliedPromotion ap,
