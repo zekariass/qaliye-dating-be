@@ -178,49 +178,11 @@ public class MessageCommandService {
             return handleExistingMessageWithAttachments(existing.get(), matchId, req.getMessageType(), trimmedBody);
         }
 
-        // Step 4b: Evaluate and consume MESSAGE action cost (sender only, idempotent via clientMessageId)
-        consumeMessageActionCost(callerId, req.getClientMessageId());
-
-        // Step 5: Validate and classify files
+        // Step 4b-5: Validate and classify files, then evaluate combined action cost
         List<ValidatedAttachment> validated = validateAndClassifyFiles(safeFiles, durations);
-
-        // Step 5b: Enforce daily voice/image message limits atomically
         long voiceCount = validated.stream().filter(v -> "VOICE".equals(v.attachmentType())).count();
         long imageCount = validated.stream().filter(v -> "IMAGE".equals(v.attachmentType())).count();
-        if (voiceCount > 0) {
-            ActionCostService.ActionCostResult voiceCost = actionCostService.evaluate(callerId, "VOICE_MESSAGE");
-            if (voiceCost.ruleId() != null && voiceCost.limitValue() != null) {
-                actionLimitRepo.ensureExists(callerId, voiceCost.ruleId(), voiceCost.periodStart(), voiceCost.periodEnd());
-                boolean ok = actionLimitRepo
-                        .tryIncrementByUnderLimit(callerId, voiceCost.ruleId(), voiceCost.periodStart(),
-                                voiceCost.limitValue(), (int) voiceCount)
-                        .isPresent();
-                if (!ok && !voiceCost.requiresCredits()) {
-                    throw new ActionLimitExceededException("VOICE_MESSAGE", voiceCost.periodType());
-                }
-            }
-            if (voiceCost.requiresCredits()) {
-                creditService.consumeCredits(callerId, voiceCost.creditCost() * voiceCount, "VOICE_MESSAGE",
-                        "voice-msg-" + callerId + "-" + System.currentTimeMillis());
-            }
-        }
-        if (imageCount > 0) {
-            ActionCostService.ActionCostResult imageCost = actionCostService.evaluate(callerId, "IMAGE_MESSAGE");
-            if (imageCost.ruleId() != null && imageCost.limitValue() != null) {
-                actionLimitRepo.ensureExists(callerId, imageCost.ruleId(), imageCost.periodStart(), imageCost.periodEnd());
-                boolean ok = actionLimitRepo
-                        .tryIncrementByUnderLimit(callerId, imageCost.ruleId(), imageCost.periodStart(),
-                                imageCost.limitValue(), (int) imageCount)
-                        .isPresent();
-                if (!ok && !imageCost.requiresCredits()) {
-                    throw new ActionLimitExceededException("IMAGE_MESSAGE", imageCost.periodType());
-                }
-            }
-            if (imageCost.requiresCredits()) {
-                creditService.consumeCredits(callerId, imageCost.creditCost() * imageCount, "IMAGE_MESSAGE",
-                        "image-msg-" + callerId + "-" + System.currentTimeMillis());
-            }
-        }
+        consumeAttachmentMessageActionCost(callerId, req.getClientMessageId(), voiceCount, imageCount);
 
         // Steps 7-8: Reserve and increment sequence
         long sequenceNumber = matchRepository.reserveAndIncrementSequence(matchId);
@@ -257,8 +219,6 @@ public class MessageCommandService {
             }
             throw new InvalidMessageException("Failed to upload one or more attachments.");
         }
-
-        // Step 10b: Voice/image usage already tracked atomically in Step 5b
 
         OffsetDateTime occurredAt = inserted.createdAt();
 
@@ -379,6 +339,70 @@ public class MessageCommandService {
         }
         if (cost.requiresCredits()) {
             creditService.consumeCredits(callerId, cost.creditCost(), "MESSAGE", idemKey);
+        }
+    }
+
+    private void consumeAttachmentMessageActionCost(UUID callerId, UUID clientMessageId,
+                                                     long voiceCount, long imageCount) {
+        String idemKey = "msg-" + clientMessageId;
+
+        ActionCostService.ActionCostResult msgCost = actionCostService.evaluate(callerId, "MESSAGE");
+        if (msgCost.isBlocked()) {
+            throw new ActionLimitExceededException("MESSAGE", msgCost.periodType());
+        }
+        if (msgCost.ruleId() != null && msgCost.limitValue() != null) {
+            actionLimitRepo.ensureExists(callerId, msgCost.ruleId(), msgCost.periodStart(), msgCost.periodEnd());
+            boolean incremented = actionLimitRepo
+                    .tryIncrementUnderLimit(callerId, msgCost.ruleId(), msgCost.periodStart(), msgCost.limitValue())
+                    .isPresent();
+            if (!incremented && !msgCost.requiresCredits()) {
+                throw new ActionLimitExceededException("MESSAGE", msgCost.periodType());
+            }
+        }
+
+        long creditCharge = msgCost.creditCost();
+        String creditActionType = "MESSAGE";
+
+        if (voiceCount > 0) {
+            ActionCostService.ActionCostResult voiceCost = actionCostService.evaluate(callerId, "VOICE_MESSAGE");
+            if (voiceCost.ruleId() != null && voiceCost.limitValue() != null) {
+                actionLimitRepo.ensureExists(callerId, voiceCost.ruleId(), voiceCost.periodStart(), voiceCost.periodEnd());
+                boolean ok = actionLimitRepo
+                        .tryIncrementByUnderLimit(callerId, voiceCost.ruleId(), voiceCost.periodStart(),
+                                voiceCost.limitValue(), (int) voiceCount)
+                        .isPresent();
+                if (!ok && !voiceCost.requiresCredits()) {
+                    throw new ActionLimitExceededException("VOICE_MESSAGE", voiceCost.periodType());
+                }
+            }
+            long voiceCharge = voiceCost.creditCost() * voiceCount;
+            if (voiceCharge > creditCharge) {
+                creditCharge = voiceCharge;
+                creditActionType = "VOICE_MESSAGE";
+            }
+        }
+
+        if (imageCount > 0) {
+            ActionCostService.ActionCostResult imageCost = actionCostService.evaluate(callerId, "IMAGE_MESSAGE");
+            if (imageCost.ruleId() != null && imageCost.limitValue() != null) {
+                actionLimitRepo.ensureExists(callerId, imageCost.ruleId(), imageCost.periodStart(), imageCost.periodEnd());
+                boolean ok = actionLimitRepo
+                        .tryIncrementByUnderLimit(callerId, imageCost.ruleId(), imageCost.periodStart(),
+                                imageCost.limitValue(), (int) imageCount)
+                        .isPresent();
+                if (!ok && !imageCost.requiresCredits()) {
+                    throw new ActionLimitExceededException("IMAGE_MESSAGE", imageCost.periodType());
+                }
+            }
+            long imageCharge = imageCost.creditCost() * imageCount;
+            if (imageCharge > creditCharge) {
+                creditCharge = imageCharge;
+                creditActionType = "IMAGE_MESSAGE";
+            }
+        }
+
+        if (creditCharge > 0) {
+            creditService.consumeCredits(callerId, creditCharge, creditActionType, idemKey);
         }
     }
 

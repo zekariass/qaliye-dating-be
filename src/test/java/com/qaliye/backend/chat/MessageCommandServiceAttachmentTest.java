@@ -285,6 +285,86 @@ class MessageCommandServiceAttachmentTest {
                 .isInstanceOf(InvalidMessageException.class);
     }
 
+    @Test
+    void sendVoiceMessage_voiceCostHigherThanMessageCost_chargesVoiceCostOnly() throws Exception {
+        setupMocksForAttachmentSend();
+        when(chatProperties.getAttachment()).thenReturn(buildAttachmentConfig());
+        when(actionCostService.evaluate(callerId, "MESSAGE")).thenReturn(makeCreditCostResult(2L));
+        when(actionCostService.evaluate(callerId, "VOICE_MESSAGE")).thenReturn(makeCreditCostResult(5L));
+        when(mapper.toMessageDto(any(), anyLong(), anyLong(), any(), anyList())).thenReturn(buildDto());
+
+        SendMessageRequest req = new SendMessageRequest();
+        req.setClientMessageId(clientMsgId);
+        req.setMessageType("TEXT");
+        req.setBody(null);
+        MockMultipartFile voice = new MockMultipartFile("files", "voice.m4a", "audio/m4a", new byte[]{1, 2, 3});
+
+        service.sendMessageWithAttachments(callerId, matchId, req, List.of(voice), List.of(5000L));
+
+        verify(creditService, times(1)).consumeCredits(eq(callerId), eq(5L), eq("VOICE_MESSAGE"), anyString());
+        verify(creditService, never()).consumeCredits(eq(callerId), eq(2L), eq("MESSAGE"), anyString());
+    }
+
+    @Test
+    void sendVoiceMessage_messageCostHigherThanVoiceCost_chargesMessageCostOnly() throws Exception {
+        setupMocksForAttachmentSend();
+        when(chatProperties.getAttachment()).thenReturn(buildAttachmentConfig());
+        when(actionCostService.evaluate(callerId, "MESSAGE")).thenReturn(makeCreditCostResult(10L));
+        when(actionCostService.evaluate(callerId, "VOICE_MESSAGE")).thenReturn(makeCreditCostResult(3L));
+        when(mapper.toMessageDto(any(), anyLong(), anyLong(), any(), anyList())).thenReturn(buildDto());
+
+        SendMessageRequest req = new SendMessageRequest();
+        req.setClientMessageId(clientMsgId);
+        req.setMessageType("TEXT");
+        req.setBody(null);
+        MockMultipartFile voice = new MockMultipartFile("files", "voice.m4a", "audio/m4a", new byte[]{1, 2, 3});
+
+        service.sendMessageWithAttachments(callerId, matchId, req, List.of(voice), List.of(5000L));
+
+        verify(creditService, times(1)).consumeCredits(eq(callerId), eq(10L), eq("MESSAGE"), anyString());
+        verify(creditService, never()).consumeCredits(eq(callerId), eq(3L), eq("VOICE_MESSAGE"), anyString());
+    }
+
+    @Test
+    void sendImageMessage_imageCostHigherThanMessageCost_chargesImageCostOnly() throws Exception {
+        setupMocksForAttachmentSend();
+        when(chatProperties.getAttachment()).thenReturn(buildAttachmentConfig());
+        when(actionCostService.evaluate(callerId, "MESSAGE")).thenReturn(makeCreditCostResult(2L));
+        when(actionCostService.evaluate(callerId, "IMAGE_MESSAGE")).thenReturn(makeCreditCostResult(8L));
+        when(mapper.toMessageDto(any(), anyLong(), anyLong(), any(), anyList())).thenReturn(buildDto());
+
+        SendMessageRequest req = new SendMessageRequest();
+        req.setClientMessageId(clientMsgId);
+        req.setMessageType("TEXT");
+        req.setBody(null);
+        MockMultipartFile image = new MockMultipartFile("files", "photo.jpg", "image/jpeg", new byte[]{1, 2, 3});
+
+        service.sendMessageWithAttachments(callerId, matchId, req, List.of(image), null);
+
+        verify(creditService, times(1)).consumeCredits(eq(callerId), eq(8L), eq("IMAGE_MESSAGE"), anyString());
+        verify(creditService, never()).consumeCredits(eq(callerId), eq(2L), eq("MESSAGE"), anyString());
+    }
+
+    @Test
+    void sendImageMessage_messageCostHigherThanImageCost_chargesMessageCostOnly() throws Exception {
+        setupMocksForAttachmentSend();
+        when(chatProperties.getAttachment()).thenReturn(buildAttachmentConfig());
+        when(actionCostService.evaluate(callerId, "MESSAGE")).thenReturn(makeCreditCostResult(10L));
+        when(actionCostService.evaluate(callerId, "IMAGE_MESSAGE")).thenReturn(makeCreditCostResult(3L));
+        when(mapper.toMessageDto(any(), anyLong(), anyLong(), any(), anyList())).thenReturn(buildDto());
+
+        SendMessageRequest req = new SendMessageRequest();
+        req.setClientMessageId(clientMsgId);
+        req.setMessageType("TEXT");
+        req.setBody(null);
+        MockMultipartFile image = new MockMultipartFile("files", "photo.jpg", "image/jpeg", new byte[]{1, 2, 3});
+
+        service.sendMessageWithAttachments(callerId, matchId, req, List.of(image), null);
+
+        verify(creditService, times(1)).consumeCredits(eq(callerId), eq(10L), eq("MESSAGE"), anyString());
+        verify(creditService, never()).consumeCredits(eq(callerId), eq(3L), eq("IMAGE_MESSAGE"), anyString());
+    }
+
     private void setupMocksForAttachmentSend() {
         ChatMatchRepository.MatchRow match = buildActiveMatch();
         ChatMessageRepository.MessageRow inserted = buildMessageRow(1L);
@@ -334,5 +414,10 @@ class MessageCommandServiceAttachmentTest {
         return new ChatMessageDto(UUID.randomUUID(), matchId, 1L,
                 callerId, "TEXT", null, "SENT", OffsetDateTime.now().toInstant(),
                 List.of());
+    }
+
+    private ActionCostService.ActionCostResult makeCreditCostResult(long creditCost) {
+        return new ActionCostService.ActionCostResult(null, creditCost, true, false, false,
+                java.time.LocalDate.now(), java.time.LocalDate.now(), 0, null, "DAY");
     }
 }
