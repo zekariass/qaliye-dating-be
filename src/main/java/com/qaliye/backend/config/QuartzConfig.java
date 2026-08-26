@@ -3,6 +3,7 @@ package com.qaliye.backend.config;
 import com.qaliye.backend.billing.worker.PromotionRedemptionCleanupWorker;
 import com.qaliye.backend.moderation.MessageModerationJob;
 import com.qaliye.backend.moderation.ModerationRetryWorker;
+import com.qaliye.backend.notifications.worker.CampaignFanoutWorker;
 import com.qaliye.backend.notifications.worker.ExpoDeliveryWorker;
 import com.qaliye.backend.notifications.worker.ExpoReceiptWorker;
 import com.qaliye.backend.notifications.worker.NotificationOutboxFanoutWorker;
@@ -161,6 +162,25 @@ public class QuartzConfig {
                 .withIdentity("notificationRecoveryTrigger")
                 .withSchedule(SimpleScheduleBuilder.simpleSchedule()
                         .withIntervalInMinutes(2)
+                        .repeatForever())
+                .build();
+    }
+
+    @Bean
+    public JobDetail campaignFanoutJobDetail() {
+        return JobBuilder.newJob(CampaignFanoutWorker.class)
+                .withIdentity("campaignFanoutJob")
+                .storeDurably()
+                .build();
+    }
+
+    @Bean
+    public Trigger campaignFanoutTrigger(JobDetail campaignFanoutJobDetail) {
+        return TriggerBuilder.newTrigger()
+                .forJob(campaignFanoutJobDetail)
+                .withIdentity("campaignFanoutTrigger")
+                .withSchedule(SimpleScheduleBuilder.simpleSchedule()
+                        .withIntervalInSeconds(30)
                         .repeatForever())
                 .build();
     }

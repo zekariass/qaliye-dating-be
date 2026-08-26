@@ -1,6 +1,10 @@
 package com.qaliye.backend.notifications.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qaliye.backend.notifications.repository.NotificationOutboxRepository.OutboxRow;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -14,12 +18,15 @@ import java.util.UUID;
 @Service
 public class NotificationPayloadBuilder {
 
+    private static final Logger log = LoggerFactory.getLogger(NotificationPayloadBuilder.class);
     private static final String GENERIC_CHAT_TITLE = "Qaliye";
     private static final String GENERIC_CHAT_BODY  = "You have a new message";
 
     @SuppressWarnings("unused")
     private static final Set<String> PREVIEW_ELIGIBLE_TYPES =
             Set.of("TEXT", "ICEBREAKER", "PROMPT_REPLY");
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final NamedParameterJdbcTemplate jdbc;
 
@@ -147,6 +154,11 @@ public class NotificationPayloadBuilder {
             if (campaign != null) {
                 title = (String) campaign.getOrDefault("title", title);
                 body  = (String) campaign.getOrDefault("body", body);
+                Object navPayload = campaign.get("navigation_payload");
+                Map<String, Object> navMap = parseNavigationPayload(navPayload);
+                if (navMap != null && !navMap.isEmpty()) {
+                    data.put("navigation", navMap);
+                }
             }
         }
 
@@ -187,9 +199,25 @@ public class NotificationPayloadBuilder {
     private Map<String, Object> loadCampaignContent(UUID campaignId) {
         try {
             return jdbc.queryForMap(
-                    "SELECT title, body FROM notification_campaigns WHERE id = :campaignId",
+                    "SELECT title, body, navigation_payload FROM notification_campaigns WHERE id = :campaignId",
                     Map.of("campaignId", campaignId));
         } catch (Exception e) {
+            return null;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parseNavigationPayload(Object raw) {
+        if (raw == null) return null;
+        if (raw instanceof Map<?, ?> map) {
+            return (Map<String, Object>) map;
+        }
+        String json = raw.toString();
+        if (json.isBlank() || json.equals("{}")) return null;
+        try {
+            return MAPPER.readValue(json, new TypeReference<>() {});
+        } catch (Exception e) {
+            log.warn("Failed to parse navigation_payload: {}", e.getMessage());
             return null;
         }
     }
