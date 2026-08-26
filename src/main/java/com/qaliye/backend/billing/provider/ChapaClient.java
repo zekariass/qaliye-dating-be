@@ -40,7 +40,7 @@ public class ChapaClient implements LocalOnlinePaymentGateway {
     @Override
     @SuppressWarnings("unchecked")
     public CheckoutResult createCheckout(String orderReference, int amountMinorUnits,
-                                         String currency, String customerId) {
+                                         String currency, String customerId, String returnUrl) {
         String amount = String.format("%.2f", amountMinorUnits / 100.0);
 
         Map<String, Object> body = new LinkedHashMap<>();
@@ -49,10 +49,12 @@ public class ChapaClient implements LocalOnlinePaymentGateway {
         body.put("tx_ref", orderReference);
         body.put("callback_url", billingProps.getChapa().getWebhookUrl());
 
-        String returnUrl = billingProps.getChapa().getReturnUrl();
-        if (returnUrl != null && !returnUrl.isBlank()
-                && (returnUrl.startsWith("http://") || returnUrl.startsWith("https://"))) {
-            body.put("return_url", returnUrl);
+        String effectiveReturnUrl = (returnUrl != null && !returnUrl.isBlank())
+                ? returnUrl
+                : billingProps.getChapa().getReturnUrl();
+        if (effectiveReturnUrl != null && !effectiveReturnUrl.isBlank()
+                && (effectiveReturnUrl.startsWith("http://") || effectiveReturnUrl.startsWith("https://"))) {
+            body.put("return_url", effectiveReturnUrl);
         }
 
         body.put("customization", Map.of("title", "Qaliye Premium", "description", "Subscription payment"));

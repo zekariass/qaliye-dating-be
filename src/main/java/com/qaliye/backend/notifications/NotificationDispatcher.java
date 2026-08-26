@@ -78,4 +78,40 @@ public class NotificationDispatcher {
                     userId, e.getMessage());
         }
     }
+
+    public void dispatchPhotoApprovedNotification(UUID userId) {
+        try {
+            outboxService.createAccountAlertEvent(userId, "PHOTO_APPROVED",
+                    UUID.randomUUID(), OffsetDateTime.now());
+        } catch (Exception e) {
+            log.error("dispatchPhotoApprovedNotification failed for user {}: {}", userId, e.getMessage());
+        }
+    }
+
+    public void dispatchPhotoRejectedNotification(UUID userId) {
+        try {
+            outboxService.createAccountAlertEvent(userId, "PHOTO_REJECTED",
+                    UUID.randomUUID(), OffsetDateTime.now());
+        } catch (Exception e) {
+            log.error("dispatchPhotoRejectedNotification failed for user {}: {}", userId, e.getMessage());
+        }
+    }
+
+    public void dispatchPaymentApprovedNotification(UUID userId) {
+        try {
+            outboxService.createAccountAlertEvent(userId, "PAYMENT_APPROVED",
+                    UUID.randomUUID(), OffsetDateTime.now());
+        } catch (Exception e) {
+            log.error("dispatchPaymentApprovedNotification failed for user {}: {}", userId, e.getMessage());
+        }
+    }
+
+    public void dispatchPaymentRejectedNotification(UUID userId) {
+        try {
+            outboxService.createAccountAlertEvent(userId, "PAYMENT_REJECTED",
+                    UUID.randomUUID(), OffsetDateTime.now());
+        } catch (Exception e) {
+            log.error("dispatchPaymentRejectedNotification failed for user {}: {}", userId, e.getMessage());
+        }
+    }
 }

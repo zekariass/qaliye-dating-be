@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,17 +29,20 @@ public class AdminBillingService {
     private final SupabaseStorageService storageService;
     private final BillingProperties billingProps;
     private final NamedParameterJdbcTemplate jdbc;
+    private final ObjectMapper objectMapper;
 
     public AdminBillingService(BillingRepository billingRepo,
                                 FulfillmentService fulfillmentService,
                                 SupabaseStorageService storageService,
                                 BillingProperties billingProps,
-                                NamedParameterJdbcTemplate jdbc) {
+                                NamedParameterJdbcTemplate jdbc,
+                                ObjectMapper objectMapper) {
         this.billingRepo = billingRepo;
         this.fulfillmentService = fulfillmentService;
         this.storageService = storageService;
         this.billingProps = billingProps;
         this.jdbc = jdbc;
+        this.objectMapper = objectMapper;
     }
 
     public Map<String, Object> listOrders(String status, String methodCode,
@@ -179,8 +183,7 @@ public class AdminBillingService {
     private void logAudit(UUID actorId, String action, String targetTable, UUID targetId,
                           Map<String, Object> details) {
         try {
-            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            String detailsJson = mapper.writeValueAsString(details);
+            String detailsJson = objectMapper.writeValueAsString(details);
             jdbc.update("""
                     INSERT INTO audit_log (actor_user_id, action, target_table, target_id, details)
                     VALUES (:actorId, :action, :targetTable, :targetId, :details::jsonb)

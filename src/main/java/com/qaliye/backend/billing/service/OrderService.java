@@ -201,22 +201,22 @@ public class OrderService {
                     orderReference,
                     effectiveAmount,
                     offer.currency(),
-                    userId.toString()
+                    userId.toString(),
+                    request.returnUrl()
             );
             checkoutUrl = checkout.checkoutUrl();
             providerRef = checkout.txRef();
-        } catch (ResponseStatusException e) {
+        } catch (Exception e) {
             if (redemptionId != null) {
                 promotionRepo.cancelRedemptionRequiresNew(redemptionId, "order_cancelled", "Chapa checkout failed");
             }
             if (appliedPromotion != null) {
                 promotionRepo.releaseReservation(appliedPromotion.campaign().id());
             }
-            throw e;
-        } catch (Exception e) {
             log.error("Gateway checkout creation failed for user={} method={}: {}",
                     userId, method.methodCode(), e.getMessage());
-            initialStatus = "CREATED";
+            if (e instanceof ResponseStatusException rse) throw rse;
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "checkout_creation_failed");
         }
 
         BillingRepository.OrderRow order = billingRepo.insertOrder(

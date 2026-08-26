@@ -1,6 +1,7 @@
 package com.qaliye.backend.admin;
 
 import com.qaliye.backend.moderation.PhotoModerationItemDto;
+import com.qaliye.backend.notifications.NotificationDispatcher;
 import com.qaliye.backend.storage.SupabaseStorageService;
 import com.qaliye.backend.user.UserStatusService;
 import org.springframework.http.HttpStatus;
@@ -100,13 +101,16 @@ public class AdminModerationQueueService {
     private final NamedParameterJdbcTemplate jdbc;
     private final UserStatusService userStatusService;
     private final SupabaseStorageService storageService;
+    private final NotificationDispatcher notificationDispatcher;
 
     public AdminModerationQueueService(NamedParameterJdbcTemplate jdbc,
                                        UserStatusService userStatusService,
-                                       SupabaseStorageService storageService) {
+                                       SupabaseStorageService storageService,
+                                       NotificationDispatcher notificationDispatcher) {
         this.jdbc = jdbc;
         this.userStatusService = userStatusService;
         this.storageService = storageService;
+        this.notificationDispatcher = notificationDispatcher;
     }
 
     public List<PhotoModerationItemDto> getManualReviewQueue(UUID callerId) {
@@ -163,7 +167,7 @@ public class AdminModerationQueueService {
     @Transactional
     public Map<String, Object> approvePhoto(UUID callerId, UUID photoId) {
         requireModeratorRole(callerId);
-        ensurePhotoExists(photoId);
+        UUID userId = getPhotoUserId(photoId);
         int rows = jdbc.update(APPROVE_PHOTO_SQL, new MapSqlParameterSource()
                 .addValue("photoId", photoId)
                 .addValue("reviewerId", callerId));
@@ -172,13 +176,14 @@ public class AdminModerationQueueService {
         }
         writeAuditLog(callerId, "PHOTO_APPROVED", "profile_photos", photoId,
                 "{\"moderation_status\": \"APPROVED\"}");
+        notificationDispatcher.dispatchPhotoApprovedNotification(userId);
         return Map.of("photoId", photoId, "moderationStatus", "APPROVED");
     }
 
     @Transactional
     public Map<String, Object> rejectPhoto(UUID callerId, UUID photoId, String reason) {
         requireModeratorRole(callerId);
-        ensurePhotoExists(photoId);
+        UUID userId = getPhotoUserId(photoId);
         int rows = jdbc.update(REJECT_PHOTO_SQL, new MapSqlParameterSource()
                 .addValue("photoId", photoId)
                 .addValue("reviewerId", callerId)
@@ -188,18 +193,17 @@ public class AdminModerationQueueService {
         }
         writeAuditLog(callerId, "PHOTO_REJECTED", "profile_photos", photoId,
                 "{\"moderation_status\": \"REJECTED\", \"reason\": \"" + escapeJson(reason) + "\"}");
+        notificationDispatcher.dispatchPhotoRejectedNotification(userId);
         return Map.of("photoId", photoId, "moderationStatus", "REJECTED");
     }
 
-    private void ensurePhotoExists(UUID photoId) {
+    private UUID getPhotoUserId(UUID photoId) {
         List<Map<String, Object>> rows = jdbc.queryForList(FIND_PHOTO_SQL,
                 new MapSqlParameterSource().addValue("photoId", photoId));
-        if (rows.isEmpty()) {
+        if (rows.isEmpty() || rows.get(0).get("deleted_at") != null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "photo_not_found");
         }
-        if (rows.get(0).get("deleted_at") != null) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "photo_not_found");
-        }
+        return (UUID) rows.get(0).get("user_id");
     }
 
     private void writeAuditLog(UUID actorId, String action, String targetTable,

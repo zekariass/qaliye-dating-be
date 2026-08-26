@@ -146,7 +146,7 @@ billing:
     webhook-secret: ${CHAPA_WEBHOOK_SECRET:b593c000e02037464f7f9cb09f42ac41f25855caa806f199e02870422cbbb83e}
     base-url: ${CHAPA_BASE_URL:https://api.chapa.co/v1}
     webhook-url: ${CHAPA_WEBHOOK_URL:}
-    return-url: ${CHAPA_RETURN_URL:qaliyemobile://callback}
+    return-url: ${CHAPA_RETURN_URL:qaliyedating://payments/chapa/callback}
   verifier:
     provider: VERIFY_ET
     api-key: ${VERIFY_ET_API_KEY:VERIFY_BANK_ET_BdHRjlvR9CLfMTANPZmGyeWGjpdzB7fZIq3-GhxjfhrBWz0u5EzX2qlYSdIgOEqa}

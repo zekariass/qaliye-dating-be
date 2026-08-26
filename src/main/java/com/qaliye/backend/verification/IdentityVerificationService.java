@@ -4,6 +4,7 @@ import com.qaliye.backend.moderation.ModerationImageConverter;
 import com.qaliye.backend.moderation.InvalidModerationImageException;
 import com.qaliye.backend.moderation.rekognition.RekognitionImageClient;
 import com.qaliye.backend.moderation.rekognition.RekognitionProviderException;
+import com.qaliye.backend.notifications.NotificationDispatcher;
 import com.qaliye.backend.storage.SupabaseStorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -155,17 +156,20 @@ public class IdentityVerificationService {
     private final SupabaseStorageService storageService;
     private final ModerationImageConverter imageConverter;
     private final IdentityVerificationProperties verificationProperties;
+    private final NotificationDispatcher notificationDispatcher;
 
     public IdentityVerificationService(NamedParameterJdbcTemplate jdbc,
                                         RekognitionImageClient rekognitionClient,
                                         SupabaseStorageService storageService,
                                         ModerationImageConverter imageConverter,
-                                        IdentityVerificationProperties verificationProperties) {
+                                        IdentityVerificationProperties verificationProperties,
+                                        NotificationDispatcher notificationDispatcher) {
         this.jdbc = jdbc;
         this.rekognitionClient = rekognitionClient;
         this.storageService = storageService;
         this.imageConverter = imageConverter;
         this.verificationProperties = verificationProperties;
+        this.notificationDispatcher = notificationDispatcher;
     }
 
     public record IdentityVerificationResponse(String verificationStatus, String errorCode, String resultMessage) {}
@@ -459,6 +463,7 @@ public class IdentityVerificationService {
                 .addValue("message", "Identity verified by admin review."));
         jdbc.update(SET_PROFILE_VERIFIED_SQL, new MapSqlParameterSource("userId", userId));
 
+        notificationDispatcher.dispatchVerificationApprovedNotification(userId);
         log.info("Admin {} approved manual review {} for user={}", adminId, reviewId, userId);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("review_id", reviewId);
@@ -488,6 +493,7 @@ public class IdentityVerificationService {
         UUID userId = (UUID) rows.get(0).get("user_id");
         markFailed(userId, note != null ? note : "Manual review rejected.");
 
+        notificationDispatcher.dispatchVerificationRejectedNotification(userId, note);
         log.info("Admin {} rejected manual review {} for user={}", adminId, reviewId, userId);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("review_id", reviewId);

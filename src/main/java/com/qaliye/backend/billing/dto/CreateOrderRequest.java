@@ -8,5 +8,6 @@ public record CreateOrderRequest(
         @NotNull UUID paymentOfferId,
         @NotNull UUID paymentMethodId,
         String platform,
-        String idempotencyKey
+        String idempotencyKey,
+        String returnUrl
 ) {}

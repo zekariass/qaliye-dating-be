@@ -153,7 +153,7 @@ public class VerifyEtWebhookHandler {
 
             BillingRepository.VerificationAttemptRow attempt = attemptOpt.get();
 
-            Set<String> terminalStatuses = Set.of("VERIFIED", "REJECTED", "MANUAL_REVIEW");
+            Set<String> terminalStatuses = Set.of("VERIFIED", "REJECTED", "MANUAL_REVIEW", "REVIEW_REQUIRED");
             if (terminalStatuses.contains(attempt.status())) {
                 log.info("verify.et webhook: order {} already finalized ({}), skipping",
                         attempt.orderId(), attempt.status());

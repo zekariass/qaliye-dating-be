@@ -2,6 +2,7 @@ package com.qaliye.backend.payments;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qaliye.backend.billing.BillingProperties;
+import com.qaliye.backend.notifications.NotificationDispatcher;
 import com.qaliye.backend.user.UserStatusService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -133,17 +134,20 @@ public class PaymentService {
     private final UserStatusService userStatusService;
     private final ObjectMapper objectMapper;
     private final BillingProperties billingProperties;
+    private final NotificationDispatcher notificationDispatcher;
 
     public PaymentService(NamedParameterJdbcTemplate jdbc,
                           CacheManager cacheManager,
                           UserStatusService userStatusService,
                           ObjectMapper objectMapper,
-                          BillingProperties billingProperties) {
+                          BillingProperties billingProperties,
+                          NotificationDispatcher notificationDispatcher) {
         this.jdbc = jdbc;
         this.cacheManager = cacheManager;
         this.userStatusService = userStatusService;
         this.objectMapper = objectMapper;
         this.billingProperties = billingProperties;
+        this.notificationDispatcher = notificationDispatcher;
     }
 
     /** Returns true if event is new (should be processed), false if duplicate. */
@@ -396,6 +400,13 @@ public class PaymentService {
                 + (req.getAdminNotes() != null ? ", \"admin_notes\": \"" + req.getAdminNotes() + "\"" : "")
                 + "}";
         writeAuditLog(adminId, "TRANSACTION_REVIEWED", "transactions", transactionId, details);
+
+        UUID userId = (UUID) tx.get("user_id");
+        if ("COMPLETED".equals(req.getStatus())) {
+            notificationDispatcher.dispatchPaymentApprovedNotification(userId);
+        } else {
+            notificationDispatcher.dispatchPaymentRejectedNotification(userId);
+        }
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("transaction_id", transactionId);

@@ -87,9 +87,9 @@ public class BillingWebhookController {
             boolean xChapaValid = false;
 
             if (chapaSignature != null) {
-                chapaValid = verifySecretSignature(chapaSignature, verifySecret);
+                chapaValid = verifySecretSignature(body, chapaSignature, verifySecret);
                 if (!chapaValid && secretKey != null && !secretKey.isBlank() && !secretKey.equals(verifySecret)) {
-                    chapaValid = verifySecretSignature(chapaSignature, secretKey);
+                    chapaValid = verifySecretSignature(body, chapaSignature, secretKey);
                 }
             }
             if (xChapaSignature != null) {
@@ -125,9 +125,16 @@ public class BillingWebhookController {
             @RequestBody byte[] body) {
 
         String deliveryId = request.getHeader("X-Webhook-Delivery-Id");
+        String timestamp = request.getHeader("X-Webhook-Timestamp");
+        String signature = request.getHeader("X-Webhook-Signature");
 
-        log.info("verify.et webhook received: deliveryId={}, bodySize={} bytes, payload={}",
-                deliveryId, body.length, new String(body, java.nio.charset.StandardCharsets.UTF_8));
+        log.info("verify.et webhook received: deliveryId={}, bodySize={} bytes", deliveryId, body.length);
+        log.debug("verify.et webhook payload: {}", new String(body, java.nio.charset.StandardCharsets.UTF_8));
+
+        if (!verifyEtHandler.validateSignature(timestamp, signature, body)) {
+            log.warn("verify.et webhook: invalid signature, rejecting (deliveryId={})", deliveryId);
+            return ResponseEntity.status(401).body(Map.of("error", "invalid_signature"));
+        }
 
         try {
             verifyEtHandler.handle(body);
@@ -156,16 +163,16 @@ public class BillingWebhookController {
         }
     }
 
-    private boolean verifySecretSignature(String signature, String secret) {
+    private boolean verifySecretSignature(byte[] body, String signature, String secret) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
-            byte[] hash = mac.doFinal(secret.getBytes(StandardCharsets.UTF_8));
+            byte[] hash = mac.doFinal(body);
             String computed = HexFormat.of().formatHex(hash);
             boolean match = computed.equalsIgnoreCase(signature);
             if (!match) {
-                log.debug("Chapa signature mismatch: computed={}, received={}, secretLen={}",
-                        computed, signature, secret.length());
+                log.debug("Chapa signature mismatch: computed={}, received={}, secretLen={}, bodyLen={}",
+                        computed, signature, secret.length(), body.length);
             }
             return match;
         } catch (Exception e) {

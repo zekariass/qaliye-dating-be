@@ -133,11 +133,41 @@ public class NotificationPayloadBuilder {
     }
 
     private ExpoMessage buildAccountAlert(OutboxRow outbox, String deviceToken) {
+        String alertCode = extractAlertCode(outbox.payloadJson());
+
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("notification_type", "ACCOUNT_ALERT");
+        if (alertCode != null) {
+            data.put("alert_code", alertCode);
+        }
 
-        return new ExpoMessage(deviceToken, "Qaliye", "Important account update", data,
+        String title = "Qaliye";
+        String body  = alertBody(alertCode);
+
+        return new ExpoMessage(deviceToken, title, body, data,
                 null, null, null, "high", "alerts", "notification.mp3");
+    }
+
+    private static String alertBody(String alertCode) {
+        if (alertCode == null) return "Important account update";
+        return switch (alertCode) {
+            case "VERIFICATION_APPROVED" -> "Your identity has been verified! ✅";
+            case "VERIFICATION_REJECTED" -> "Your identity verification could not be approved.";
+            case "PHOTO_APPROVED"        -> "Your profile photo has been approved! ✅";
+            case "PHOTO_REJECTED"        -> "Your profile photo was not approved. Please upload a new one.";
+            case "PAYMENT_APPROVED"      -> "Your payment has been approved! ✅";
+            case "PAYMENT_REJECTED"      -> "Your payment could not be approved. Please contact support.";
+            default                      -> "Important account update";
+        };
+    }
+
+    private String extractAlertCode(String payloadJson) {
+        if (payloadJson == null || payloadJson.isBlank()) return null;
+        try {
+            var node = MAPPER.readTree(payloadJson);
+            if (node.has("alert_code")) return node.get("alert_code").asText();
+        } catch (Exception ignored) {}
+        return null;
     }
 
     private ExpoMessage buildMarketing(OutboxRow outbox, String deviceToken) {

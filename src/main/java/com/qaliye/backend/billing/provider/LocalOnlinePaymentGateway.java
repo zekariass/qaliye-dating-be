@@ -12,7 +12,7 @@ public interface LocalOnlinePaymentGateway {
     boolean isConfigured();
 
     CheckoutResult createCheckout(String orderReference, int amountMinorUnits,
-                                  String currency, String customerId);
+                                  String currency, String customerId, String returnUrl);
 
     record CheckoutResult(String checkoutUrl, String txRef) {}
 }

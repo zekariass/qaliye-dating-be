@@ -33,7 +33,7 @@ public class ArifPayGatewayClient implements LocalOnlinePaymentGateway {
 
     @Override
     public CheckoutResult createCheckout(String orderReference, int amountMinorUnits,
-                                         String currency, String customerId) {
+                                         String currency, String customerId, String returnUrl) {
         log.warn("ArifPay checkout called but not yet implemented – orderReference={}", orderReference);
         throw new UnsupportedOperationException("arifpay_not_implemented");
     }

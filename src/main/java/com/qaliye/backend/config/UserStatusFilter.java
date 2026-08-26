@@ -21,6 +21,8 @@ public class UserStatusFilter extends OncePerRequestFilter {
 
     private static final String SUSPENDED_JSON =
             "{\"error\":\"account_suspended\",\"message\":\"Account suspended\",\"status\":403}";
+    private static final String DEACTIVATED_JSON =
+            "{\"error\":\"account_deactivated\",\"message\":\"Account deactivated\",\"status\":403}";
     private static final String DELETED_JSON =
             "{\"error\":\"account_deleted\",\"message\":\"Account deleted\",\"status\":403}";
 
@@ -52,12 +54,17 @@ public class UserStatusFilter extends OncePerRequestFilter {
         UUID callerId = CallerUtils.callerId();
         UserStatusService.UserStatus userStatus = userStatusService.getStatus(callerId);
 
-        if (userStatus == null
-                || "SUSPENDED".equals(userStatus.status())
-                || "DEACTIVATED".equals(userStatus.status())) {
+        if (userStatus == null || "SUSPENDED".equals(userStatus.status())) {
             response.setStatus(HttpServletResponse.SC_FORBIDDEN);
             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
             response.getWriter().write(SUSPENDED_JSON);
+            return;
+        }
+
+        if ("DEACTIVATED".equals(userStatus.status())) {
+            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            response.getWriter().write(DEACTIVATED_JSON);
             return;
         }
 

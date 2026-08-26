@@ -151,11 +151,17 @@ public class CampaignFanoutWorker implements Job {
     private QueryAndParams buildEligibleUsersQuery(UUID campaignId, Map<String, Object> audience) {
         List<String> residencyTypes = toStringList(audience.get("residencyTypes"));
         List<String> countries      = toStringList(audience.get("countries"));
+        List<String> relationshipIntentions = toStringList(audience.get("relationshipIntentions"));
+        List<String> maritalStatuses       = toStringList(audience.get("maritalStatuses"));
 
         boolean needsProfile = audience.containsKey("gender")
                 || audience.containsKey("ageMin")
                 || audience.containsKey("ageMax")
                 || !residencyTypes.isEmpty()
+                || !relationshipIntentions.isEmpty()
+                || !maritalStatuses.isEmpty()
+                || audience.containsKey("profileCompletionMin")
+                || audience.containsKey("profileCompletionMax")
                 || Boolean.TRUE.equals(audience.get("onboardedOnly"));
 
         boolean needsAddress = !countries.isEmpty();
@@ -216,6 +222,9 @@ public class CampaignFanoutWorker implements Job {
         if (Boolean.TRUE.equals(audience.get("verifiedOnly"))) {
             sql.append("  AND u.verification_status = 'VERIFIED'\n");
         }
+        if (Boolean.TRUE.equals(audience.get("unVerifiedOnly"))) {
+            sql.append("  AND u.verification_status != 'VERIFIED'\n");
+        }
         if (Boolean.TRUE.equals(audience.get("premiumOnly"))) {
             sql.append("""
                       AND EXISTS (
@@ -224,6 +233,43 @@ public class CampaignFanoutWorker implements Job {
                             AND us.status IN ('ACTIVE', 'GRACE_PERIOD')
                       )
                     """);
+        }
+        if (Boolean.TRUE.equals(audience.get("nonPremiumOnly"))) {
+            sql.append("""
+                      AND NOT EXISTS (
+                          SELECT 1 FROM user_subscriptions us
+                          WHERE us.user_id = u.id
+                            AND us.status IN ('ACTIVE', 'GRACE_PERIOD')
+                      )
+                    """);
+        }
+        if (audience.containsKey("lastActiveDays")) {
+            sql.append("  AND u.last_active_at >= NOW() - (:lastActiveDays || ' days')::interval\n");
+            params.addValue("lastActiveDays", ((Number) audience.get("lastActiveDays")).intValue());
+        }
+        if (audience.containsKey("lastActiveDaysMax")) {
+            sql.append("  AND u.last_active_at < NOW() - (:lastActiveDaysMax || ' days')::interval\n");
+            params.addValue("lastActiveDaysMax", ((Number) audience.get("lastActiveDaysMax")).intValue());
+        }
+        if (audience.containsKey("accountAgeDays")) {
+            sql.append("  AND u.created_at <= NOW() - (:accountAgeDays || ' days')::interval\n");
+            params.addValue("accountAgeDays", ((Number) audience.get("accountAgeDays")).intValue());
+        }
+        if (!relationshipIntentions.isEmpty()) {
+            sql.append("  AND p.relationship_intention IN (:relationshipIntentions)\n");
+            params.addValue("relationshipIntentions", relationshipIntentions);
+        }
+        if (!maritalStatuses.isEmpty()) {
+            sql.append("  AND p.marital_status IN (:maritalStatuses)\n");
+            params.addValue("maritalStatuses", maritalStatuses);
+        }
+        if (audience.containsKey("profileCompletionMin")) {
+            sql.append("  AND p.profile_completion_score >= :profileCompletionMin\n");
+            params.addValue("profileCompletionMin", ((Number) audience.get("profileCompletionMin")).intValue());
+        }
+        if (audience.containsKey("profileCompletionMax")) {
+            sql.append("  AND p.profile_completion_score <= :profileCompletionMax\n");
+            params.addValue("profileCompletionMax", ((Number) audience.get("profileCompletionMax")).intValue());
         }
 
         sql.append("ORDER BY u.id\nLIMIT :batchSize\n");
