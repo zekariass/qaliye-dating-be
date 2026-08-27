@@ -51,6 +51,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/v1/payments/webhooks/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/billing/webhooks/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/catalog/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/app/version").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/supabase/send-sms-hook").permitAll()
                         .anyRequest().authenticated()
                 )
