@@ -45,16 +45,7 @@ public class EntitlementService {
         this.countrySettingsService = countrySettingsService;
     }
 
-    private static final String PLAN_LIMITS_SQL = """
-            SELECT fa.code AS action_code, splac.limit_value
-            FROM subscription_plan_limit_and_cost splac
-            JOIN feature_actions fa ON fa.id = splac.feature_action_id
-            WHERE splac.subscription_plan_id = :planId
-              AND fa.code IN ('LIKE', 'SUPER_LIKE', 'REWIND', 'BOOST',
-                              'VOICE_MESSAGE', 'IMAGE_MESSAGE')
-            """;
-
-    private static final String DAILY_USAGE_SQL = """
+    private static final String USAGE_SQL = """
             SELECT fa.code AS action_code, uat.used_count
             FROM user_action_limits_tracker uat
             JOIN subscription_plan_limit_and_cost splac
@@ -63,8 +54,6 @@ public class EntitlementService {
             WHERE uat.user_id = :userId
               AND uat.period_start_date <= CURRENT_DATE
               AND uat.period_end_date   >= CURRENT_DATE
-              AND fa.code IN ('LIKE', 'SUPER_LIKE', 'REWIND', 'BOOST',
-                              'VOICE_MESSAGE', 'IMAGE_MESSAGE')
             """;
 
     private static final String PREMIUM_PLAN_LIMITS_SQL = """
@@ -74,12 +63,10 @@ public class EntitlementService {
             JOIN subscription_plans sp ON sp.id = splac.subscription_plan_id
             WHERE sp.plan_kind = 'PAID'
               AND sp.is_active = TRUE
-              AND fa.code IN ('LIKE', 'SUPER_LIKE', 'REWIND', 'BOOST',
-                              'VOICE_MESSAGE', 'IMAGE_MESSAGE')
             ORDER BY CASE WHEN sp.country_code = :countryCode THEN 0 ELSE 1 END, fa.code
             """;
 
-    private static final String ACTION_COSTS_SQL = """
+    private static final String PLAN_LIMITS_AND_COSTS_SQL = """
             SELECT fa.code AS action_code,
                    splac.member_credit_cost,
                    splac.actual_credit_cost,
@@ -119,47 +106,36 @@ public class EntitlementService {
             features = freePlan.features();
         }
 
-        // Load plan limits
-        Map<String, Integer> limits = new LinkedHashMap<>();
-        if (planId != null) {
-            jdbc.query(PLAN_LIMITS_SQL, Map.of("planId", planId), rs -> {
-                String code = rs.getString("action_code");
-                Object val = rs.getObject("limit_value");
-                Integer limitVal = val != null ? ((Number) val).intValue() : null;
-                limits.put(code, limitVal);
-            });
-        }
-
-        // Load current-period usage from tracker
+        // Load current-period usage from tracker (all actions)
         Map<String, Integer> usageByAction = new LinkedHashMap<>();
-        jdbc.query(DAILY_USAGE_SQL, Map.of("userId", userId), rs -> {
+        jdbc.query(USAGE_SQL, Map.of("userId", userId), rs -> {
             usageByAction.put(rs.getString("action_code"), rs.getInt("used_count"));
         });
-        int likesUsed         = usageByAction.getOrDefault("LIKE",          0);
-        int superLikesUsed    = usageByAction.getOrDefault("SUPER_LIKE",    0);
-        int rewindsUsed       = usageByAction.getOrDefault("REWIND",        0);
-        int boostsUsed        = usageByAction.getOrDefault("BOOST",         0);
-        int voiceChatMsgsUsed = usageByAction.getOrDefault("VOICE_MESSAGE", 0);
-        int imageChatMsgsUsed = usageByAction.getOrDefault("IMAGE_MESSAGE", 0);
 
-        Instant tomorrowStart = LocalDate.now(ZoneOffset.UTC).plusDays(1)
-                .atStartOfDay(ZoneOffset.UTC).toInstant();
-
-        // Resolve limits
-        Integer likesLimit       = limits.get("LIKE");
-        Integer superLikesLimit  = limits.get("SUPER_LIKE");
-        Integer rewindsLimit     = limits.get("REWIND");
-        Integer boostsLimit      = limits.get("BOOST");
-        Integer voiceChatMsgLimit  = limits.get("VOICE_MESSAGE");
-        Integer imageChatMsgLimit  = limits.get("IMAGE_MESSAGE");
-
-        Map<String, EntitlementResponse.QuotaInfo> quotaMap = new LinkedHashMap<>();
-        quotaMap.put("likes", buildQuota(likesUsed, likesLimit, tomorrowStart));
-        quotaMap.put("superLikes", buildQuota(superLikesUsed, superLikesLimit, tomorrowStart));
-        quotaMap.put("rewinds", buildQuota(rewindsUsed, rewindsLimit, tomorrowStart));
-        quotaMap.put("boosts", buildQuota(boostsUsed, boostsLimit, null));
-        quotaMap.put("voiceChatMsgs", buildQuota(voiceChatMsgsUsed, voiceChatMsgLimit, tomorrowStart));
-        quotaMap.put("imageChatMsgs", buildQuota(imageChatMsgsUsed, imageChatMsgLimit, tomorrowStart));
+        // Load all plan limits and costs in one query, merge with usage
+        Map<String, EntitlementResponse.ActionLimitAndCost> limitsAndCosts = new LinkedHashMap<>();
+        if (planId != null) {
+            Instant subPeriodEnd = activeSub.map(BillingRepository.ActiveSubRow::periodEnd).orElse(null);
+            jdbc.query(PLAN_LIMITS_AND_COSTS_SQL, Map.of("planId", planId), rs -> {
+                String code = rs.getString("action_code");
+                Object limitValObj = rs.getObject("limit_value");
+                Integer limitVal = limitValObj != null ? ((Number) limitValObj).intValue() : null;
+                String periodType = rs.getString("period_type");
+                int used = usageByAction.getOrDefault(code, 0);
+                Integer remaining = limitVal != null ? Math.max(0, limitVal - used) : null;
+                Instant resetsAt = resolveResetsAt(periodType, subPeriodEnd);
+                limitsAndCosts.put(code, new EntitlementResponse.ActionLimitAndCost(
+                        used,
+                        limitVal,
+                        remaining,
+                        resetsAt,
+                        rs.getLong("member_credit_cost"),
+                        rs.getLong("actual_credit_cost"),
+                        periodType,
+                        rs.getBoolean("apply_credit_after_limit")
+                ));
+            });
+        }
 
         // Credits — all actions now use the central credit balance
         long centralCreditBalance = creditService.getBalance(userId);
@@ -195,28 +171,24 @@ public class EntitlementService {
                 countrySettings.identityVerificationRequired()
         );
 
-        Map<String, EntitlementResponse.ActionCostInfo> costsMap = new LinkedHashMap<>();
-        if (planId != null) {
-            jdbc.query(ACTION_COSTS_SQL, Map.of("planId", planId), rs -> {
-                String code = rs.getString("action_code");
-                Object limitVal = rs.getObject("limit_value");
-                costsMap.put(code, new EntitlementResponse.ActionCostInfo(
-                        rs.getLong("member_credit_cost"),
-                        rs.getLong("actual_credit_cost"),
-                        limitVal != null ? ((Number) limitVal).intValue() : null,
-                        rs.getString("period_type"),
-                        rs.getBoolean("apply_credit_after_limit")
-                ));
-            });
-        }
-
-        return new EntitlementResponse(planCode, subInfo, quotaMap, credits, boostInfo, features, planLimits,
-                billingProps.getBoostDurationMinutes(), settingsDto, costsMap);
+        return new EntitlementResponse(planCode, subInfo, limitsAndCosts, credits, boostInfo, features, planLimits,
+                billingProps.getBoostDurationMinutes(), settingsDto);
     }
 
-    private EntitlementResponse.QuotaInfo buildQuota(int used, Integer limit, Instant resetsAt) {
-        Integer remaining = limit != null ? Math.max(0, limit - used) : null;
-        return new EntitlementResponse.QuotaInfo(used, limit, remaining, resetsAt);
+    private Instant resolveResetsAt(String periodType, Instant subPeriodEnd) {
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        return switch (periodType != null ? periodType : "DAY") {
+            case "MONTH" -> today.withDayOfMonth(today.lengthOfMonth())
+                    .atTime(23, 59, 59)
+                    .toInstant(ZoneOffset.UTC);
+            case "BILLING_CYCLE" -> subPeriodEnd != null ? subPeriodEnd
+                    : today.withDayOfMonth(today.lengthOfMonth())
+                            .atTime(23, 59, 59)
+                            .toInstant(ZoneOffset.UTC);
+            default -> today.plusDays(1)
+                    .atStartOfDay(ZoneOffset.UTC)
+                    .toInstant();
+        };
     }
 
     private record FreePlanInfo(UUID planId, Map<String, Boolean> features) {}

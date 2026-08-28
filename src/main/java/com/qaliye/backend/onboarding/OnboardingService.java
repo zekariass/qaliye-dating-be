@@ -79,12 +79,20 @@ public class OnboardingService {
                 Map.of("uid", userId), Integer.class);
         boolean location = locationCnt != null && locationCnt > 0;
 
-        // 3. Primary photo
+        // 3. Primary photo + minimum additional photos
         List<String> primaryStatuses = jdbc.query(
                 "SELECT moderation_status FROM profile_photos WHERE user_id = :uid AND is_primary = TRUE ORDER BY created_at DESC LIMIT 1",
                 Map.of("uid", userId), (rs, row) -> rs.getString("moderation_status"));
         String primaryPhotoStatus = primaryStatuses.isEmpty() ? null : primaryStatuses.get(0);
-        boolean photo = primaryPhotoStatus != null && !"REJECTED".equals(primaryPhotoStatus);
+        boolean hasPrimaryPhoto = primaryPhotoStatus != null && !"REJECTED".equals(primaryPhotoStatus);
+
+        Integer additionalPhotoCount = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM profile_photos WHERE user_id = :uid AND is_primary = FALSE AND deleted_at IS NULL AND moderation_status <> 'REJECTED'",
+                Map.of("uid", userId), Integer.class);
+        int nonPrimaryPhotos = additionalPhotoCount != null ? additionalPhotoCount : 0;
+        boolean hasMinAdditionalPhotos = nonPrimaryPhotos >= 2;
+
+        boolean photo = hasPrimaryPhoto && hasMinAdditionalPhotos;
 
         // 4. Discovery preferences
         boolean preferences = false;
@@ -127,7 +135,8 @@ public class OnboardingService {
         List<String> blockingReasons = new ArrayList<>();
         if (!basicProfile)          blockingReasons.add("MISSING_BASIC_PROFILE");
         if (!location)              blockingReasons.add("MISSING_LOCATION");
-        if (!photo)                 blockingReasons.add("MISSING_PRIMARY_PHOTO");
+        if (!hasPrimaryPhoto)       blockingReasons.add("MISSING_PRIMARY_PHOTO");
+        if (hasPrimaryPhoto && !hasMinAdditionalPhotos) blockingReasons.add("INSUFFICIENT_PHOTOS");
         if (!preferences)           blockingReasons.add("MISSING_PREFERENCES");
         if (!identityVerification && idVerificationRequired)  blockingReasons.add("IDENTITY_VERIFICATION_REQUIRED");
 

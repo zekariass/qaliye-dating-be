@@ -6,14 +6,13 @@ import java.util.Map;
 public record EntitlementResponse(
         String plan,
         SubscriptionInfo subscription,
-        Map<String, QuotaInfo> limits,
+        Map<String, ActionLimitAndCost> limitsAndCosts,
         CreditsInfo credits,
         ActiveBoostInfo activeBoost,
         Map<String, Boolean> features,
         Map<String, Integer> planLimits,
         int boostDurationMinutes,
-        CountrySettings countrySettings,
-        Map<String, ActionCostInfo> costs
+        CountrySettings countrySettings
 ) {
 
     public record CountrySettings(
@@ -31,13 +30,6 @@ public record EntitlementResponse(
             boolean autoRenew
     ) {}
 
-    public record QuotaInfo(
-            int used,
-            Integer limit,
-            Integer remaining,
-            Instant resetsAt
-    ) {}
-
     public record CreditsInfo(
             long creditBalance,
             int boostsAvailable,
@@ -52,10 +44,13 @@ public record EntitlementResponse(
             long remainingSeconds
     ) {}
 
-    public record ActionCostInfo(
+    public record ActionLimitAndCost(
+            int used,
+            Integer limit,
+            Integer remaining,
+            Instant resetsAt,
             long memberCreditCost,
             long actualCreditCost,
-            Integer limitValue,
             String periodType,
             boolean applyCreditAfterLimit
     ) {}

@@ -459,8 +459,9 @@ public class ProfileService {
         }
 
         // First-time address creation is free; only charge CHANGE_ADDRESS on updates
+        // after onboarding is complete (location changes during onboarding are free)
         UUID existingAddressId = fetchExistingAddressId(userId);
-        if (existingAddressId != null) {
+        if (existingAddressId != null && isOnboarded(userId)) {
             evaluateAndConsumeActionCost(userId, "CHANGE_ADDRESS",
                     "change-addr-" + userId + "-" + System.currentTimeMillis(),
                     HttpStatus.PAYMENT_REQUIRED, "change_address_not_available");
@@ -620,6 +621,13 @@ public class ProfileService {
         if (value != null && !valid.contains(value)) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "VALIDATION_ERROR");
         }
+    }
+
+    private boolean isOnboarded(UUID userId) {
+        Boolean onboarded = jdbc.queryForObject(
+                "SELECT is_onboarded FROM profiles WHERE user_id = :userId",
+                Map.of("userId", userId), Boolean.class);
+        return Boolean.TRUE.equals(onboarded);
     }
 
     private UUID fetchExistingAddressId(UUID userId) {

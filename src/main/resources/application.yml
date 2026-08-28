@@ -167,9 +167,9 @@ app:
     webhook-secret: ${INTERNAL_WEBHOOK_SECRET:dkdkdkdk}
   version:
     android:
-      latest: ${APP_ANDROID_LATEST_VERSION:1.0.9}
+      latest: ${APP_ANDROID_LATEST_VERSION:1.0.5}
       minimum: ${APP_ANDROID_MINIMUM_VERSION:1.0.1}
-      force-update: ${APP_ANDROID_FORCE_UPDATE:true}
+      force-update: ${APP_ANDROID_FORCE_UPDATE:false}
       store-url: ${APP_ANDROID_STORE_URL:https://play.google.com/store/apps/details?id=com.qaliye.app}
     ios:
       latest: ${APP_ANDROID_LATEST_VERSION:1.0.9}

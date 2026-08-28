@@ -404,8 +404,8 @@ public class IdentityVerificationService {
             UUID userId,
             String displayName,
             String gender,
-            String selfiePath,
-            String profilePhotoPath,
+            String selfieUrl,
+            String profilePhotoUrl,
             String createdAt
     ) {}
 
@@ -418,13 +418,19 @@ public class IdentityVerificationService {
 
         List<ReviewQueueItem> items = new ArrayList<>();
         for (Map<String, Object> row : rows) {
+            String selfiePath = (String) row.get("selfie_path");
+            String profilePhotoPath = (String) row.get("profile_photo_path");
+            String selfieUrl = selfiePath != null
+                    ? storageService.generateSignedUrl("profile-photos", selfiePath, 3600) : null;
+            String profilePhotoUrl = profilePhotoPath != null
+                    ? storageService.generateSignedUrl("profile-photos", profilePhotoPath, 3600) : null;
             items.add(new ReviewQueueItem(
                     (UUID) row.get("id"),
                     (UUID) row.get("user_id"),
                     (String) row.get("display_name"),
                     (String) row.get("gender"),
-                    (String) row.get("selfie_path"),
-                    (String) row.get("profile_photo_path"),
+                    selfieUrl,
+                    profilePhotoUrl,
                     row.get("created_at").toString()
             ));
         }
