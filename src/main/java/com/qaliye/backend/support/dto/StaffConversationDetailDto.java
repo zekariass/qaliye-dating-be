@@ -14,6 +14,7 @@ public record StaffConversationDetailDto(
         long userLastReadSequence,
         long staffLastReadSequence,
         long myLastReadSequence,
+        long unreadCount,
         OffsetDateTime waitingSince,
         OffsetDateTime firstStaffResponseAt,
         OffsetDateTime lastActivityAt,

@@ -8,6 +8,7 @@ public record SupportConversationDto(
         String status,
         long userLastReadSequence,
         long nextPublicSequence,
+        long unreadCount,
         OffsetDateTime lastPublicMessageAt,
         String lastPublicMessageSenderType,
         OffsetDateTime closedAt,

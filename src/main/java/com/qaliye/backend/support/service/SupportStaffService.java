@@ -371,20 +371,22 @@ public class SupportStaffService {
     }
 
     private StaffConversationSummaryDto toSummaryDto(ConversationRow row) {
+        long unreadCount = Math.max(0L, row.nextPublicSequence() - 1 - row.staffLastReadSequence());
         return new StaffConversationSummaryDto(
                 row.id(), row.userId(), row.userDisplayName(), row.status(), row.priority(),
                 row.assignedStaffUserId(), row.nextPublicSequence(),
-                row.staffLastReadSequence(), row.waitingSince(),
+                row.staffLastReadSequence(), unreadCount, row.waitingSince(),
                 row.lastPublicMessageAt(), row.lastPublicMessageSenderType(),
                 row.createdAt());
     }
 
     private StaffConversationDetailDto toDetailDto(ConversationRow row, long myReadSequence) {
+        long unreadCount = Math.max(0L, row.nextPublicSequence() - 1 - myReadSequence);
         return new StaffConversationDetailDto(
                 row.id(), row.userId(), row.userDisplayName(), row.status(), row.priority(),
                 row.assignedStaffUserId(), row.nextPublicSequence(),
                 row.userLastReadSequence(), row.staffLastReadSequence(),
-                myReadSequence, row.waitingSince(), row.firstStaffResponseAt(),
+                myReadSequence, unreadCount, row.waitingSince(), row.firstStaffResponseAt(),
                 row.lastActivityAt(), row.lastPublicMessageAt(),
                 row.lastPublicMessageSenderType(), row.closedAt(),
                 row.closedByType(), row.createdAt(), row.updatedAt());

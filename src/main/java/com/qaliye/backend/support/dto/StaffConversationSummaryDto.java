@@ -12,6 +12,7 @@ public record StaffConversationSummaryDto(
         UUID assignedStaffUserId,
         long nextPublicSequence,
         long staffLastReadSequence,
+        long unreadCount,
         OffsetDateTime waitingSince,
         OffsetDateTime lastPublicMessageAt,
         String lastPublicMessageSenderType,

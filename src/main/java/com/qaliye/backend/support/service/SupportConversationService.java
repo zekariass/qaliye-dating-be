@@ -284,11 +284,13 @@ public class SupportConversationService {
     }
 
     private SupportConversationDto toConversationDto(ConversationRow row) {
+        long unreadCount = Math.max(0L, row.nextPublicSequence() - 1 - row.userLastReadSequence());
         return new SupportConversationDto(
                 row.id(),
                 row.status(),
                 row.userLastReadSequence(),
                 row.nextPublicSequence(),
+                unreadCount,
                 row.lastPublicMessageAt(),
                 row.lastPublicMessageSenderType(),
                 row.closedAt(),
