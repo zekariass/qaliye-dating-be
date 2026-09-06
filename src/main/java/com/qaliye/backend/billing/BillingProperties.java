@@ -65,6 +65,10 @@ public class BillingProperties {
         private String webhookSecret = "";
         private String baseUrl = "https://gateway.arifpay.net";
         private String webhookUrl = "";
+        private String returnUrl = "";
+        private String cancelUrl = "";
+        private String errorUrl = "";
+        private String environment = "PRODUCTION";
 
         public String getSecretKey() { return secretKey; }
         public void setSecretKey(String secretKey) { this.secretKey = secretKey; }
@@ -77,6 +81,18 @@ public class BillingProperties {
 
         public String getWebhookUrl() { return webhookUrl; }
         public void setWebhookUrl(String webhookUrl) { this.webhookUrl = webhookUrl; }
+
+        public String getReturnUrl() { return returnUrl; }
+        public void setReturnUrl(String returnUrl) { this.returnUrl = returnUrl; }
+
+        public String getCancelUrl() { return cancelUrl; }
+        public void setCancelUrl(String cancelUrl) { this.cancelUrl = cancelUrl; }
+
+        public String getErrorUrl() { return errorUrl; }
+        public void setErrorUrl(String errorUrl) { this.errorUrl = errorUrl; }
+
+        public String getEnvironment() { return environment; }
+        public void setEnvironment(String environment) { this.environment = environment; }
     }
 
     public static class Chapa {

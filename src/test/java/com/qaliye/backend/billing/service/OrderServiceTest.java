@@ -87,9 +87,9 @@ class OrderServiceTest {
                 "AWAITING_PAYMENT", "ONLINE_PAYMENT", "chapa", "https://chapa.co/pay/xxx");
 
         when(billingRepo.findOfferById(offerId)).thenReturn(Optional.of(offer));
-        when(billingRepo.findActiveOnlinePaymentMethod("ET", "ANDROID")).thenReturn(Optional.of(method));
+        when(billingRepo.findPaymentMethodById(methodId)).thenReturn(Optional.of(method));
         when(gatewayRegistry.resolve("chapa")).thenReturn(mockGateway);
-        when(mockGateway.createCheckout(anyString(), anyInt(), anyString(), anyString(), anyString()))
+        when(mockGateway.createCheckout(anyString(), anyInt(), anyString(), anyString(), any(), any()))
                 .thenReturn(new LocalOnlinePaymentGateway.CheckoutResult("https://chapa.co/pay/xxx", "QAL-TXREF"));
         when(billingRepo.insertOrder(any(), eq(userId), eq(offerId), eq(methodId),
                 anyString(), anyString(), anyInt(), anyString(),
@@ -116,23 +116,24 @@ class OrderServiceTest {
     }
 
     @Test
-    void createOrder_noActiveOnlineMethod_throws400() {
+    void createOrder_unknownMethodId_throws400() {
         when(billingRepo.findOfferById(offerId)).thenReturn(Optional.of(buildOffer("ET", "ANDROID", 100, "ETB")));
-        when(billingRepo.findActiveOnlinePaymentMethod("ET", "ANDROID")).thenReturn(Optional.empty());
+        when(billingRepo.findPaymentMethodById(methodId)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.createOrder(userId,
                 new CreateOrderRequest(offerId, methodId, "ANDROID", null, null)))
                 .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("no_active_online_payment_method");
+                .hasMessageContaining("invalid_payment_method");
     }
 
     @Test
-    void createOrder_wrongMethodId_throws400() {
+    void createOrder_methodFromWrongMarket_throws400() {
         UUID differentMethodId = UUID.randomUUID();
-        BillingRepository.PaymentMethodRow activeMethod = buildMethod("chapa", "ONLINE_PAYMENT", "ET", "ANDROID");
+        BillingRepository.PaymentMethodRow wrongMarketMethod =
+                buildMethod("chapa", "ONLINE_PAYMENT", "US", "ANDROID");
 
         when(billingRepo.findOfferById(offerId)).thenReturn(Optional.of(buildOffer("ET", "ANDROID", 100, "ETB")));
-        when(billingRepo.findActiveOnlinePaymentMethod("ET", "ANDROID")).thenReturn(Optional.of(activeMethod));
+        when(billingRepo.findPaymentMethodById(differentMethodId)).thenReturn(Optional.of(wrongMarketMethod));
 
         assertThatThrownBy(() -> service.createOrder(userId,
                 new CreateOrderRequest(offerId, differentMethodId, "ANDROID", null, null)))
@@ -141,12 +142,12 @@ class OrderServiceTest {
     }
 
     @Test
-    void createOrder_marketMismatch_throws400() {
+    void createOrder_offerMethodMarketMismatch_throws400() {
         BillingRepository.FullOfferRow globalOffer = buildOffer("GLOBAL", "ANDROID", 100, "ETB");
         BillingRepository.PaymentMethodRow etMethod = buildMethod("chapa", "ONLINE_PAYMENT", "ET", "ANDROID");
 
         when(billingRepo.findOfferById(offerId)).thenReturn(Optional.of(globalOffer));
-        when(billingRepo.findActiveOnlinePaymentMethod("ET", "ANDROID")).thenReturn(Optional.of(etMethod));
+        when(billingRepo.findPaymentMethodById(methodId)).thenReturn(Optional.of(etMethod));
 
         assertThatThrownBy(() -> service.createOrder(userId,
                 new CreateOrderRequest(offerId, methodId, "ANDROID", null, null)))

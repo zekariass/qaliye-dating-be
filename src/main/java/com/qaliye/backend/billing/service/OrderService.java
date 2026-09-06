@@ -116,20 +116,23 @@ public class OrderService {
                     "credits_not_available_in_your_country");
         }
 
-        // For ONLINE_PAYMENT: validate the submitted method is the single active gateway method
-        BillingRepository.PaymentMethodRow activeOnlineMethod =
-                billingRepo.findActiveOnlinePaymentMethod(market.resolvedCountryCode(), market.platform())
+        // Look up the exact method the user submitted and validate it for this market
+        BillingRepository.PaymentMethodRow method =
+                billingRepo.findPaymentMethodById(request.paymentMethodId())
                         .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                                "no_active_online_payment_method"));
-
-        if (!activeOnlineMethod.id().equals(request.paymentMethodId())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid_payment_method_for_market");
-        }
-
-        BillingRepository.PaymentMethodRow method = activeOnlineMethod;
+                                "invalid_payment_method"));
 
         if (!method.isActive()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "payment_method_unavailable");
+        }
+
+        if (!"ONLINE_PAYMENT".equals(method.paymentChannel())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid_payment_channel");
+        }
+
+        if (!market.resolvedCountryCode().equals(method.countryCode())
+                || !market.platform().equals(method.platform())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid_payment_method_for_market");
         }
 
         // Validate offer and method belong to the same market
@@ -192,6 +195,7 @@ public class OrderService {
             }
         }
 
+        UUID orderId = UUID.randomUUID();
         String initialStatus = "AWAITING_PAYMENT";
         String checkoutUrl = null;
         String providerRef = null;
@@ -202,7 +206,8 @@ public class OrderService {
                     effectiveAmount,
                     offer.currency(),
                     userId.toString(),
-                    request.returnUrl()
+                    request.returnUrl(),
+                    orderId
             );
             checkoutUrl = checkout.checkoutUrl();
             providerRef = checkout.txRef();
@@ -220,7 +225,7 @@ public class OrderService {
         }
 
         BillingRepository.OrderRow order = billingRepo.insertOrder(
-                UUID.randomUUID(), userId, offer.id(), method.id(),
+                orderId, userId, offer.id(), method.id(),
                 orderReference, initialStatus,
                 effectiveAmount, offer.currency(),
                 instructionSnapshot, checkoutUrl, expiresAt,

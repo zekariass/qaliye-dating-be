@@ -1,6 +1,7 @@
 package com.qaliye.backend.billing.controller;
 
 import com.qaliye.backend.billing.BillingProperties;
+import com.qaliye.backend.billing.service.ArifPayWebhookHandler;
 import com.qaliye.backend.billing.service.ChapaWebhookHandler;
 import com.qaliye.backend.billing.service.RevenueCatWebhookHandler;
 import com.qaliye.backend.billing.service.VerifyEtWebhookHandler;
@@ -25,15 +26,18 @@ public class BillingWebhookController {
     private final RevenueCatWebhookHandler revenueCatHandler;
     private final ChapaWebhookHandler chapaHandler;
     private final VerifyEtWebhookHandler verifyEtHandler;
+    private final ArifPayWebhookHandler arifPayHandler;
     private final BillingProperties billingProps;
 
     public BillingWebhookController(RevenueCatWebhookHandler revenueCatHandler,
                                      ChapaWebhookHandler chapaHandler,
                                      VerifyEtWebhookHandler verifyEtHandler,
+                                     ArifPayWebhookHandler arifPayHandler,
                                      BillingProperties billingProps) {
         this.revenueCatHandler = revenueCatHandler;
         this.chapaHandler = chapaHandler;
         this.verifyEtHandler = verifyEtHandler;
+        this.arifPayHandler = arifPayHandler;
         this.billingProps = billingProps;
     }
 
@@ -140,6 +144,33 @@ public class BillingWebhookController {
             verifyEtHandler.handle(body);
         } catch (Exception e) {
             log.error("verify.et webhook error: {}", e.getMessage(), e);
+        }
+
+        return ResponseEntity.ok(Map.of("status", "ok"));
+    }
+
+    @PostMapping("/arifpay")
+    public ResponseEntity<Map<String, String>> handleArifPay(
+            HttpServletRequest request,
+            @RequestBody byte[] body) {
+
+        log.info("ArifPay webhook received: bodySize={} bytes", body.length);
+        log.debug("ArifPay webhook payload: {}", new String(body, StandardCharsets.UTF_8));
+
+        // Optional authentication: if webhookSecret is set, require matching x-arifpay-key header
+        String webhookSecret = billingProps.getArifPay().getWebhookSecret();
+        if (webhookSecret != null && !webhookSecret.isBlank()) {
+            String incomingKey = request.getHeader("x-arifpay-key");
+            if (!webhookSecret.equals(incomingKey)) {
+                log.warn("ArifPay webhook: invalid x-arifpay-key header");
+                return ResponseEntity.status(401).body(Map.of("error", "invalid_key"));
+            }
+        }
+
+        try {
+            arifPayHandler.handle(body);
+        } catch (Exception e) {
+            log.error("ArifPay webhook error: {}", e.getMessage(), e);
         }
 
         return ResponseEntity.ok(Map.of("status", "ok"));

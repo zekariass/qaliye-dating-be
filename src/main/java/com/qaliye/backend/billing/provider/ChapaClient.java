@@ -10,6 +10,7 @@ import org.springframework.web.client.RestClient;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 
 @Component
 public class ChapaClient implements LocalOnlinePaymentGateway {
@@ -40,7 +41,7 @@ public class ChapaClient implements LocalOnlinePaymentGateway {
     @Override
     @SuppressWarnings("unchecked")
     public CheckoutResult createCheckout(String orderReference, int amountMinorUnits,
-                                         String currency, String customerId, String returnUrl) {
+                                         String currency, String customerId, String returnUrl, UUID orderId) {
         String amount = String.format("%.2f", amountMinorUnits / 100.0);
 
         Map<String, Object> body = new LinkedHashMap<>();

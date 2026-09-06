@@ -73,7 +73,7 @@ sms:
 
   sms-ethiopia:
     base-url: ${SMS_ETHIOPIA_BASE_URL:https://smsethiopia.et/api/sms/send}
-    api-key: ${SMS_ETHIOPIA_API_KEY:O2ZAFDHKX4Q4KIOAQNKXQY2MSHBHZVY5:1417}
+    api-key: ${SMS_ETHIOPIA_API_KEY:}
 
 chat:
   outbox:
@@ -147,6 +147,15 @@ billing:
     base-url: ${CHAPA_BASE_URL:https://api.chapa.co/v1}
     webhook-url: ${CHAPA_WEBHOOK_URL:}
     return-url: ${CHAPA_RETURN_URL:qaliyedating://payments/chapa/callback}
+  arif-pay:
+    secret-key: ${ARIFPAY_SECRET_KEY:arif-sandbox-portal-key}
+    webhook-secret: ${ARIFPAY_WEBHOOK_SECRET:}
+    base-url: ${ARIFPAY_BASE_URL:https://gateway.arifpay.org}
+    webhook-url: ${ARIFPAY_WEBHOOK_URL:https://lunular-leonia-branchial.ngrok-free.dev/api/v1/billing/webhooks/arifpay}
+    return-url: ${ARIFPAY_RETURN_URL:qaliyedating://payments/callback}
+    cancel-url: ${ARIFPAY_CANCEL_URL:qaliyedating://payments/callback}
+    error-url: ${ARIFPAY_ERROR_URL:qaliyedating://payments/callback}
+    environment: ${ARIFPAY_ENVIRONMENT:SANDBOX}
   verifier:
     provider: VERIFY_ET
     api-key: ${VERIFY_ET_API_KEY:VERIFY_BANK_ET_BdHRjlvR9CLfMTANPZmGyeWGjpdzB7fZIq3-GhxjfhrBWz0u5EzX2qlYSdIgOEqa}
