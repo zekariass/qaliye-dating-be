@@ -9,5 +9,6 @@ public record CreateOrderRequest(
         @NotNull UUID paymentMethodId,
         String platform,
         String idempotencyKey,
-        String returnUrl
+        String returnUrl,
+        String customerPhone
 ) {}

@@ -148,14 +148,21 @@ billing:
     webhook-url: ${CHAPA_WEBHOOK_URL:}
     return-url: ${CHAPA_RETURN_URL:qaliyedating://payments/chapa/callback}
   arif-pay:
-    secret-key: ${ARIFPAY_SECRET_KEY:arif-sandbox-portal-key}
+#    secret-key: ${ARIFPAY_SECRET_KEY:arif-sandbox-portal-key}
+    secret-key: ${ARIFPAY_SECRET_KEY:AFknt4UdP4A4KvnsO4CK92S8ZkRB6Goy}
     webhook-secret: ${ARIFPAY_WEBHOOK_SECRET:}
-    base-url: ${ARIFPAY_BASE_URL:https://gateway.arifpay.org}
+#    base-url: ${ARIFPAY_BASE_URL:https://gateway.arifpay.org}
+    base-url: ${ARIFPAY_BASE_URL:https://gateway.arifpay.net}
     webhook-url: ${ARIFPAY_WEBHOOK_URL:https://lunular-leonia-branchial.ngrok-free.dev/api/v1/billing/webhooks/arifpay}
-    return-url: ${ARIFPAY_RETURN_URL:qaliyedating://payments/callback}
-    cancel-url: ${ARIFPAY_CANCEL_URL:qaliyedating://payments/callback}
-    error-url: ${ARIFPAY_ERROR_URL:qaliyedating://payments/callback}
-    environment: ${ARIFPAY_ENVIRONMENT:SANDBOX}
+#    return-url: ${ARIFPAY_RETURN_URL:qaliyedating://payments/callback}
+#    cancel-url: ${ARIFPAY_CANCEL_URL:qaliyedating://payments/callback}
+#    error-url: ${ARIFPAY_ERROR_URL:qaliyedating://payments/callback}
+    return-url: ${ARIFPAY_RETURN_URL:https://api.qaliye.com/api/v1/billing/arifpay/redirect}
+    cancel-url: ${ARIFPAY_CANCEL_URL:https://api.qaliye.com/api/v1/billing/arifpay/redirect}
+    error-url: ${ARIFPAY_ERROR_URL:https://api.qaliye.com/api/v1/billing/arifpay/redirect}
+#    environment: ${ARIFPAY_ENVIRONMENT:SANDBOX}
+    environment: ${ARIFPAY_ENVIRONMENT:PRODUCTION}
+    email: ${ARIFPAY_EMAIL:support@qaliye.com}
   verifier:
     provider: VERIFY_ET
     api-key: ${VERIFY_ET_API_KEY:VERIFY_BANK_ET_BdHRjlvR9CLfMTANPZmGyeWGjpdzB7fZIq3-GhxjfhrBWz0u5EzX2qlYSdIgOEqa}

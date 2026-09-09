@@ -14,7 +14,8 @@ public interface LocalOnlinePaymentGateway {
     boolean isConfigured();
 
     CheckoutResult createCheckout(String orderReference, int amountMinorUnits,
-                                  String currency, String customerId, String returnUrl, UUID orderId);
+                                  String currency, String customerId, String returnUrl,
+                                  String customerPhone, UUID orderId);
 
     record CheckoutResult(String checkoutUrl, String txRef) {}
 }

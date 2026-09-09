@@ -89,7 +89,7 @@ class OrderServiceTest {
         when(billingRepo.findOfferById(offerId)).thenReturn(Optional.of(offer));
         when(billingRepo.findPaymentMethodById(methodId)).thenReturn(Optional.of(method));
         when(gatewayRegistry.resolve("chapa")).thenReturn(mockGateway);
-        when(mockGateway.createCheckout(anyString(), anyInt(), anyString(), anyString(), any(), any()))
+        when(mockGateway.createCheckout(anyString(), anyInt(), anyString(), anyString(), any(), any(), any()))
                 .thenReturn(new LocalOnlinePaymentGateway.CheckoutResult("https://chapa.co/pay/xxx", "QAL-TXREF"));
         when(billingRepo.insertOrder(any(), eq(userId), eq(offerId), eq(methodId),
                 anyString(), anyString(), anyInt(), anyString(),
@@ -98,7 +98,7 @@ class OrderServiceTest {
         when(billingRepo.findOrderById(order.id())).thenReturn(Optional.of(order));
 
         OrderResponse response = service.createOrder(userId,
-                new CreateOrderRequest(offerId, methodId, "ANDROID", null, null));
+                new CreateOrderRequest(offerId, methodId, "ANDROID", null, null, null));
 
         assertThat(response.status()).isEqualTo("AWAITING_PAYMENT");
         assertThat(response.providerCheckoutUrl()).isEqualTo("https://chapa.co/pay/xxx");
@@ -110,7 +110,7 @@ class OrderServiceTest {
         when(billingRepo.findOfferById(offerId)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.createOrder(userId,
-                new CreateOrderRequest(offerId, methodId, "ANDROID", null, null)))
+                new CreateOrderRequest(offerId, methodId, "ANDROID", null, null, null)))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("invalid_offer");
     }
@@ -121,7 +121,7 @@ class OrderServiceTest {
         when(billingRepo.findPaymentMethodById(methodId)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.createOrder(userId,
-                new CreateOrderRequest(offerId, methodId, "ANDROID", null, null)))
+                new CreateOrderRequest(offerId, methodId, "ANDROID", null, null, null)))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("invalid_payment_method");
     }
@@ -136,7 +136,7 @@ class OrderServiceTest {
         when(billingRepo.findPaymentMethodById(differentMethodId)).thenReturn(Optional.of(wrongMarketMethod));
 
         assertThatThrownBy(() -> service.createOrder(userId,
-                new CreateOrderRequest(offerId, differentMethodId, "ANDROID", null, null)))
+                new CreateOrderRequest(offerId, differentMethodId, "ANDROID", null, null, null)))
                 .isInstanceOf(ResponseStatusException.class)
                 .hasMessageContaining("invalid_payment_method_for_market");
     }
@@ -150,7 +150,7 @@ class OrderServiceTest {
         when(billingRepo.findPaymentMethodById(methodId)).thenReturn(Optional.of(etMethod));
 
         assertThatThrownBy(() -> service.createOrder(userId,
-                new CreateOrderRequest(offerId, methodId, "ANDROID", null, null)))
+                new CreateOrderRequest(offerId, methodId, "ANDROID", null, null, null)))
                 .isInstanceOf(ResponseStatusException.class);
     }
 
@@ -162,7 +162,7 @@ class OrderServiceTest {
                 .thenReturn(Optional.of(existing));
 
         OrderResponse response = service.createOrder(userId,
-                new CreateOrderRequest(offerId, methodId, "ANDROID", "idem-key-1", null));
+                new CreateOrderRequest(offerId, methodId, "ANDROID", "idem-key-1", null, null));
 
         assertThat(response.id()).isEqualTo(existing.id());
         verify(billingRepo, never()).findOfferById(any());

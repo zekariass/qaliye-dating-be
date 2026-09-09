@@ -395,8 +395,10 @@ public class CreditService {
         var balanceRows = jdbc.query(UPDATE_BALANCE_SQL, updateParams,
                 (rs, rn) -> rs.getLong("balance"));
         if (balanceRows.isEmpty()) {
+            long currentBalance = getBalance(userId);
             throw new InsufficientCreditsException(
-                    "Insufficient credits: user=" + userId + " required=" + amount);
+                    "Insufficient credits: user=" + userId + " required=" + amount
+                            + " balance=" + currentBalance, amount, currentBalance);
         }
         long newBalance = balanceRows.get(0);
 
@@ -453,6 +455,16 @@ public class CreditService {
     // ── Exception ───────────────────────────────────────────────────────────
 
     public static class InsufficientCreditsException extends RuntimeException {
-        public InsufficientCreditsException(String msg) { super(msg); }
+        private final long needed;
+        private final long balance;
+
+        public InsufficientCreditsException(String msg, long needed, long balance) {
+            super(msg);
+            this.needed = needed;
+            this.balance = balance;
+        }
+
+        public long getNeeded() { return needed; }
+        public long getBalance() { return balance; }
     }
 }

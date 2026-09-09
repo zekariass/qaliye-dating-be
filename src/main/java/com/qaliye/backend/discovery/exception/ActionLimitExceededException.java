@@ -18,6 +18,7 @@ public class ActionLimitExceededException extends DiscoveryException {
         String period = switch (periodType != null ? periodType : "DAILY") {
             case "MONTHLY", "SUBSCRIPTION_MONTH" -> "monthly";
             case "BILLING_CYCLE" -> "billing cycle";
+            case "LIFETIME" -> "lifetime";
             default -> "daily";
         };
         return switch (actionType) {

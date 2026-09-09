@@ -14,6 +14,7 @@ import com.qaliye.backend.billing.provider.LocalOnlinePaymentGateway;
 import com.qaliye.backend.billing.provider.VerifyEtClient;
 import com.qaliye.backend.billing.repository.BillingRepository;
 import com.qaliye.backend.billing.repository.PromotionRepository;
+import com.qaliye.backend.auth.sms.PhoneNormalizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -195,6 +196,12 @@ public class OrderService {
             }
         }
 
+        String normalizedPhone = null;
+        if (request.customerPhone() != null && !request.customerPhone().isBlank()) {
+            normalizedPhone = PhoneNormalizer.stripPlus(
+                    PhoneNormalizer.normalizeEthiopian(request.customerPhone()));
+        }
+
         UUID orderId = UUID.randomUUID();
         String initialStatus = "AWAITING_PAYMENT";
         String checkoutUrl = null;
@@ -207,6 +214,7 @@ public class OrderService {
                     offer.currency(),
                     userId.toString(),
                     request.returnUrl(),
+                    normalizedPhone,
                     orderId
             );
             checkoutUrl = checkout.checkoutUrl();

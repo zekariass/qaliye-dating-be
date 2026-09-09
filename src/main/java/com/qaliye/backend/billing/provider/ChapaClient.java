@@ -41,7 +41,8 @@ public class ChapaClient implements LocalOnlinePaymentGateway {
     @Override
     @SuppressWarnings("unchecked")
     public CheckoutResult createCheckout(String orderReference, int amountMinorUnits,
-                                         String currency, String customerId, String returnUrl, UUID orderId) {
+                                         String currency, String customerId, String returnUrl,
+                                         String customerPhone, UUID orderId) {
         String amount = String.format("%.2f", amountMinorUnits / 100.0);
 
         Map<String, Object> body = new LinkedHashMap<>();
@@ -49,6 +50,10 @@ public class ChapaClient implements LocalOnlinePaymentGateway {
         body.put("currency", currency);
         body.put("tx_ref", orderReference);
         body.put("callback_url", billingProps.getChapa().getWebhookUrl());
+
+        if (customerPhone != null && !customerPhone.isBlank()) {
+            body.put("phone_number", customerPhone);
+        }
 
         String effectiveReturnUrl = (returnUrl != null && !returnUrl.isBlank())
                 ? returnUrl

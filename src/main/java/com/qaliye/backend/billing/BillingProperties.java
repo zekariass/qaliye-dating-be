@@ -69,6 +69,7 @@ public class BillingProperties {
         private String cancelUrl = "";
         private String errorUrl = "";
         private String environment = "PRODUCTION";
+        private String email = "";
 
         public String getSecretKey() { return secretKey; }
         public void setSecretKey(String secretKey) { this.secretKey = secretKey; }
@@ -93,6 +94,9 @@ public class BillingProperties {
 
         public String getEnvironment() { return environment; }
         public void setEnvironment(String environment) { this.environment = environment; }
+
+        public String getEmail() { return email; }
+        public void setEmail(String email) { this.email = email; }
     }
 
     public static class Chapa {

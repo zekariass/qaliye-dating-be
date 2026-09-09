@@ -53,6 +53,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/v1/catalog/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/app/version").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/auth/supabase/send-sms-hook").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/billing/arifpay/redirect").permitAll()
                         .anyRequest().authenticated()
                 )
                 .oauth2ResourceServer(oauth2 -> oauth2

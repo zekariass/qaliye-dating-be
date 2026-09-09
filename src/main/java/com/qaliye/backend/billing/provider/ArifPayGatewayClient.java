@@ -56,15 +56,15 @@ public class ArifPayGatewayClient implements LocalOnlinePaymentGateway {
     @Override
     @SuppressWarnings("unchecked")
     public CheckoutResult createCheckout(String orderReference, int amountMinorUnits,
-                                         String currency, String customerId, String returnUrl, UUID orderId) {
+                                         String currency, String customerId, String returnUrl,
+                                         String customerPhone, UUID orderId) {
         BillingProperties.ArifPay cfg = billingProps.getArifPay();
         double amount = amountMinorUnits / 100.0;
         String expireDate = EXPIRE_DATE_FMT.format(Instant.now().plus(48, ChronoUnit.HOURS));
 
         String orderIdParam = orderId != null ? orderId.toString() : orderReference;
-        String effectiveSuccessUrl = (returnUrl != null && !returnUrl.isBlank())
-                ? returnUrl
-                : cfg.getReturnUrl() + "?orderId=" + orderIdParam + "&provider=arifpay";
+        String effectiveSuccessUrl = cfg.getReturnUrl()
+                + "?orderId=" + orderIdParam + "&provider=arifpay";
         String effectiveCancelUrl = cfg.getCancelUrl()
                 + "?orderId=" + orderIdParam + "&provider=arifpay&status=cancelled";
         String effectiveErrorUrl  = cfg.getErrorUrl()
@@ -72,6 +72,8 @@ public class ArifPayGatewayClient implements LocalOnlinePaymentGateway {
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("nonce",      orderReference);
+        body.put("phone",      customerPhone);
+        body.put("email",      cfg.getEmail());
         body.put("cancelUrl",  effectiveCancelUrl);
         body.put("errorUrl",   effectiveErrorUrl);
         body.put("notifyUrl",  cfg.getWebhookUrl());
@@ -145,8 +147,22 @@ public class ArifPayGatewayClient implements LocalOnlinePaymentGateway {
                     .retrieve()
                     .body(String.class);
 
-            Map<String, Object> response = objectMapper.readValue(responseStr, Map.class);
-            Map<String, Object> data = (Map<String, Object>) response.get("data");
+            log.debug("ArifPay verify raw response for sessionId={}: {}", sessionId, responseStr);
+
+            Map<String, Object> data;
+            try {
+                Map<String, Object> response = objectMapper.readValue(responseStr, Map.class);
+                data = (Map<String, Object>) response.get("data");
+            } catch (com.fasterxml.jackson.core.JsonProcessingException jpe) {
+                // ArifPay verify may return a JSON array at the top level
+                var jsonNode = objectMapper.readTree(responseStr);
+                if (jsonNode.isArray() && !jsonNode.isEmpty()) {
+                    data = objectMapper.treeToValue(jsonNode.get(0), Map.class);
+                } else {
+                    log.warn("ArifPay verify: unexpected response format for sessionId={}: {}", sessionId, responseStr);
+                    return new VerifyResult("UNKNOWN", null, null, null, null);
+                }
+            }
 
             if (data == null) {
                 log.warn("ArifPay verify: no data in response for sessionId={}", sessionId);

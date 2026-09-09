@@ -97,7 +97,7 @@ class SupportStaffControllerTest {
     void getConversationDetail_found_returns200() throws Exception {
         StaffConversationDetailDto detail = new StaffConversationDetailDto(
                 convId, userId, "Test User", "WAITING_STAFF", 3, staffId,
-                5L, 0L, 0L, 0L, OffsetDateTime.now(), null,
+                5L, 0L, 0L, 0L, 0L, OffsetDateTime.now(), null,
                 OffsetDateTime.now(), OffsetDateTime.now(), "USER",
                 null, null, OffsetDateTime.now(), OffsetDateTime.now());
         when(service.getConversationDetail(any(), eq(convId))).thenReturn(detail);

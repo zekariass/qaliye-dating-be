@@ -44,6 +44,7 @@ class ArifPayGatewayClientTest {
         lenient().when(arifPayCfg.getCancelUrl()).thenReturn("qaliyedating://payments/callback");
         lenient().when(arifPayCfg.getErrorUrl()).thenReturn("qaliyedating://payments/callback");
         lenient().when(arifPayCfg.getEnvironment()).thenReturn("PRODUCTION");
+        lenient().when(arifPayCfg.getEmail()).thenReturn("support@qaliye.com");
     }
 
     @Test
@@ -86,7 +87,7 @@ class ArifPayGatewayClientTest {
 
         UUID orderId = UUID.fromString("11111111-1111-1111-1111-111111111111");
         LocalOnlinePaymentGateway.CheckoutResult result =
-                client.createCheckout("QAL-ABC12345", 49900, "ETB", "user-1", null, orderId);
+                client.createCheckout("QAL-ABC12345", 49900, "ETB", "user-1", null, "251911234567", orderId);
 
         assertThat(result.checkoutUrl()).isEqualTo("https://checkout.arifpay.net/sess-123");
         assertThat(result.txRef()).isEqualTo("sess-123");
@@ -112,7 +113,7 @@ class ArifPayGatewayClientTest {
 
         UUID orderId = UUID.fromString("22222222-2222-2222-2222-222222222222");
         LocalOnlinePaymentGateway.CheckoutResult result =
-                client.createCheckout("QAL-SBX12345", 9900, "ETB", "user-2", null, orderId);
+                client.createCheckout("QAL-SBX12345", 9900, "ETB", "user-2", null, "251911234567", orderId);
 
         assertThat(result.txRef()).isEqualTo("sandbox-sess");
         assertThat(result.checkoutUrl()).isEqualTo("https://payment.arifpay.org/sandbox-sess");
@@ -134,7 +135,7 @@ class ArifPayGatewayClientTest {
         when(postResponseSpec.body(String.class)).thenReturn(responseJson);
 
         LocalOnlinePaymentGateway.CheckoutResult result =
-                client.createCheckout("QAL-FALLBACK", 9900, "ETB", "user-3", null,
+                client.createCheckout("QAL-FALLBACK", 9900, "ETB", "user-3", null, null,
                         UUID.fromString("33333333-3333-3333-3333-333333333333"));
 
         assertThat(result.txRef()).isEqualTo("sess-456");
@@ -157,7 +158,7 @@ class ArifPayGatewayClientTest {
         when(postResponseSpec.body(String.class)).thenReturn(responseJson);
 
         assertThatThrownBy(() ->
-                client.createCheckout("QAL-NOID", 9900, "ETB", "user-4", null,
+                client.createCheckout("QAL-NOID", 9900, "ETB", "user-4", null, null,
                         UUID.fromString("44444444-4444-4444-4444-444444444444")))
                 .isInstanceOf(ArifPayGatewayClient.ArifPayApiException.class)
                 .hasMessageContaining("arifpay_no_session_id");
@@ -165,7 +166,7 @@ class ArifPayGatewayClientTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void createCheckout_useReturnUrlFromRequest() throws Exception {
+    void createCheckout_ignoresRequestReturnUrl_usesConfigUrl() throws Exception {
         String customReturnUrl = "https://merchant.example/success";
         String responseJson = """
                 {"data":{"sessionId":"sess-789","paymentUrl":"https://checkout.arifpay.net/sess-789"}}
@@ -181,7 +182,7 @@ class ArifPayGatewayClientTest {
 
         UUID orderId = UUID.fromString("55555555-5555-5555-5555-555555555555");
         LocalOnlinePaymentGateway.CheckoutResult result =
-                client.createCheckout("QAL-RETURL", 9900, "ETB", "user-5", customReturnUrl, orderId);
+                client.createCheckout("QAL-RETURL", 9900, "ETB", "user-5", customReturnUrl, "251911234567", orderId);
 
         assertThat(result.checkoutUrl()).isEqualTo("https://checkout.arifpay.net/sess-789");
         assertThat(result.txRef()).isEqualTo("sess-789");

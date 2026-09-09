@@ -110,6 +110,100 @@ public class ActionCostService {
             LIMIT 1
             """;
 
+    /**
+     * Raw plan rule configuration — limit, costs, period type — without consulting
+     * any usage tracker. Used by callers that manage their own tracking (e.g. per-recipient
+     * LIFETIME tracking in MessageCommandService).
+     *
+     * @param ruleId               ID of the subscription_plan_limit_and_cost row (null = no rule)
+     * @param memberCreditCost     Credit cost when within subscription allowance (0 = free)
+     * @param actualCreditCost     Credit cost after the limit is exhausted
+     * @param limitValue           Configured limit (null = unlimited)
+     * @param periodType           DAY / MONTH / BILLING_CYCLE / LIFETIME
+     * @param applyCreditAfterLimit Whether credits can be charged once the limit is exhausted
+     */
+    public record PlanRuleConfig(
+            UUID ruleId,
+            long memberCreditCost,
+            long actualCreditCost,
+            Integer limitValue,
+            String periodType,
+            boolean applyCreditAfterLimit
+    ) {}
+
+    private static final String RESOLVE_PLAN_CONFIG_SQL = """
+            WITH effective_plan AS (
+                SELECT sp.id AS plan_id, sp.plan_kind
+                FROM user_subscriptions us
+                JOIN subscription_plans sp ON sp.id = us.plan_id
+                WHERE us.user_id = :userId
+                  AND us.status IN ('ACTIVE', 'PENDING_VERIFICATION')
+                  AND sp.is_active = TRUE
+                ORDER BY CASE sp.plan_kind WHEN 'PAID' THEN 0 ELSE 1 END
+                LIMIT 1
+            ),
+            free_plan AS (
+                SELECT id AS plan_id, plan_kind
+                FROM subscription_plans
+                WHERE plan_code = 'FREE' AND country_code = 'GLOBAL' AND is_active = TRUE
+                LIMIT 1
+            ),
+            resolved_plan AS (
+                SELECT * FROM effective_plan
+                UNION ALL
+                SELECT * FROM free_plan
+                WHERE NOT EXISTS (SELECT 1 FROM effective_plan)
+                LIMIT 1
+            )
+            SELECT splac.id AS rule_id,
+                   splac.member_credit_cost,
+                   splac.actual_credit_cost,
+                   splac.limit_value,
+                   splac.period_type,
+                   splac.apply_credit_after_limit
+            FROM resolved_plan rp
+            JOIN subscription_plan_limit_and_cost splac
+                ON splac.subscription_plan_id = rp.plan_id
+            JOIN feature_actions fa ON fa.id = splac.feature_action_id
+            WHERE fa.code = :actionCode
+            LIMIT 1
+            """;
+
+    /**
+     * Resolves the plan rule configuration for the given action without reading any
+     * usage tracker. Callers that need usage-aware decisions should use
+     * {@link #evaluate(UUID, String)} instead.
+     */
+    public PlanRuleConfig getPlanRuleConfig(UUID userId, String actionCode) {
+        var params = new MapSqlParameterSource()
+                .addValue("userId", userId)
+                .addValue("actionCode", actionCode);
+
+        List<PlanRuleConfig> results = jdbc.query(RESOLVE_PLAN_CONFIG_SQL, params, (rs, rn) -> {
+            UUID ruleId         = rs.getObject("rule_id", UUID.class);
+            long memberCost     = rs.getLong("member_credit_cost");
+            boolean memberNull  = rs.wasNull();
+            long actualCost     = rs.getLong("actual_credit_cost");
+            boolean actualNull  = rs.wasNull();
+            Object limitValObj  = rs.getObject("limit_value");
+            Integer limitValue  = limitValObj != null ? ((Number) limitValObj).intValue() : null;
+            String periodType   = rs.getString("period_type");
+            boolean applyAfter  = rs.getBoolean("apply_credit_after_limit");
+
+            if (memberNull && actualNull) { memberCost = 0; actualCost = 0; }
+            else if (memberNull)          { memberCost = actualCost; }
+            else if (actualNull)          { actualCost = memberCost; }
+
+            return new PlanRuleConfig(ruleId, memberCost, actualCost, limitValue, periodType, applyAfter);
+        });
+
+        if (results.isEmpty()) {
+            log.warn("No plan rule config found for user={} action={}; defaulting free", userId, actionCode);
+            return new PlanRuleConfig(null, 0, 0, null, "DAY", false);
+        }
+        return results.get(0);
+    }
+
     public ActionCostResult evaluate(UUID userId, String actionCode) {
         var params = new MapSqlParameterSource()
                 .addValue("userId", userId)

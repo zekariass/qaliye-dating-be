@@ -7,9 +7,11 @@ import com.qaliye.backend.chat.exception.*;
 import com.qaliye.backend.chat.repository.ChatAttachmentRepository;
 import com.qaliye.backend.chat.repository.ChatMatchRepository;
 import com.qaliye.backend.chat.repository.ChatMessageRepository;
+import com.qaliye.backend.billing.repository.ActionLimitRepository;
+import com.qaliye.backend.billing.repository.MessagePairTrackerRepository;
+import com.qaliye.backend.billing.service.ActionCostService;
+import com.qaliye.backend.billing.service.CreditService;
 import com.qaliye.backend.chat.service.*;
-import com.qaliye.backend.discovery.repository.DailyLimitRepository;
-import com.qaliye.backend.discovery.service.PlanEntitlementService;
 import com.qaliye.backend.notifications.service.NotificationOutboxService;
 import com.qaliye.backend.storage.SupabaseStorageService;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,8 +42,10 @@ class MessageCommandServiceTest {
     @Mock ChatAttachmentRepository attachmentRepository;
     @Mock SupabaseStorageService storageService;
     @Mock ChatProperties chatProperties;
-    @Mock PlanEntitlementService entitlementService;
-    @Mock DailyLimitRepository dailyLimitRepo;
+    @Mock ActionCostService actionCostService;
+    @Mock ActionLimitRepository actionLimitRepo;
+    @Mock CreditService creditService;
+    @Mock MessagePairTrackerRepository pairTrackerRepo;
 
     MessageCommandService service;
 
@@ -56,7 +60,9 @@ class MessageCommandServiceTest {
                 matchRepository, messageRepository, authorizationService,
                 outboxService, rateLimitService, mapper, notificationOutboxService,
                 attachmentRepository, storageService, chatProperties,
-                entitlementService, dailyLimitRepo);
+                actionCostService, actionLimitRepo, creditService, pairTrackerRepo);
+        lenient().when(actionCostService.getPlanRuleConfig(any(), any()))
+                .thenReturn(new ActionCostService.PlanRuleConfig(null, 0, 0, null, "DAY", false));
     }
 
     @Test

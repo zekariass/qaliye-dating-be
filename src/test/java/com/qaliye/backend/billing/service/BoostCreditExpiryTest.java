@@ -106,7 +106,7 @@ class BoostCreditExpiryTest {
                         null, 1, true, false, false,
                         LocalDate.now(), LocalDate.now(), 0, null, "DAY"));
         when(creditService.consumeCredits(any(), anyLong(), any(), any()))
-                .thenThrow(new CreditService.InsufficientCreditsException("not enough"));
+                .thenThrow(new CreditService.InsufficientCreditsException("not enough", 5, 0));
 
         assertThatThrownBy(() -> boostService.activateBoost(userId, null))
                 .isInstanceOf(CreditService.InsufficientCreditsException.class);

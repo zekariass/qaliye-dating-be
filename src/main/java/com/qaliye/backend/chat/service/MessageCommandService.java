@@ -11,6 +11,7 @@ import com.qaliye.backend.chat.repository.ChatAttachmentRepository.AttachmentRow
 import com.qaliye.backend.chat.repository.ChatMatchRepository;
 import com.qaliye.backend.chat.repository.ChatMessageRepository;
 import com.qaliye.backend.billing.repository.ActionLimitRepository;
+import com.qaliye.backend.billing.repository.MessagePairTrackerRepository;
 import com.qaliye.backend.billing.service.ActionCostService;
 import com.qaliye.backend.billing.service.CreditService;
 import com.qaliye.backend.discovery.exception.ActionLimitExceededException;
@@ -47,6 +48,7 @@ public class MessageCommandService {
     private final ActionCostService actionCostService;
     private final ActionLimitRepository actionLimitRepo;
     private final CreditService creditService;
+    private final MessagePairTrackerRepository pairTrackerRepo;
 
     public MessageCommandService(ChatMatchRepository matchRepository,
                                   ChatMessageRepository messageRepository,
@@ -60,7 +62,8 @@ public class MessageCommandService {
                                   ChatProperties chatProps,
                                   ActionCostService actionCostService,
                                   ActionLimitRepository actionLimitRepo,
-                                  CreditService creditService) {
+                                  CreditService creditService,
+                                  MessagePairTrackerRepository pairTrackerRepo) {
         this.matchRepository = matchRepository;
         this.messageRepository = messageRepository;
         this.authorizationService = authorizationService;
@@ -74,6 +77,7 @@ public class MessageCommandService {
         this.actionCostService = actionCostService;
         this.actionLimitRepo = actionLimitRepo;
         this.creditService = creditService;
+        this.pairTrackerRepo = pairTrackerRepo;
     }
 
     public record SendResult(ChatMessageDto message, boolean isNew) {}
@@ -108,8 +112,9 @@ public class MessageCommandService {
             return handleExistingMessage(existing.get(), matchId, req.getMessageType(), trimmedBody);
         }
 
-        // Step 5: Evaluate and consume MESSAGE action cost (sender only, idempotent via clientMessageId)
-        consumeMessageActionCost(callerId, req.getClientMessageId());
+        // Step 5: Evaluate and consume MESSAGE action cost (per-recipient, idempotent via clientMessageId)
+        UUID otherUserId = match.otherUserId(callerId);
+        consumeMessageActionCost(callerId, otherUserId, req.getClientMessageId());
 
         // Steps 7-8: Reserve and increment sequence
         long sequenceNumber = matchRepository.reserveAndIncrementSequence(matchId);
@@ -122,7 +127,6 @@ public class MessageCommandService {
         OffsetDateTime occurredAt = inserted.createdAt();
 
         // Steps 11-12: Insert Realtime outbox events
-        UUID otherUserId = match.otherUserId(callerId);
         outboxService.createMessageCreatedEvent(matchId, inserted.id(), sequenceNumber,
                 callerId, req.getMessageType(), trimmedBody, occurredAt);
         outboxService.createInboxMatchUpdatedEvent(matchId, callerId, occurredAt);
@@ -179,10 +183,11 @@ public class MessageCommandService {
         }
 
         // Step 4b-5: Validate and classify files, then evaluate combined action cost
+        UUID otherUserIdForCost = match.otherUserId(callerId);
         List<ValidatedAttachment> validated = validateAndClassifyFiles(safeFiles, durations);
         long voiceCount = validated.stream().filter(v -> "VOICE".equals(v.attachmentType())).count();
         long imageCount = validated.stream().filter(v -> "IMAGE".equals(v.attachmentType())).count();
-        consumeAttachmentMessageActionCost(callerId, req.getClientMessageId(), voiceCount, imageCount);
+        consumeAttachmentMessageActionCost(callerId, otherUserIdForCost, req.getClientMessageId(), voiceCount, imageCount);
 
         // Steps 7-8: Reserve and increment sequence
         long sequenceNumber = matchRepository.reserveAndIncrementSequence(matchId);
@@ -223,15 +228,14 @@ public class MessageCommandService {
         OffsetDateTime occurredAt = inserted.createdAt();
 
         // Steps 11-12: Insert Realtime outbox events with attachment metadata
-        UUID otherUserId = match.otherUserId(callerId);
         outboxService.createMessageCreatedEvent(matchId, inserted.id(), sequenceNumber,
                 callerId, req.getMessageType(), trimmedBody, occurredAt, realtimeAttachments);
         outboxService.createInboxMatchUpdatedEvent(matchId, callerId, occurredAt);
-        outboxService.createInboxMatchUpdatedEvent(matchId, otherUserId, occurredAt);
+        outboxService.createInboxMatchUpdatedEvent(matchId, otherUserIdForCost, occurredAt);
 
         // Step 13: Insert push notification outbox event
         notificationOutboxService.createChatMessageEvent(
-                inserted.id(), matchId, callerId, otherUserId, occurredAt);
+                inserted.id(), matchId, callerId, otherUserIdForCost, occurredAt);
 
         boolean isUserOne = match.isUserOne(callerId);
         ChatMessageDto dto = mapper.toMessageDto(
@@ -322,88 +326,118 @@ public class MessageCommandService {
         return result;
     }
 
-    private void consumeMessageActionCost(UUID callerId, UUID clientMessageId) {
-        String idemKey = "msg-" + clientMessageId;
-        ActionCostService.ActionCostResult cost = actionCostService.evaluate(callerId, "MESSAGE");
-        if (cost.isBlocked()) {
-            throw new ActionLimitExceededException("MESSAGE", cost.periodType());
-        }
-        if (cost.ruleId() != null && cost.limitValue() != null) {
-            actionLimitRepo.ensureExists(callerId, cost.ruleId(), cost.periodStart(), cost.periodEnd());
-            boolean incremented = actionLimitRepo
-                    .tryIncrementUnderLimit(callerId, cost.ruleId(), cost.periodStart(), cost.limitValue())
-                    .isPresent();
-            if (!incremented && !cost.requiresCredits()) {
-                throw new ActionLimitExceededException("MESSAGE", cost.periodType());
-            }
-        }
-        if (cost.requiresCredits()) {
-            creditService.consumeCredits(callerId, cost.creditCost(), "MESSAGE", idemKey);
+    /**
+     * Enforces the MESSAGE cost for a single text message and charges credits if required.
+     * Routes to LIFETIME per-pair tracking or existing per-user period tracking based on period_type.
+     */
+    private void consumeMessageActionCost(UUID callerId, UUID recipientId, UUID clientMessageId) {
+        long creditCost = enforceActionCost(callerId, recipientId, "MESSAGE", 1);
+        if (creditCost > 0) {
+            creditService.consumeCredits(callerId, creditCost, "MESSAGE", "msg-" + clientMessageId);
         }
     }
 
-    private void consumeAttachmentMessageActionCost(UUID callerId, UUID clientMessageId,
-                                                     long voiceCount, long imageCount) {
+    /**
+     * Enforces costs for a message with attachments: VOICE_MESSAGE and/or IMAGE_MESSAGE.
+     * Each action type has its own independent per-recipient tracking.
+     * MESSAGE is not enforced for attachment messages — it is only enforced for
+     * plain text messages in {@link #consumeMessageActionCost}.
+     * Charges the single highest credit cost across all applicable attachment action types.
+     */
+    private void consumeAttachmentMessageActionCost(UUID callerId, UUID recipientId,
+                                                     UUID clientMessageId, long voiceCount, long imageCount) {
         String idemKey = "msg-" + clientMessageId;
 
-        ActionCostService.ActionCostResult msgCost = actionCostService.evaluate(callerId, "MESSAGE");
-        if (msgCost.isBlocked()) {
-            throw new ActionLimitExceededException("MESSAGE", msgCost.periodType());
-        }
-        if (msgCost.ruleId() != null && msgCost.limitValue() != null) {
-            actionLimitRepo.ensureExists(callerId, msgCost.ruleId(), msgCost.periodStart(), msgCost.periodEnd());
-            boolean incremented = actionLimitRepo
-                    .tryIncrementUnderLimit(callerId, msgCost.ruleId(), msgCost.periodStart(), msgCost.limitValue())
-                    .isPresent();
-            if (!incremented && !msgCost.requiresCredits()) {
-                throw new ActionLimitExceededException("MESSAGE", msgCost.periodType());
-            }
-        }
-
-        long creditCharge = msgCost.creditCost();
+        long creditCharge = 0;
         String creditActionType = "MESSAGE";
 
         if (voiceCount > 0) {
-            ActionCostService.ActionCostResult voiceCost = actionCostService.evaluate(callerId, "VOICE_MESSAGE");
-            if (voiceCost.ruleId() != null && voiceCost.limitValue() != null) {
-                actionLimitRepo.ensureExists(callerId, voiceCost.ruleId(), voiceCost.periodStart(), voiceCost.periodEnd());
-                boolean ok = actionLimitRepo
-                        .tryIncrementByUnderLimit(callerId, voiceCost.ruleId(), voiceCost.periodStart(),
-                                voiceCost.limitValue(), (int) voiceCount)
-                        .isPresent();
-                if (!ok && !voiceCost.requiresCredits()) {
-                    throw new ActionLimitExceededException("VOICE_MESSAGE", voiceCost.periodType());
-                }
-            }
-            long voiceCharge = voiceCost.creditCost() * voiceCount;
-            if (voiceCharge > creditCharge) {
-                creditCharge = voiceCharge;
-                creditActionType = "VOICE_MESSAGE";
-            }
+            long voiceUnit = enforceActionCost(callerId, recipientId, "VOICE_MESSAGE", (int) voiceCount);
+            long voiceCharge = voiceUnit * voiceCount;
+            if (voiceCharge > creditCharge) { creditCharge = voiceCharge; creditActionType = "VOICE_MESSAGE"; }
         }
 
         if (imageCount > 0) {
-            ActionCostService.ActionCostResult imageCost = actionCostService.evaluate(callerId, "IMAGE_MESSAGE");
-            if (imageCost.ruleId() != null && imageCost.limitValue() != null) {
-                actionLimitRepo.ensureExists(callerId, imageCost.ruleId(), imageCost.periodStart(), imageCost.periodEnd());
-                boolean ok = actionLimitRepo
-                        .tryIncrementByUnderLimit(callerId, imageCost.ruleId(), imageCost.periodStart(),
-                                imageCost.limitValue(), (int) imageCount)
-                        .isPresent();
-                if (!ok && !imageCost.requiresCredits()) {
-                    throw new ActionLimitExceededException("IMAGE_MESSAGE", imageCost.periodType());
-                }
-            }
-            long imageCharge = imageCost.creditCost() * imageCount;
-            if (imageCharge > creditCharge) {
-                creditCharge = imageCharge;
-                creditActionType = "IMAGE_MESSAGE";
-            }
+            long imageUnit = enforceActionCost(callerId, recipientId, "IMAGE_MESSAGE", (int) imageCount);
+            long imageCharge = imageUnit * imageCount;
+            if (imageCharge > creditCharge) { creditCharge = imageCharge; creditActionType = "IMAGE_MESSAGE"; }
         }
 
         if (creditCharge > 0) {
             creditService.consumeCredits(callerId, creditCharge, creditActionType, idemKey);
         }
+    }
+
+    /**
+     * Resolves and enforces the action cost for a single action code against a recipient.
+     * - If period_type = LIFETIME: uses per-sender-recipient pair tracking.
+     * - Otherwise: delegates to the existing per-user period tracker (DAY/MONTH/BILLING_CYCLE).
+     *
+     * @return the credit cost per unit to charge (0 if within free allowance)
+     */
+    private long enforceActionCost(UUID callerId, UUID recipientId, String actionCode, int count) {
+        ActionCostService.PlanRuleConfig config = actionCostService.getPlanRuleConfig(callerId, actionCode);
+
+        if (config.ruleId() == null) {
+            return config.memberCreditCost();
+        }
+
+        if ("LIFETIME".equals(config.periodType())) {
+            return enforceLifetimePairLimit(callerId, recipientId, config, actionCode, count);
+        } else {
+            return enforcePerUserPeriodLimit(callerId, actionCode, count);
+        }
+    }
+
+    /**
+     * Enforces a LIFETIME per-pair limit. Ensures the tracker row exists, atomically
+     * increments if within the limit, or charges credits if over the limit.
+     *
+     * @return credit cost per unit (0 if within free allowance)
+     */
+    private long enforceLifetimePairLimit(UUID callerId, UUID recipientId,
+                                           ActionCostService.PlanRuleConfig config,
+                                           String actionCode, int count) {
+        if (config.limitValue() == null) {
+            return config.memberCreditCost();
+        }
+        pairTrackerRepo.ensureLifetimePairExists(callerId, recipientId, config.ruleId());
+        boolean withinLimit = pairTrackerRepo
+                .tryIncrementLifetimeByUnderLimit(callerId, recipientId, config.ruleId(),
+                        config.limitValue(), count)
+                .isPresent();
+        if (withinLimit) return 0L;
+
+        if (!config.applyCreditAfterLimit()) {
+            throw new ActionLimitExceededException(actionCode, "LIFETIME");
+        }
+        pairTrackerRepo.incrementLifetimeBy(callerId, recipientId, config.ruleId(), count);
+        return config.actualCreditCost();
+    }
+
+    /**
+     * Enforces a per-user period-based limit (DAY / MONTH / BILLING_CYCLE) using the
+     * existing user_action_limits_tracker table — unchanged from the original behaviour.
+     *
+     * @return credit cost per unit (0 if within free allowance)
+     */
+    private long enforcePerUserPeriodLimit(UUID callerId, String actionCode, int count) {
+        ActionCostService.ActionCostResult cost = actionCostService.evaluate(callerId, actionCode);
+        if (cost.isBlocked()) {
+            throw new ActionLimitExceededException(actionCode, cost.periodType());
+        }
+        if (cost.ruleId() != null && cost.limitValue() != null) {
+            actionLimitRepo.ensureExists(callerId, cost.ruleId(), cost.periodStart(), cost.periodEnd());
+            boolean ok = count <= 1
+                    ? actionLimitRepo.tryIncrementUnderLimit(callerId, cost.ruleId(),
+                            cost.periodStart(), cost.limitValue()).isPresent()
+                    : actionLimitRepo.tryIncrementByUnderLimit(callerId, cost.ruleId(),
+                            cost.periodStart(), cost.limitValue(), count).isPresent();
+            if (!ok && !cost.requiresCredits()) {
+                throw new ActionLimitExceededException(actionCode, cost.periodType());
+            }
+        }
+        return cost.requiresCredits() ? cost.creditCost() : 0L;
     }
 
     private String generateStoragePath(UUID matchId, UUID messageId, String fileName) {

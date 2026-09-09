@@ -10,6 +10,7 @@ import com.qaliye.backend.chat.repository.ChatMatchRepository;
 import com.qaliye.backend.chat.repository.ChatMessageRepository;
 import com.qaliye.backend.chat.service.*;
 import com.qaliye.backend.billing.repository.ActionLimitRepository;
+import com.qaliye.backend.billing.repository.MessagePairTrackerRepository;
 import com.qaliye.backend.billing.service.ActionCostService;
 import com.qaliye.backend.billing.service.CreditService;
 import com.qaliye.backend.notifications.service.NotificationOutboxService;
@@ -49,6 +50,9 @@ class MessageCommandServiceAttachmentTest {
     @Mock ActionCostService actionCostService;
     @Mock ActionLimitRepository actionLimitRepo;
     @Mock CreditService creditService;
+    @Mock MessagePairTrackerRepository pairTrackerRepo;
+
+    UUID defaultRuleId = UUID.randomUUID();
 
     MessageCommandService service;
 
@@ -63,7 +67,10 @@ class MessageCommandServiceAttachmentTest {
                 matchRepository, messageRepository, authorizationService,
                 outboxService, rateLimitService, mapper, notificationOutboxService,
                 attachmentRepository, storageService, chatProperties,
-                actionCostService, actionLimitRepo, creditService);
+                actionCostService, actionLimitRepo, creditService, pairTrackerRepo);
+        // Default: non-LIFETIME rule with no limit → routes through to evaluate()
+        lenient().when(actionCostService.getPlanRuleConfig(any(), any()))
+                .thenReturn(new ActionCostService.PlanRuleConfig(defaultRuleId, 0, 0, null, "DAY", false));
     }
 
     @Test
@@ -286,11 +293,11 @@ class MessageCommandServiceAttachmentTest {
     }
 
     @Test
-    void sendVoiceMessage_voiceCostHigherThanMessageCost_chargesVoiceCostOnly() throws Exception {
+    void sendVoiceMessage_voiceCost_chargesVoiceCostOnly() throws Exception {
         setupMocksForAttachmentSend();
         when(chatProperties.getAttachment()).thenReturn(buildAttachmentConfig());
-        when(actionCostService.evaluate(callerId, "MESSAGE")).thenReturn(makeCreditCostResult(2L));
-        when(actionCostService.evaluate(callerId, "VOICE_MESSAGE")).thenReturn(makeCreditCostResult(5L));
+        when(actionCostService.getPlanRuleConfig(callerId, "VOICE_MESSAGE"))
+                .thenReturn(new ActionCostService.PlanRuleConfig(UUID.randomUUID(), 5, 0, null, "LIFETIME", false));
         when(mapper.toMessageDto(any(), anyLong(), anyLong(), any(), anyList())).thenReturn(buildDto());
 
         SendMessageRequest req = new SendMessageRequest();
@@ -302,15 +309,16 @@ class MessageCommandServiceAttachmentTest {
         service.sendMessageWithAttachments(callerId, matchId, req, List.of(voice), List.of(5000L));
 
         verify(creditService, times(1)).consumeCredits(eq(callerId), eq(5L), eq("VOICE_MESSAGE"), anyString());
-        verify(creditService, never()).consumeCredits(eq(callerId), eq(2L), eq("MESSAGE"), anyString());
     }
 
     @Test
-    void sendVoiceMessage_messageCostHigherThanVoiceCost_chargesMessageCostOnly() throws Exception {
+    void sendVoiceMessage_voiceCostZero_noCharge() throws Exception {
         setupMocksForAttachmentSend();
         when(chatProperties.getAttachment()).thenReturn(buildAttachmentConfig());
-        when(actionCostService.evaluate(callerId, "MESSAGE")).thenReturn(makeCreditCostResult(10L));
-        when(actionCostService.evaluate(callerId, "VOICE_MESSAGE")).thenReturn(makeCreditCostResult(3L));
+        when(actionCostService.getPlanRuleConfig(callerId, "VOICE_MESSAGE"))
+                .thenReturn(new ActionCostService.PlanRuleConfig(UUID.randomUUID(), 0, 0, 10, "LIFETIME", false));
+        when(pairTrackerRepo.tryIncrementLifetimeByUnderLimit(any(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(Optional.of(1));
         when(mapper.toMessageDto(any(), anyLong(), anyLong(), any(), anyList())).thenReturn(buildDto());
 
         SendMessageRequest req = new SendMessageRequest();
@@ -321,16 +329,15 @@ class MessageCommandServiceAttachmentTest {
 
         service.sendMessageWithAttachments(callerId, matchId, req, List.of(voice), List.of(5000L));
 
-        verify(creditService, times(1)).consumeCredits(eq(callerId), eq(10L), eq("MESSAGE"), anyString());
-        verify(creditService, never()).consumeCredits(eq(callerId), eq(3L), eq("VOICE_MESSAGE"), anyString());
+        verify(creditService, never()).consumeCredits(any(), anyLong(), any(), any());
     }
 
     @Test
-    void sendImageMessage_imageCostHigherThanMessageCost_chargesImageCostOnly() throws Exception {
+    void sendImageMessage_imageCost_chargesImageCostOnly() throws Exception {
         setupMocksForAttachmentSend();
         when(chatProperties.getAttachment()).thenReturn(buildAttachmentConfig());
-        when(actionCostService.evaluate(callerId, "MESSAGE")).thenReturn(makeCreditCostResult(2L));
-        when(actionCostService.evaluate(callerId, "IMAGE_MESSAGE")).thenReturn(makeCreditCostResult(8L));
+        when(actionCostService.getPlanRuleConfig(callerId, "IMAGE_MESSAGE"))
+                .thenReturn(new ActionCostService.PlanRuleConfig(UUID.randomUUID(), 8, 0, null, "LIFETIME", false));
         when(mapper.toMessageDto(any(), anyLong(), anyLong(), any(), anyList())).thenReturn(buildDto());
 
         SendMessageRequest req = new SendMessageRequest();
@@ -342,15 +349,16 @@ class MessageCommandServiceAttachmentTest {
         service.sendMessageWithAttachments(callerId, matchId, req, List.of(image), null);
 
         verify(creditService, times(1)).consumeCredits(eq(callerId), eq(8L), eq("IMAGE_MESSAGE"), anyString());
-        verify(creditService, never()).consumeCredits(eq(callerId), eq(2L), eq("MESSAGE"), anyString());
     }
 
     @Test
-    void sendImageMessage_messageCostHigherThanImageCost_chargesMessageCostOnly() throws Exception {
+    void sendImageMessage_imageCostZero_noCharge() throws Exception {
         setupMocksForAttachmentSend();
         when(chatProperties.getAttachment()).thenReturn(buildAttachmentConfig());
-        when(actionCostService.evaluate(callerId, "MESSAGE")).thenReturn(makeCreditCostResult(10L));
-        when(actionCostService.evaluate(callerId, "IMAGE_MESSAGE")).thenReturn(makeCreditCostResult(3L));
+        when(actionCostService.getPlanRuleConfig(callerId, "IMAGE_MESSAGE"))
+                .thenReturn(new ActionCostService.PlanRuleConfig(UUID.randomUUID(), 0, 0, 10, "LIFETIME", false));
+        when(pairTrackerRepo.tryIncrementLifetimeByUnderLimit(any(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(Optional.of(1));
         when(mapper.toMessageDto(any(), anyLong(), anyLong(), any(), anyList())).thenReturn(buildDto());
 
         SendMessageRequest req = new SendMessageRequest();
@@ -361,8 +369,7 @@ class MessageCommandServiceAttachmentTest {
 
         service.sendMessageWithAttachments(callerId, matchId, req, List.of(image), null);
 
-        verify(creditService, times(1)).consumeCredits(eq(callerId), eq(10L), eq("MESSAGE"), anyString());
-        verify(creditService, never()).consumeCredits(eq(callerId), eq(3L), eq("IMAGE_MESSAGE"), anyString());
+        verify(creditService, never()).consumeCredits(any(), anyLong(), any(), any());
     }
 
     private void setupMocksForAttachmentSend() {

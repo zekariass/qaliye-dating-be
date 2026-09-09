@@ -69,7 +69,7 @@ class SupportUserControllerTest {
     }
 
     private SupportConversationDto sampleConversation() {
-        return new SupportConversationDto(convId, "IDLE", 0L, 1L,
+        return new SupportConversationDto(convId, "IDLE", 0L, 1L, 0L,
                 null, null, null, OffsetDateTime.now());
     }
 

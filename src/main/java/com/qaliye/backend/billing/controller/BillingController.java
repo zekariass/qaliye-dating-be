@@ -14,6 +14,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -144,6 +146,32 @@ public class BillingController {
         UUID userId = CallerUtils.callerId();
         String idempotencyKey = request != null ? request.idempotencyKey() : null;
         return ResponseEntity.ok(boostService.activateBoost(userId, idempotencyKey));
+    }
+
+    @GetMapping("/arifpay/redirect")
+    public ResponseEntity<Void> arifpayRedirect(
+            @RequestParam(required = false) String orderId,
+            @RequestParam(required = false) String provider,
+            @RequestParam(required = false) String status) {
+        StringBuilder sb = new StringBuilder("qaliyedating://payments/callback");
+        String sep = "?";
+        if (orderId != null && !orderId.isBlank()) {
+            sb.append(sep).append("orderId=")
+                    .append(URLEncoder.encode(orderId, StandardCharsets.UTF_8));
+            sep = "&";
+        }
+        if (provider != null && !provider.isBlank()) {
+            sb.append(sep).append("provider=")
+                    .append(URLEncoder.encode(provider, StandardCharsets.UTF_8));
+            sep = "&";
+        }
+        if (status != null && !status.isBlank()) {
+            sb.append(sep).append("status=")
+                    .append(URLEncoder.encode(status, StandardCharsets.UTF_8));
+        }
+        return ResponseEntity.status(HttpStatus.FOUND)
+                .header("Location", sb.toString())
+                .build();
     }
 
     @GetMapping("/country-settings")
