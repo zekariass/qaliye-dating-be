@@ -4,6 +4,7 @@ import com.qaliye.backend.billing.repository.ActionLimitRepository;
 import com.qaliye.backend.billing.service.ActionCostService;
 import com.qaliye.backend.billing.service.CreditService;
 import com.qaliye.backend.discovery.dto.MatchSummaryDto;
+import com.qaliye.backend.discovery.dto.SwipeActionResponse;
 import com.qaliye.backend.discovery.exception.ActionLimitExceededException;
 import com.qaliye.backend.discovery.exception.DuplicateActiveActionException;
 import com.qaliye.backend.discovery.exception.TargetIneligibleException;
@@ -142,5 +143,35 @@ class SwipeActionServiceTest {
 
         verify(notificationDispatcher).dispatchMatchNotification(eq(actorId), eq(targetId), eq(matchId));
         verify(notificationDispatcher).dispatchSuperLikeNotification(eq(actorId), eq(targetId), any(UUID.class));
+    }
+
+    @Test
+    void recordLike_afterUnmatch_canReLikeAndRematch() {
+        UUID newClientActionId = UUID.randomUUID();
+        mockTargetEligible();
+        when(actionRepo.findByClientActionId(actorId, newClientActionId)).thenReturn(Optional.empty());
+        when(actionRepo.findActiveByPair(actorId, targetId)).thenReturn(Optional.empty());
+        when(actionCostService.evaluate(eq(actorId), eq("LIKE"))).thenReturn(
+                new ActionCostService.ActionCostResult(null, 0, true, false, false,
+                        java.time.LocalDate.now(), java.time.LocalDate.now(), 0, null, "DAY"));
+        UUID newActionId = UUID.randomUUID();
+        when(actionRepo.insertAction(actorId, targetId, "LIKE", newClientActionId)).thenReturn(
+                new DiscoveryActionRepository.ActionRow(
+                        newActionId, actorId, targetId, "LIKE", "ACTIVE", newClientActionId,
+                        OffsetDateTime.now()));
+        when(actionRepo.findMutualActiveLike(actorId, targetId)).thenReturn(
+                Optional.of(new DiscoveryActionRepository.ActionRow(
+                        UUID.randomUUID(), targetId, actorId, "LIKE", "ACTIVE", UUID.randomUUID(),
+                        OffsetDateTime.now())));
+        UUID newMatchId = UUID.randomUUID();
+        when(matchService.tryCreateMatch(eq(actorId), eq(targetId), eq(newActionId), any(UUID.class)))
+                .thenReturn(Optional.of(new MatchSummaryDto(newMatchId, Instant.now(), Instant.now().plusSeconds(300), null)));
+
+        SwipeActionResponse response = service.recordLike(actorId, targetId, newClientActionId);
+
+        assertThat(response.isMatch()).isTrue();
+        assertThat(response.match()).isNotNull();
+        assertThat(response.match().matchId()).isEqualTo(newMatchId);
+        verify(notificationDispatcher).dispatchMatchNotification(eq(actorId), eq(targetId), eq(newMatchId));
     }
 }

@@ -106,6 +106,17 @@ public class PromotionRepository {
             ORDER BY CASE WHEN country_code = :primaryCountry THEN 0 ELSE 1 END, priority DESC
             """;
 
+    private static final String FIND_INCLUDED_CREDITS_FOR_PRODUCT_SQL = """
+            SELECT COALESCE(SUM(included_credits), 0) AS total_credits
+            FROM promotion_campaigns
+            WHERE status = 'ACTIVE'
+              AND (subscription_product_id = :productId OR consumable_product_id = :productId)
+              AND included_credits IS NOT NULL AND included_credits > 0
+              AND starts_at <= :now
+              AND (ends_at IS NULL OR ends_at > :now)
+              AND country_code IN (:countryCodes)
+            """;
+
     private static final String FIND_ACTIVE_PURCHASE_CAMPAIGNS_SQL =
             CAMPAIGN_SELECT + """
             WHERE status = 'ACTIVE'
@@ -377,6 +388,21 @@ public class PromotionRepository {
                 .addValue("primaryCountry", countryCode)
                 .addValue("now", java.sql.Timestamp.from(now));
         return jdbc.query(FIND_ACTIVE_CAMPAIGNS_BY_TRIGGER_SQL, params, this::mapCampaignRow);
+    }
+
+    public long findPromotionIncludedCreditsForProduct(UUID productId, String countryCode) {
+        List<String> countryCodes = buildCountryCodes(countryCode);
+        var params = new MapSqlParameterSource()
+                .addValue("productId", productId)
+                .addValue("countryCodes", countryCodes)
+                .addValue("now", java.sql.Timestamp.from(Instant.now()));
+        try {
+            Long result = jdbc.queryForObject(FIND_INCLUDED_CREDITS_FOR_PRODUCT_SQL, params, Long.class);
+            return result != null ? result : 0L;
+        } catch (Exception e) {
+            log.warn("Failed to query promotion included_credits for product={}: {}", productId, e.getMessage());
+            return 0L;
+        }
     }
 
     public List<CampaignRow> findActivePurchaseCampaigns(

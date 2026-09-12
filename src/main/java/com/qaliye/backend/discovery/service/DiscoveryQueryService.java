@@ -120,7 +120,7 @@ public class DiscoveryQueryService {
                 FROM matches
                 WHERE (user_one_id = :actorId OR user_two_id = :actorId)
                   AND status = 'ENDED'
-                  AND end_reason IN ('USER_UNMATCH', 'BLOCKED', 'ADMIN_ACTION')
+                  AND end_reason IN ('ADMIN_ACTION')
                 UNION
                 SELECT blocked_user_id AS user_id
                 FROM user_blocks
@@ -286,7 +286,7 @@ public class DiscoveryQueryService {
                 FROM matches
                 WHERE (user_one_id = :actorId OR user_two_id = :actorId)
                   AND status = 'ENDED'
-                  AND end_reason IN ('USER_UNMATCH', 'BLOCKED', 'ADMIN_ACTION')
+                  AND end_reason IN ('ADMIN_ACTION')
                 UNION
                 SELECT blocked_user_id AS user_id
                 FROM user_blocks

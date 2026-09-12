@@ -24,13 +24,16 @@ public class FulfillmentService {
     private final CreditLotRepository creditLotRepo;
     private final CreditService creditService;
     private final PromotionRepository promotionRepo;
+    private final PromotionFulfillmentService promotionFulfillmentService;
 
     public FulfillmentService(BillingRepository billingRepo, CreditLotRepository creditLotRepo,
-                               CreditService creditService, PromotionRepository promotionRepo) {
+                               CreditService creditService, PromotionRepository promotionRepo,
+                               PromotionFulfillmentService promotionFulfillmentService) {
         this.billingRepo = billingRepo;
         this.creditLotRepo = creditLotRepo;
         this.creditService = creditService;
         this.promotionRepo = promotionRepo;
+        this.promotionFulfillmentService = promotionFulfillmentService;
     }
 
     @Transactional
@@ -96,9 +99,9 @@ public class FulfillmentService {
         // Grant included subscription credits into central credit balance
         grantSubscriptionIncludedCredits(userId, subId, offer, periodEnd);
 
-        // Fulfill any associated PURCHASE promotion redemption
+        // Fulfill any associated PURCHASE promotion redemption (grants included_credits if present)
         try {
-            promotionRepo.fulfillPurchaseRedemptionByOrderId(order.id(), subId);
+            promotionFulfillmentService.fulfillPurchasePromotion(order.id(), subId);
         } catch (Exception e) {
             log.error("Failed to fulfill promotion redemption for order={}: {}", order.id(), e.getMessage());
         }
@@ -141,9 +144,9 @@ public class FulfillmentService {
 
         log.info("Consumable fulfilled: user={}, type={}, qty={}", userId, offer.entitlementType(), offer.quantityGranted());
 
-        // Fulfill any associated PURCHASE promotion redemption
+        // Fulfill any associated PURCHASE promotion redemption (grants included_credits if present)
         try {
-            promotionRepo.fulfillPurchaseRedemptionByOrderId(order.id(), null);
+            promotionFulfillmentService.fulfillPurchasePromotion(order.id(), null);
         } catch (Exception e) {
             log.error("Failed to fulfill promotion redemption for consumable order={}: {}", order.id(), e.getMessage());
         }

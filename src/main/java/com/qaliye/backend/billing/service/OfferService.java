@@ -32,15 +32,18 @@ public class OfferService {
     private final BillingMarketResolver marketResolver;
     private final PromotionEligibilityService promotionEligibilityService;
     private final CountrySettingsService countrySettingsService;
+    private final PromotionRepository promotionRepo;
 
     public OfferService(BillingRepository billingRepo,
                         BillingMarketResolver marketResolver,
                         PromotionEligibilityService promotionEligibilityService,
-                        CountrySettingsService countrySettingsService) {
+                        CountrySettingsService countrySettingsService,
+                        PromotionRepository promotionRepo) {
         this.billingRepo = billingRepo;
         this.marketResolver = marketResolver;
         this.promotionEligibilityService = promotionEligibilityService;
         this.countrySettingsService = countrySettingsService;
+        this.promotionRepo = promotionRepo;
     }
 
     public PaymentOptionsResponse getPaymentOptions(UUID userId, String platform) {
@@ -136,6 +139,7 @@ public class OfferService {
 
         UUID productId = row.subscriptionProductId() != null
                 ? row.subscriptionProductId() : row.consumableProductId();
+        long promotionIncludedCredits = 0L;
         if (productId != null) {
             Optional<PromotionEligibilityService.AppliedPromotion> applied =
                     promotionEligibilityService.findBestPurchasePromotion(
@@ -152,6 +156,8 @@ public class OfferService {
                     promotionEligibilityService.findClaimablePromotions(
                             userId, productId, trustedCountry);
             claimableDtos = claimable.stream().map(this::toClaimablePromotionDto).toList();
+
+            promotionIncludedCredits = promotionRepo.findPromotionIncludedCreditsForProduct(productId, trustedCountry);
         }
 
         String externalProductId = resolveExternalProductId(row, clientPlatform);
@@ -168,7 +174,7 @@ public class OfferService {
                 effectiveDisplayPrice,
                 row.billingIntervalCount(),
                 row.billingIntervalUnit(),
-                row.includedCredits(),
+                row.includedCredits() + promotionIncludedCredits,
                 row.autoRenew(),
                 externalProductId,
                 row.revenuecatOfferingId(),

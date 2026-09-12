@@ -293,6 +293,12 @@ image:
       min-confidence: ${IMAGE_NUDITY_MIN_CONFIDENCE:90.0}
       suggestive-content-action: ${IMAGE_SUGGESTIVE_CONTENT_ACTION:MANUAL_REVIEW} # MANUAL_REVIEW, APPROVE or REJECT
 
+links:
+  terms: ${LINK_TERMS:https://www.qaliye.com/terms}
+  privacy: ${LINK_PRIVACY:https://www.qaliye.com/privacy}
+  ios-app-store: ${LINK_IOS_APP_STORE:https://apps.apple.com/app/qaliye/id123456789}
+  play-store: ${LINK_PLAY_STORE:https://play.google.com/store/apps/details?id=com.qaliye.app}
+
 identity:
   verification:
     similarity-threshold: ${IDENTITY_VERIFICATION_SIMILARITY_THRESHOLD:80.0}

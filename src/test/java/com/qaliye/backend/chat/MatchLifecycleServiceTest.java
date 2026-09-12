@@ -30,6 +30,8 @@ class MatchLifecycleServiceTest {
     UUID userOneId    = UUID.randomUUID();
     UUID userTwoId    = UUID.randomUUID();
     UUID endedByUser  = userOneId;
+    UUID userOneLikeActionId = UUID.randomUUID();
+    UUID userTwoLikeActionId = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
@@ -49,6 +51,19 @@ class MatchLifecycleServiceTest {
         verify(outboxService).createMatchEndedEvent(eq(matchId), eq("USER_UNMATCH"), any());
         verify(outboxService).createInboxMatchRemovedEvent(eq(matchId), eq(userOneId), any());
         verify(outboxService).createInboxMatchRemovedEvent(eq(matchId), eq(userTwoId), any());
+    }
+
+    @Test
+    void endMatch_activeMatch_reversesBothLikeActions() {
+        ChatMatchRepository.MatchRow active = activeMatch();
+        when(matchRepository.findByIdForUpdate(matchId)).thenReturn(Optional.of(active));
+        when(matchRepository.endMatch(matchId, "USER_UNMATCH", endedByUser))
+                .thenReturn(Optional.of(matchId));
+
+        service.endMatch(matchId, "USER_UNMATCH", endedByUser);
+
+        verify(actionRepository).reverseActionWithReason(active.userOneLikeActionId(), "MATCH_ENDED");
+        verify(actionRepository).reverseActionWithReason(active.userTwoLikeActionId(), "MATCH_ENDED");
     }
 
     @Test
@@ -115,6 +130,7 @@ class MatchLifecycleServiceTest {
     private ChatMatchRepository.MatchRow activeMatch() {
         return new ChatMatchRepository.MatchRow(matchId, userOneId, userTwoId, "ACTIVE",
                 null, null, null, 1L, 0L, 0L, 0L, 0L,
-                null, null, null, null, null, null, 0L, 0L, null, null);
+                null, null, null, null, null, null, 0L, 0L,
+                userOneLikeActionId, userTwoLikeActionId);
     }
 }

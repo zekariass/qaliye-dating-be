@@ -26,6 +26,7 @@ class FulfillmentServiceTest {
     @Mock CreditLotRepository creditLotRepo;
     @Mock CreditService creditService;
     @Mock PromotionRepository promotionRepo;
+    @Mock PromotionFulfillmentService promotionFulfillmentService;
 
     FulfillmentService fulfillmentService;
 
@@ -39,7 +40,7 @@ class FulfillmentServiceTest {
 
     @BeforeEach
     void setUp() {
-        fulfillmentService = new FulfillmentService(billingRepo, creditLotRepo, creditService, promotionRepo);
+        fulfillmentService = new FulfillmentService(billingRepo, creditLotRepo, creditService, promotionRepo, promotionFulfillmentService);
         lenient().when(creditLotRepo.getPlanBoostLimit(any())).thenReturn(1);
         lenient().when(creditLotRepo.insertLedgerEntry(any(), any(), anyInt(), any(), any(), any(), any(),
                 any(), any(), any())).thenReturn(ledgerEntryId);
@@ -227,5 +228,21 @@ class FulfillmentServiceTest {
         Instant expectedEnd = now.plus(35, ChronoUnit.DAYS);
         long diffSeconds = Math.abs(periodEndCaptor.getValue().getEpochSecond() - expectedEnd.getEpochSecond());
         assertTrue(diffSeconds < 5, "periodEnd should be ~35 days (30 paid + 5 promo), diff=" + diffSeconds + "s");
+    }
+
+    // ── 6. PURCHASE promotion: fulfillPurchasePromotion is called ───────────
+
+    @Test
+    void fulfillSubscription_delegatesPurchasePromotionFulfillment() {
+        when(billingRepo.findOrderById(orderId)).thenReturn(Optional.of(buildOrder("chapa")));
+        when(billingRepo.findOfferById(offerId)).thenReturn(Optional.of(buildOffer()));
+        when(billingRepo.findActiveSubscription(userId)).thenReturn(Optional.empty());
+        when(billingRepo.upsertSubscription(eq(userId), eq(planId), eq("CHAPA"),
+                any(), eq(offerId), isNull(), eq("ACTIVE"), eq(true),
+                any(), any(), any())).thenReturn(subId);
+
+        fulfillmentService.fulfillVerifiedOrder(orderId, userId);
+
+        verify(promotionFulfillmentService).fulfillPurchasePromotion(orderId, subId);
     }
 }

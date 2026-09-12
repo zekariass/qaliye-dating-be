@@ -4,6 +4,7 @@ import com.qaliye.backend.billing.dto.OfferDto;
 import com.qaliye.backend.billing.dto.PaymentMethodDto;
 import com.qaliye.backend.billing.dto.PaymentOptionsResponse;
 import com.qaliye.backend.billing.repository.BillingRepository;
+import com.qaliye.backend.billing.repository.PromotionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,13 +28,14 @@ class OfferServiceTest {
     @Mock BillingMarketResolver marketResolver;
     @Mock PromotionEligibilityService promotionEligibilityService;
     @Mock CountrySettingsService countrySettingsService;
+    @Mock PromotionRepository promotionRepo;
     OfferService service;
 
     UUID userId = UUID.randomUUID();
 
     @BeforeEach
     void setUp() {
-        service = new OfferService(billingRepo, marketResolver, promotionEligibilityService, countrySettingsService);
+        service = new OfferService(billingRepo, marketResolver, promotionEligibilityService, countrySettingsService, promotionRepo);
         lenient().when(billingRepo.getUnlimitedEntitlementTypes(any())).thenReturn(java.util.Set.of());
         lenient().when(promotionEligibilityService.findBestPurchasePromotion(any(), any(), anyInt(), any(), any()))
                 .thenReturn(Optional.empty());
@@ -41,6 +43,7 @@ class OfferServiceTest {
                 .thenReturn(List.of());
         lenient().when(countrySettingsService.getSettings(any()))
                 .thenReturn(new CountrySettingsService.CountrySettings("ET", true, true, false));
+        lenient().when(promotionRepo.findPromotionIncludedCreditsForProduct(any(), any())).thenReturn(0L);
     }
 
     @Test
@@ -134,6 +137,33 @@ class OfferServiceTest {
                 productCode, "MONTH", 1,
                 0L, null, null, null
         );
+    }
+
+    private BillingRepository.OfferRow createConsumableOffer(String productCode, UUID consumableProductId) {
+        return new BillingRepository.OfferRow(
+                UUID.randomUUID(), null, consumableProductId, "ET", "ANDROID",
+                "ETB", 49900, false,
+                null, null, null, null, null,
+                null, null, null,
+                0L, productCode, "CREDIT_PURCHASE", 500
+        );
+    }
+
+    @Test
+    void getOffers_consumableWithPromotionCredits_addsIncludedCredits() {
+        UUID consumableProductId = UUID.randomUUID();
+        when(marketResolver.resolveMarket(userId, "ANDROID"))
+                .thenReturn(new BillingMarketResolver.MarketResult("ET", "ET", "ANDROID", false));
+        when(billingRepo.countActivePaymentMethods("ET", "ANDROID")).thenReturn(1);
+        when(billingRepo.findActiveOffers("ANDROID", "ET")).thenReturn(List.of(
+                createConsumableOffer("CREDITS_500", consumableProductId)
+        ));
+        when(promotionRepo.findPromotionIncludedCreditsForProduct(consumableProductId, "ET")).thenReturn(50L);
+
+        List<OfferDto> offers = service.getOffers(userId, "ANDROID");
+
+        assertThat(offers).hasSize(1);
+        assertThat(offers.get(0).includedCredits()).isEqualTo(50L);
     }
 
     private BillingRepository.PaymentMethodRow createMethodRow(
