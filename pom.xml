@@ -197,8 +197,7 @@
 								<testExclude>**/ActivityControllerTest.java</testExclude>
 								<testExclude>**/ChatQueryServiceTest.java</testExclude>
 								<testExclude>**/MessageCommandServiceTest.java</testExclude>
-								<testExclude>**/LikesServiceTest.java</testExclude>
-								<testExclude>**/RevisitPassesServiceTest.java</testExclude>
+									<testExclude>**/RevisitPassesServiceTest.java</testExclude>
 							</testExcludes>
 						</configuration>
 					</execution>
