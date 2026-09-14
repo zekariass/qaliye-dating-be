@@ -2,6 +2,7 @@ package com.qaliye.backend.discovery.service;
 
 import com.qaliye.backend.activity.ActivityStatus;
 import com.qaliye.backend.activity.ActivityStatusService;
+import com.qaliye.backend.billing.service.ActionCostService;
 import com.qaliye.backend.discovery.dto.LikeItemDto;
 import com.qaliye.backend.discovery.dto.LikesAndMatchesCountDto;
 import com.qaliye.backend.discovery.dto.LikesPageResponse;
@@ -30,16 +31,28 @@ public class LikesService {
     private static final int MAX_PAGE_SIZE = 50;
     private static final Set<String> VALID_DIRECTIONS = Set.of("RECEIVED", "SENT");
 
+    private static final String AUTO_REVEAL_ALL_SQL = """
+            UPDATE user_discovery_actions
+            SET revealed_at = NOW()
+            WHERE target_user_id = :userId
+              AND action_type IN ('LIKE', 'SUPERLIKE')
+              AND status = 'ACTIVE'
+              AND revealed_at IS NULL
+            """;
+
     private final NamedParameterJdbcTemplate jdbc;
     private final StorageSigningService signingService;
     private final ActivityStatusService activityStatusService;
+    private final ActionCostService actionCostService;
 
     public LikesService(NamedParameterJdbcTemplate jdbc,
                         StorageSigningService signingService,
-                        ActivityStatusService activityStatusService) {
+                        ActivityStatusService activityStatusService,
+                        ActionCostService actionCostService) {
         this.jdbc = jdbc;
         this.signingService = signingService;
         this.activityStatusService = activityStatusService;
+        this.actionCostService = actionCostService;
     }
 
     /**
@@ -279,7 +292,7 @@ public class LikesService {
                 ));
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public LikesPageResponse getLikes(UUID currentUserId, String direction, int page, int size) {
         String resolvedDirection = resolveDirection(direction);
         int resolvedSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
@@ -287,6 +300,10 @@ public class LikesService {
         long offset = (long) resolvedPage * resolvedSize;
 
         boolean isReceived = "RECEIVED".equals(resolvedDirection);
+
+        if (isReceived && isUnlimitedFreeReveal(currentUserId)) {
+            jdbc.update(AUTO_REVEAL_ALL_SQL, new MapSqlParameterSource("userId", currentUserId));
+        }
 
         String dataSql = isReceived ? RECEIVED_LIKES_SQL : SENT_LIKES_SQL;
         String countSql = isReceived ? RECEIVED_LIKES_COUNT_SQL : SENT_LIKES_COUNT_SQL;
@@ -364,6 +381,19 @@ public class LikesService {
                 item.actionType(), item.likedAt(), item.distanceKm(), item.city(), item.countryName()));
 
         return response;
+    }
+
+    /**
+     * Returns true when the user's plan grants unlimited free SEE_WHO_LIKED_YOU reveals
+     * (member_credit_cost = 0 AND limit_value = NULL with an explicit rule configured).
+     * In this case all received likes are auto-revealed on page load.
+     */
+    private boolean isUnlimitedFreeReveal(UUID userId) {
+        ActionCostService.PlanRuleConfig config =
+                actionCostService.getPlanRuleConfig(userId, "SEE_WHO_LIKED_YOU");
+        return config.ruleId() != null
+                && config.limitValue() == null
+                && config.memberCreditCost() == 0;
     }
 
     private String resolveDirection(String direction) {
