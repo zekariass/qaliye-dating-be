@@ -33,6 +33,10 @@ public class ActionLimitExceededException extends DiscoveryException {
             case "SUPER_MESSAGE" -> "You have reached your " + period + " super message limit.";
             case "CHANGE_ADDRESS" -> "You have reached your " + period + " limit for changing your address.";
             case "MESSAGE" -> "You have reached your " + period + " message limit.";
+            case "BLIND_DATE_SESSION_CREATE" ->
+                    "You have reached your " + period + " limit for creating Blind Date sessions.";
+            case "BLIND_DATE_PARTICIPATE" ->
+                    "You have reached your " + period + " limit for joining Blind Dates.";
             default -> "You have reached your " + period + " limit for this action.";
         };
     }

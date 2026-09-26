@@ -1189,6 +1189,13 @@ GET /api/v1/discovery/likes?direction=RECEIVED&page=0&size=20
       "isVerified": true,
       "primaryPhotoUrl": "https://...blurred-or-signed-url...",
       "actionType": "LIKE",
+      "actionVariantCode": "ROSE",
+      "actionVariant": {
+        "code": "ROSE",
+        "name": "Rose",
+        "description": "Send a rose",
+        "icon": "https://cdn.qal.app/actions/rose.webp"
+      },
       "likedAt": "2026-08-15T10:00:00Z",
       "distanceKm": 5,
       "city": "Addis Ababa",
@@ -1208,6 +1215,11 @@ GET /api/v1/discovery/likes?direction=RECEIVED&page=0&size=20
 ```
 
 Use `actionId` from each item to call `POST /api/v1/discovery/actions/{actionId}/reveal`.
+
+**Variant fields (additive, both `RECEIVED` and `SENT`):**
+
+- `actionVariantCode` — the variant stored on the like (e.g. `ROSE`, `FIRE`). `null` for likes created before variants existed or without one (plain `LIKE`/`SUPERLIKE`).
+- `actionVariant` — display metadata (`code`, `name`, `description`, `icon`), same shape as `GET /discovery/like-actions` items but without `credits`/`sortOrder`. `null` when `actionVariantCode` is `null` or the variant row no longer exists. Deactivated variants still resolve — render `actionVariant` when present, otherwise fall back to the `actionType` badge.
 
 ### GET `/api/v1/discovery/matches`
 

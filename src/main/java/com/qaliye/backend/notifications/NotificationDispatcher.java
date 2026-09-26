@@ -114,4 +114,34 @@ public class NotificationDispatcher {
             log.error("dispatchPaymentRejectedNotification failed for user {}: {}", userId, e.getMessage());
         }
     }
+
+    public void dispatchBlindDateRevealNotification(UUID creatorUserId, UUID finalistUserId, UUID sessionId) {
+        try {
+            OffsetDateTime now = OffsetDateTime.now();
+            outboxService.createAccountAlertEvent(creatorUserId, "BLIND_DATE_REVEAL", sessionId, now);
+            outboxService.createAccountAlertEvent(finalistUserId, "BLIND_DATE_REVEAL", sessionId, now);
+        } catch (Exception e) {
+            log.error("dispatchBlindDateRevealNotification failed for session {}: {}", sessionId, e.getMessage());
+        }
+    }
+
+    public void dispatchBlindDateEliminatedNotification(UUID participantUserId, UUID sessionId) {
+        try {
+            outboxService.createAccountAlertEvent(participantUserId, "BLIND_DATE_ELIMINATED", sessionId, OffsetDateTime.now());
+        } catch (Exception e) {
+            log.error("dispatchBlindDateEliminatedNotification failed for session {}: {}", sessionId, e.getMessage());
+        }
+    }
+
+    public void dispatchBlindDateOutcomeNotification(UUID creatorUserId, UUID finalistUserId,
+                                                     UUID sessionId, boolean matched) {
+        try {
+            String alertCode = matched ? "BLIND_DATE_MATCHED" : "BLIND_DATE_NO_MATCH";
+            OffsetDateTime now = OffsetDateTime.now();
+            outboxService.createAccountAlertEvent(creatorUserId, alertCode, sessionId, now);
+            outboxService.createAccountAlertEvent(finalistUserId, alertCode, sessionId, now);
+        } catch (Exception e) {
+            log.error("dispatchBlindDateOutcomeNotification failed for session {}: {}", sessionId, e.getMessage());
+        }
+    }
 }

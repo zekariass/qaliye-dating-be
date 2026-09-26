@@ -6,5 +6,6 @@ import java.util.UUID;
 
 public record SwipeActionRequest(
         @NotNull UUID targetUserId,
-        @NotNull UUID clientActionId
+        @NotNull UUID clientActionId,
+        String actionVariantCode
 ) {}

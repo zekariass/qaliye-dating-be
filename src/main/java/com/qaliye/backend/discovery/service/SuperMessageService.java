@@ -333,7 +333,7 @@ public class SuperMessageService {
         }
 
         UUID clientActionId = UUID.randomUUID();
-        SwipeActionResponse likeResponse = swipeActionService.recordLike(receiverId, senderId, clientActionId);
+        SwipeActionResponse likeResponse = swipeActionService.recordLike(receiverId, senderId, clientActionId, "HEART");
 
         UUID matchId = likeResponse.match() != null ? likeResponse.match().matchId() : null;
         Instant matchedAt = likeResponse.match() != null ? likeResponse.match().matchedAt() : null;

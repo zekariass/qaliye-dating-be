@@ -157,6 +157,9 @@ public class NotificationOutboxService {
         payload.put("notification_type", "ACCOUNT_ALERT");
         payload.put("notification_id", UUID.randomUUID().toString());
         payload.put("alert_code", alertCode);
+        if (alertCode != null && alertCode.startsWith("BLIND_DATE_") && businessEventId != null) {
+            payload.put("session_id", businessEventId.toString());
+        }
 
         outboxRepo.insert(
                 UUID.randomUUID(), "ACCOUNT_ALERT",

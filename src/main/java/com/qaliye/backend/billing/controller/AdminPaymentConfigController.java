@@ -232,6 +232,41 @@ public class AdminPaymentConfigController {
     }
 
     // =========================================================================
+    // subscription_plan_variant_limit_and_cost
+    // =========================================================================
+
+    @GetMapping("/plan-variant-limit-costs")
+    public ResponseEntity<List<?>> listPlanVariantLimitCosts() {
+        UUID adminId = CallerUtils.callerId();
+        return ResponseEntity.ok(configService.listPlanVariantLimitCosts(adminId));
+    }
+
+    @GetMapping("/plan-variant-limit-costs/{id}")
+    public ResponseEntity<?> getPlanVariantLimitCost(@PathVariable UUID id) {
+        UUID adminId = CallerUtils.callerId();
+        return ResponseEntity.ok(configService.getPlanVariantLimitCost(adminId, id));
+    }
+
+    @PostMapping("/plan-variant-limit-costs")
+    public ResponseEntity<?> createPlanVariantLimitCost(@Valid @RequestBody CreatePlanVariantLimitCostRequest request) {
+        UUID adminId = CallerUtils.callerId();
+        return ResponseEntity.status(HttpStatus.CREATED).body(configService.createPlanVariantLimitCost(adminId, request));
+    }
+
+    @PutMapping("/plan-variant-limit-costs/{id}")
+    public ResponseEntity<?> updatePlanVariantLimitCost(@PathVariable UUID id, @RequestBody UpdatePlanVariantLimitCostRequest request) {
+        UUID adminId = CallerUtils.callerId();
+        return ResponseEntity.ok(configService.updatePlanVariantLimitCost(adminId, id, request));
+    }
+
+    @DeleteMapping("/plan-variant-limit-costs/{id}")
+    public ResponseEntity<Void> deletePlanVariantLimitCost(@PathVariable UUID id) {
+        UUID adminId = CallerUtils.callerId();
+        configService.deletePlanVariantLimitCost(adminId, id);
+        return ResponseEntity.noContent().build();
+    }
+
+    // =========================================================================
     // feature_actions
     // =========================================================================
 

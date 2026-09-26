@@ -1,5 +1,6 @@
 package com.qaliye.backend.discovery.exception;
 
+import com.qaliye.backend.billing.service.ActionCostService;
 import com.qaliye.backend.billing.service.CreditService;
 import org.postgresql.util.PSQLException;
 import org.springframework.core.annotation.Order;
@@ -27,6 +28,14 @@ public class DiscoveryExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleInsufficientCredits(CreditService.InsufficientCreditsException ex) {
         return ResponseEntity.status(HttpStatus.PAYMENT_REQUIRED)
                 .body(errorBody("insufficient_credits", "You don't have enough credits for this action."));
+    }
+
+    @ExceptionHandler(ActionCostService.VariantPricingNotConfiguredException.class)
+    public ResponseEntity<Map<String, Object>> handleVariantPricingNotConfigured(
+            ActionCostService.VariantPricingNotConfiguredException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(errorBody("VARIANT_PRICING_NOT_CONFIGURED",
+                        "This action variant is not yet available. Please try again later."));
     }
 
     @ExceptionHandler(DiscoveryException.class)

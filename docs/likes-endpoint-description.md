@@ -35,6 +35,13 @@ Returns a `LikesPageResponse` object with the following structure:
       "isVerified": true,
       "primaryPhotoUrl": "https://<supabase-host>/storage/v1/object/sign/photos/abc.jpg?token=...",
       "actionType": "LIKE",
+      "actionVariantCode": "ROSE",
+      "actionVariant": {
+        "code": "ROSE",
+        "name": "Rose",
+        "description": "Send a rose",
+        "icon": "https://cdn.qal.app/actions/rose.webp"
+      },
       "likedAt": "2026-06-25T10:00:00Z",
       "distanceKm": 15,
       "city": "London",
@@ -90,6 +97,8 @@ Returns a `LikesPageResponse` object with the following structure:
 | `isVerified`      | Boolean | No       | Whether the other user's profile is verified. |
 | `primaryPhotoUrl` | String  | **Yes**  | Signed URL to the other user's primary photo. Valid for **1 hour**. `null` if the user has no approved primary photo. |
 | `actionType`      | String  | No       | `"LIKE"` or `"SUPERLIKE"`. |
+| `actionVariantCode` | String | **Yes** | The like variant stored on the action (e.g. `"ROSE"`, `"FIRE"`). `null` for likes created before variants existed or without one. |
+| `actionVariant`   | Object  | **Yes**  | Display metadata for the variant: `{ code, name, description, icon }` — same shape as `GET /discovery/like-actions` items minus `credits`/`sortOrder`. `null` when `actionVariantCode` is `null` or the variant row no longer exists. Deactivated variants still resolve. |
 | `likedAt`         | Instant | No       | ISO-8601 UTC timestamp when the action was created. |
 | `distanceKm`      | Integer | **Yes**  | Geodesic distance in km from the current user to the other user. Minimum value is `1` when both addresses are set. `null` if either user has no address. |
 | `city`            | String  | **Yes**  | City of the other user. `null` if no address is set. |

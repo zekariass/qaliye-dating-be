@@ -134,11 +134,15 @@ public class NotificationPayloadBuilder {
 
     private ExpoMessage buildAccountAlert(OutboxRow outbox, String deviceToken) {
         String alertCode = extractAlertCode(outbox.payloadJson());
+        String sessionId = extractJsonString(outbox.payloadJson(), "session_id");
 
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("notification_type", "ACCOUNT_ALERT");
         if (alertCode != null) {
             data.put("alert_code", alertCode);
+        }
+        if (sessionId != null) {
+            data.put("session_id", sessionId);
         }
 
         String title = "Qaliye";
@@ -157,6 +161,10 @@ public class NotificationPayloadBuilder {
             case "PHOTO_REJECTED"        -> "Your profile photo was not approved. Please upload a new one.";
             case "PAYMENT_APPROVED"      -> "Your payment has been approved! ✅";
             case "PAYMENT_REJECTED"      -> "Your payment could not be approved. Please contact support.";
+            case "BLIND_DATE_REVEAL"     -> "Your Blind Date reveal is ready! ✨";
+            case "BLIND_DATE_ELIMINATED" -> "This Blind Date has moved on without you.";
+            case "BLIND_DATE_MATCHED"    -> "It's a match! Your Blind Date said yes too. 💕";
+            case "BLIND_DATE_NO_MATCH"   -> "Your Blind Date reveal has ended without a match.";
             default                      -> "Important account update";
         };
     }
@@ -166,6 +174,15 @@ public class NotificationPayloadBuilder {
         try {
             var node = MAPPER.readTree(payloadJson);
             if (node.has("alert_code")) return node.get("alert_code").asText();
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    private String extractJsonString(String payloadJson, String field) {
+        if (payloadJson == null || payloadJson.isBlank()) return null;
+        try {
+            var node = MAPPER.readTree(payloadJson);
+            if (node.has(field) && node.get(field).isTextual()) return node.get(field).asText();
         } catch (Exception ignored) {}
         return null;
     }

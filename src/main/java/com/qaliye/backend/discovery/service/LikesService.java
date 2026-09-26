@@ -2,8 +2,10 @@ package com.qaliye.backend.discovery.service;
 
 import com.qaliye.backend.activity.ActivityStatus;
 import com.qaliye.backend.activity.ActivityStatusService;
+import com.qaliye.backend.billing.repository.ActionFeatureVariantRepository;
 import com.qaliye.backend.billing.service.ActionCostService;
 import com.qaliye.backend.discovery.dto.LikeItemDto;
+import com.qaliye.backend.discovery.dto.LikeVariantDto;
 import com.qaliye.backend.discovery.dto.LikesAndMatchesCountDto;
 import com.qaliye.backend.discovery.dto.LikesPageResponse;
 import org.slf4j.Logger;
@@ -18,7 +20,9 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -44,15 +48,18 @@ public class LikesService {
     private final StorageSigningService signingService;
     private final ActivityStatusService activityStatusService;
     private final ActionCostService actionCostService;
+    private final ActionFeatureVariantRepository variantRepo;
 
     public LikesService(NamedParameterJdbcTemplate jdbc,
                         StorageSigningService signingService,
                         ActivityStatusService activityStatusService,
-                        ActionCostService actionCostService) {
+                        ActionCostService actionCostService,
+                        ActionFeatureVariantRepository variantRepo) {
         this.jdbc = jdbc;
         this.signingService = signingService;
         this.activityStatusService = activityStatusService;
         this.actionCostService = actionCostService;
+        this.variantRepo = variantRepo;
     }
 
     /**
@@ -81,7 +88,8 @@ public class LikesService {
                 a.region,
                 a.country_name,
                 au.last_active_at,
-                au.show_activity_status
+                au.show_activity_status,
+                uda.action_variant_code
             FROM user_discovery_actions uda
             JOIN profiles p ON p.user_id = uda.actor_user_id
             JOIN app_users au ON au.id = uda.actor_user_id
@@ -168,7 +176,8 @@ public class LikesService {
                 a.region,
                 a.country_name,
                 au.last_active_at,
-                au.show_activity_status
+                au.show_activity_status,
+                uda.action_variant_code
             FROM user_discovery_actions uda
             JOIN profiles p ON p.user_id = uda.target_user_id
             JOIN app_users au ON au.id = uda.target_user_id
@@ -320,6 +329,12 @@ public class LikesService {
 
         Instant capturedNow = activityStatusService.now();
 
+        Map<String, LikeVariantDto> variantsByCode = new HashMap<>();
+        for (ActionFeatureVariantRepository.VariantRow variant : variantRepo.findAllByActionCode("LIKE")) {
+            variantsByCode.put(variant.code(),
+                    new LikeVariantDto(variant.code(), variant.name(), variant.description(), variant.icon()));
+        }
+
         List<LikeItemDto> items = new ArrayList<>();
         jdbc.query(dataSql, dataParams, rs -> {
             String bucket = rs.getString("storage_bucket");
@@ -345,6 +360,9 @@ public class LikesService {
             boolean showActivity = rs.getBoolean("show_activity_status");
             ActivityStatus activityStatus = activityStatusService.resolve(showActivity, lastActiveAt, capturedNow);
 
+            String actionVariantCode = rs.getString("action_variant_code");
+            LikeVariantDto actionVariant = actionVariantCode != null ? variantsByCode.get(actionVariantCode) : null;
+
             items.add(new LikeItemDto(
                     rs.getObject("action_id", UUID.class),
                     rs.getObject("other_user_id", UUID.class),
@@ -359,7 +377,9 @@ public class LikesService {
                     rs.getString("region"),
                     rs.getString("country_name"),
                     activityStatus,
-                    revealedAt
+                    revealedAt,
+                    actionVariantCode,
+                    actionVariant
             ));
         });
 

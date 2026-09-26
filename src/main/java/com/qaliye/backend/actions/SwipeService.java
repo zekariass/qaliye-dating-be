@@ -96,6 +96,7 @@ public class SwipeService {
             FROM user_discovery_actions
             WHERE actor_user_id = :callerId
               AND status = 'ACTIVE'
+              AND action_source = 'DISCOVERY'
             ORDER BY created_at DESC
             LIMIT 1
             FOR UPDATE

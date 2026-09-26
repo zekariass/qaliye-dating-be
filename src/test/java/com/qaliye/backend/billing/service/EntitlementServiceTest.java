@@ -13,13 +13,17 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.*;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -102,5 +106,149 @@ class EntitlementServiceTest {
 
         assertThat(response.activeBoost()).isNotNull();
         assertThat(response.activeBoost().remainingSeconds()).isGreaterThan(0);
+    }
+
+    private BillingRepository.ActiveSubRow activeSub(UUID planId) {
+        return new BillingRepository.ActiveSubRow(
+                UUID.randomUUID(), planId, "ACTIVE", true,
+                Instant.now(), Instant.now().plusSeconds(86400 * 30),
+                "STRIPE", "PREMIUM", "{}",
+                "MONTH", 1
+        );
+    }
+
+    private ResultSet actionRuleRs(String actionCode, int limitValue, long memberCost, long actualCost,
+                                   boolean variantPricing, boolean variantLimits) throws SQLException {
+        ResultSet rs = mock(ResultSet.class);
+        when(rs.getString("action_code")).thenReturn(actionCode);
+        when(rs.getObject("limit_value")).thenReturn(limitValue);
+        when(rs.getString("period_type")).thenReturn("DAY");
+        when(rs.getLong("member_credit_cost")).thenReturn(memberCost);
+        when(rs.getLong("actual_credit_cost")).thenReturn(actualCost);
+        when(rs.getBoolean("apply_credit_after_limit")).thenReturn(true);
+        when(rs.getBoolean("variant_pricing_enabled")).thenReturn(variantPricing);
+        when(rs.getBoolean("variant_limits_enabled")).thenReturn(variantLimits);
+        return rs;
+    }
+
+    private ResultSet variantRuleRs(String actionCode, String variantCode, long memberCost, long actualCost,
+                                    Integer limitValue, boolean applyAfter) throws SQLException {
+        ResultSet rs = mock(ResultSet.class);
+        when(rs.getString("action_code")).thenReturn(actionCode);
+        when(rs.getString("variant_code")).thenReturn(variantCode);
+        when(rs.getLong("member_credit_cost")).thenReturn(memberCost);
+        when(rs.getLong("actual_credit_cost")).thenReturn(actualCost);
+        when(rs.getObject("limit_value")).thenReturn(limitValue);
+        when(rs.getString("period_type")).thenReturn("DAY");
+        when(rs.getBoolean("apply_credit_after_limit")).thenReturn(applyAfter);
+        return rs;
+    }
+
+    private ResultSet variantUsageRs(String actionCode, String variantCode, int used) throws SQLException {
+        ResultSet rs = mock(ResultSet.class);
+        when(rs.getString("action_code")).thenReturn(actionCode);
+        when(rs.getString("variant_code")).thenReturn(variantCode);
+        when(rs.getInt("used_count")).thenReturn(used);
+        return rs;
+    }
+
+    @Test
+    void getEntitlements_variantPricingEnabled_usesVariantCostsWithSharedLimit() throws SQLException {
+        UUID planId = UUID.randomUUID();
+        when(billingRepo.findActiveSubscription(userId)).thenReturn(Optional.of(activeSub(planId)));
+        when(creditLotRepo.findActiveBoost(userId)).thenReturn(Collections.emptyList());
+
+        doAnswer(inv -> {
+            RowCallbackHandler handler = inv.getArgument(2);
+            handler.processRow(actionRuleRs("LIKE", 10, 1, 2, true, false));
+            return null;
+        }).when(jdbc).query(contains("variant_pricing_enabled"), anyMap(), any(RowCallbackHandler.class));
+
+        doAnswer(inv -> {
+            RowCallbackHandler handler = inv.getArgument(2);
+            handler.processRow(variantRuleRs("LIKE", "HEART", 1, 2, null, true));
+            handler.processRow(variantRuleRs("LIKE", "ROSE", 10, 10, 5, false));
+            return null;
+        }).when(jdbc).query(contains("ORDER BY fa.code, afv.sort_order"), anyMap(), any(RowCallbackHandler.class));
+
+        EntitlementResponse response = service.getEntitlements(userId);
+
+        EntitlementResponse.ActionLimitAndCost like = response.limitsAndCosts().get("LIKE");
+        assertThat(like).isNotNull();
+        assertThat(like.variantPricingEnabled()).isTrue();
+        assertThat(like.variantLimitsEnabled()).isFalse();
+        assertThat(like.variants()).containsKeys("HEART", "ROSE");
+
+        EntitlementResponse.VariantLimitAndCost heart = like.variants().get("HEART");
+        assertThat(heart.memberCreditCost()).isEqualTo(1);
+        assertThat(heart.actualCreditCost()).isEqualTo(2);
+
+        EntitlementResponse.VariantLimitAndCost rose = like.variants().get("ROSE");
+        assertThat(rose.memberCreditCost()).isEqualTo(10);
+        assertThat(rose.actualCreditCost()).isEqualTo(10);
+        // variant_limits_enabled = FALSE → shared LIKE limit/usage apply to every variant
+        assertThat(rose.limit()).isEqualTo(10);
+        assertThat(rose.used()).isEqualTo(0);
+        assertThat(rose.remaining()).isEqualTo(10);
+    }
+
+    @Test
+    void getEntitlements_variantLimitsEnabled_usesVariantLimitsAndUsage() throws SQLException {
+        UUID planId = UUID.randomUUID();
+        when(billingRepo.findActiveSubscription(userId)).thenReturn(Optional.of(activeSub(planId)));
+        when(creditLotRepo.findActiveBoost(userId)).thenReturn(Collections.emptyList());
+
+        doAnswer(inv -> {
+            RowCallbackHandler handler = inv.getArgument(2);
+            handler.processRow(actionRuleRs("LIKE", 10, 1, 2, true, true));
+            return null;
+        }).when(jdbc).query(contains("variant_pricing_enabled"), anyMap(), any(RowCallbackHandler.class));
+
+        doAnswer(inv -> {
+            RowCallbackHandler handler = inv.getArgument(2);
+            handler.processRow(variantRuleRs("LIKE", "ROSE", 10, 10, 5, false));
+            return null;
+        }).when(jdbc).query(contains("ORDER BY fa.code, afv.sort_order"), anyMap(), any(RowCallbackHandler.class));
+
+        doAnswer(inv -> {
+            RowCallbackHandler handler = inv.getArgument(2);
+            handler.processRow(variantUsageRs("LIKE", "ROSE", 2));
+            return null;
+        }).when(jdbc).query(contains("uat.subscription_plan_variant_limit_and_cost_id"), anyMap(), any(RowCallbackHandler.class));
+
+        EntitlementResponse response = service.getEntitlements(userId);
+
+        EntitlementResponse.VariantLimitAndCost rose = response.limitsAndCosts().get("LIKE").variants().get("ROSE");
+        assertThat(rose).isNotNull();
+        assertThat(rose.limit()).isEqualTo(5);
+        assertThat(rose.used()).isEqualTo(2);
+        assertThat(rose.remaining()).isEqualTo(3);
+        assertThat(rose.applyCreditAfterLimit()).isFalse();
+    }
+
+    @Test
+    void getEntitlements_variantPricingDisabled_variantsMirrorActionCosts() throws SQLException {
+        UUID planId = UUID.randomUUID();
+        when(billingRepo.findActiveSubscription(userId)).thenReturn(Optional.of(activeSub(planId)));
+        when(creditLotRepo.findActiveBoost(userId)).thenReturn(Collections.emptyList());
+
+        doAnswer(inv -> {
+            RowCallbackHandler handler = inv.getArgument(2);
+            handler.processRow(actionRuleRs("LIKE", 10, 3, 4, false, false));
+            return null;
+        }).when(jdbc).query(contains("variant_pricing_enabled"), anyMap(), any(RowCallbackHandler.class));
+
+        doAnswer(inv -> {
+            RowCallbackHandler handler = inv.getArgument(2);
+            handler.processRow(variantRuleRs("LIKE", "ROSE", 10, 10, 5, false));
+            return null;
+        }).when(jdbc).query(contains("ORDER BY fa.code, afv.sort_order"), anyMap(), any(RowCallbackHandler.class));
+
+        EntitlementResponse response = service.getEntitlements(userId);
+
+        EntitlementResponse.VariantLimitAndCost rose = response.limitsAndCosts().get("LIKE").variants().get("ROSE");
+        assertThat(rose).isNotNull();
+        assertThat(rose.memberCreditCost()).isEqualTo(3);
+        assertThat(rose.actualCreditCost()).isEqualTo(4);
     }
 }

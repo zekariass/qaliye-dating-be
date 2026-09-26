@@ -58,6 +58,13 @@ public class AdminPaymentConfigRepository {
     public record PlanLimitCostRow(
             UUID id, UUID subscriptionPlanId, UUID featureActionId,
             Long memberCreditCost, Long actualCreditCost, Integer limitValue,
+            String periodType, Boolean applyCreditAfterLimit,
+            Boolean variantPricingEnabled, Boolean variantLimitsEnabled
+    ) {}
+
+    public record PlanVariantLimitCostRow(
+            UUID id, UUID subscriptionPlanId, UUID actionFeatureVariantId,
+            Long memberCreditCost, Long actualCreditCost, Integer limitValue,
             String periodType, Boolean applyCreditAfterLimit
     ) {}
 
@@ -671,7 +678,8 @@ public class AdminPaymentConfigRepository {
 
     private static final String SELECT_LIMITS = """
             SELECT id, subscription_plan_id, feature_action_id, member_credit_cost,
-                   actual_credit_cost, limit_value, period_type, apply_credit_after_limit
+                   actual_credit_cost, limit_value, period_type, apply_credit_after_limit,
+                   variant_pricing_enabled, variant_limits_enabled
             FROM subscription_plan_limit_and_cost
             ORDER BY subscription_plan_id, feature_action_id
             """;
@@ -685,13 +693,16 @@ public class AdminPaymentConfigRepository {
                 rs.getLong("actual_credit_cost"),
                 rs.getObject("limit_value") != null ? rs.getInt("limit_value") : null,
                 rs.getString("period_type"),
-                rs.getBoolean("apply_credit_after_limit")
+                rs.getBoolean("apply_credit_after_limit"),
+                rs.getBoolean("variant_pricing_enabled"),
+                rs.getBoolean("variant_limits_enabled")
         ));
     }
 
     private static final String FIND_LIMIT_BY_ID = """
             SELECT id, subscription_plan_id, feature_action_id, member_credit_cost,
-                   actual_credit_cost, limit_value, period_type, apply_credit_after_limit
+                   actual_credit_cost, limit_value, period_type, apply_credit_after_limit,
+                   variant_pricing_enabled, variant_limits_enabled
             FROM subscription_plan_limit_and_cost WHERE id = :id
             """;
 
@@ -704,23 +715,28 @@ public class AdminPaymentConfigRepository {
                 rs.getLong("actual_credit_cost"),
                 rs.getObject("limit_value") != null ? rs.getInt("limit_value") : null,
                 rs.getString("period_type"),
-                rs.getBoolean("apply_credit_after_limit")
+                rs.getBoolean("apply_credit_after_limit"),
+                rs.getBoolean("variant_pricing_enabled"),
+                rs.getBoolean("variant_limits_enabled")
         )).stream().findFirst();
     }
 
     private static final String INSERT_LIMIT = """
             INSERT INTO subscription_plan_limit_and_cost
                 (subscription_plan_id, feature_action_id, member_credit_cost, actual_credit_cost,
-                 limit_value, period_type, apply_credit_after_limit)
+                 limit_value, period_type, apply_credit_after_limit,
+                 variant_pricing_enabled, variant_limits_enabled)
             VALUES
                 (:subscriptionPlanId, :featureActionId, :memberCreditCost, :actualCreditCost,
-                 :limitValue, :periodType, :applyCreditAfterLimit)
+                 :limitValue, :periodType, :applyCreditAfterLimit,
+                 :variantPricingEnabled, :variantLimitsEnabled)
             RETURNING id
             """;
 
     public UUID createPlanLimitCost(UUID subscriptionPlanId, UUID featureActionId, long memberCreditCost,
                                      long actualCreditCost, Integer limitValue, String periodType,
-                                     Boolean applyCreditAfterLimit) {
+                                     Boolean applyCreditAfterLimit,
+                                     Boolean variantPricingEnabled, Boolean variantLimitsEnabled) {
         var params = new MapSqlParameterSource()
                 .addValue("subscriptionPlanId", subscriptionPlanId)
                 .addValue("featureActionId", featureActionId)
@@ -728,7 +744,9 @@ public class AdminPaymentConfigRepository {
                 .addValue("actualCreditCost", actualCreditCost)
                 .addValue("limitValue", limitValue)
                 .addValue("periodType", periodType != null ? periodType : "DAY")
-                .addValue("applyCreditAfterLimit", applyCreditAfterLimit != null ? applyCreditAfterLimit : false);
+                .addValue("applyCreditAfterLimit", applyCreditAfterLimit != null ? applyCreditAfterLimit : false)
+                .addValue("variantPricingEnabled", variantPricingEnabled != null ? variantPricingEnabled : false)
+                .addValue("variantLimitsEnabled", variantLimitsEnabled != null ? variantLimitsEnabled : false);
         return jdbc.queryForObject(INSERT_LIMIT, params, (rs, rn) -> rs.getObject("id", UUID.class));
     }
 
@@ -741,13 +759,16 @@ public class AdminPaymentConfigRepository {
                 limit_value = COALESCE(:limitValue, limit_value),
                 period_type = COALESCE(:periodType, period_type),
                 apply_credit_after_limit = COALESCE(:applyCreditAfterLimit, apply_credit_after_limit),
+                variant_pricing_enabled = COALESCE(:variantPricingEnabled, variant_pricing_enabled),
+                variant_limits_enabled = COALESCE(:variantLimitsEnabled, variant_limits_enabled),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = :id
             """;
 
     public int updatePlanLimitCost(UUID id, UUID subscriptionPlanId, UUID featureActionId,
                                     Long memberCreditCost, Long actualCreditCost, Integer limitValue,
-                                    String periodType, Boolean applyCreditAfterLimit) {
+                                    String periodType, Boolean applyCreditAfterLimit,
+                                    Boolean variantPricingEnabled, Boolean variantLimitsEnabled) {
         var params = new MapSqlParameterSource()
                 .addValue("id", id)
                 .addValue("subscriptionPlanId", subscriptionPlanId)
@@ -756,7 +777,9 @@ public class AdminPaymentConfigRepository {
                 .addValue("actualCreditCost", actualCreditCost)
                 .addValue("limitValue", limitValue)
                 .addValue("periodType", periodType)
-                .addValue("applyCreditAfterLimit", applyCreditAfterLimit);
+                .addValue("applyCreditAfterLimit", applyCreditAfterLimit)
+                .addValue("variantPricingEnabled", variantPricingEnabled)
+                .addValue("variantLimitsEnabled", variantLimitsEnabled);
         return jdbc.update(UPDATE_LIMIT, params);
     }
 
@@ -766,6 +789,109 @@ public class AdminPaymentConfigRepository {
 
     public int deletePlanLimitCost(UUID id) {
         return jdbc.update(DELETE_LIMIT, Map.of("id", id));
+    }
+
+    // =========================================================================
+    // subscription_plan_variant_limit_and_cost
+    // =========================================================================
+
+    private static final String SELECT_VARIANT_LIMITS = """
+            SELECT id, subscription_plan_id, action_feature_variant_id, member_credit_cost,
+                   actual_credit_cost, limit_value, period_type, apply_credit_after_limit
+            FROM subscription_plan_variant_limit_and_cost
+            ORDER BY subscription_plan_id, action_feature_variant_id
+            """;
+
+    public List<PlanVariantLimitCostRow> listPlanVariantLimitCosts() {
+        return jdbc.query(SELECT_VARIANT_LIMITS, Map.of(), (rs, rn) -> new PlanVariantLimitCostRow(
+                rs.getObject("id", UUID.class),
+                rs.getObject("subscription_plan_id", UUID.class),
+                rs.getObject("action_feature_variant_id", UUID.class),
+                rs.getLong("member_credit_cost"),
+                rs.getLong("actual_credit_cost"),
+                rs.getObject("limit_value") != null ? rs.getInt("limit_value") : null,
+                rs.getString("period_type"),
+                rs.getBoolean("apply_credit_after_limit")
+        ));
+    }
+
+    private static final String FIND_VARIANT_LIMIT_BY_ID = """
+            SELECT id, subscription_plan_id, action_feature_variant_id, member_credit_cost,
+                   actual_credit_cost, limit_value, period_type, apply_credit_after_limit
+            FROM subscription_plan_variant_limit_and_cost WHERE id = :id
+            """;
+
+    public Optional<PlanVariantLimitCostRow> findPlanVariantLimitCostById(UUID id) {
+        return jdbc.query(FIND_VARIANT_LIMIT_BY_ID, Map.of("id", id), (rs, rn) -> new PlanVariantLimitCostRow(
+                rs.getObject("id", UUID.class),
+                rs.getObject("subscription_plan_id", UUID.class),
+                rs.getObject("action_feature_variant_id", UUID.class),
+                rs.getLong("member_credit_cost"),
+                rs.getLong("actual_credit_cost"),
+                rs.getObject("limit_value") != null ? rs.getInt("limit_value") : null,
+                rs.getString("period_type"),
+                rs.getBoolean("apply_credit_after_limit")
+        )).stream().findFirst();
+    }
+
+    private static final String INSERT_VARIANT_LIMIT = """
+            INSERT INTO subscription_plan_variant_limit_and_cost
+                (subscription_plan_id, action_feature_variant_id, member_credit_cost, actual_credit_cost,
+                 limit_value, period_type, apply_credit_after_limit)
+            VALUES
+                (:subscriptionPlanId, :actionFeatureVariantId, :memberCreditCost, :actualCreditCost,
+                 :limitValue, :periodType, :applyCreditAfterLimit)
+            RETURNING id
+            """;
+
+    public UUID createPlanVariantLimitCost(UUID subscriptionPlanId, UUID actionFeatureVariantId,
+                                            long memberCreditCost, long actualCreditCost, Integer limitValue,
+                                            String periodType, Boolean applyCreditAfterLimit) {
+        var params = new MapSqlParameterSource()
+                .addValue("subscriptionPlanId", subscriptionPlanId)
+                .addValue("actionFeatureVariantId", actionFeatureVariantId)
+                .addValue("memberCreditCost", memberCreditCost)
+                .addValue("actualCreditCost", actualCreditCost)
+                .addValue("limitValue", limitValue)
+                .addValue("periodType", periodType != null ? periodType : "DAY")
+                .addValue("applyCreditAfterLimit", applyCreditAfterLimit != null ? applyCreditAfterLimit : false);
+        return jdbc.queryForObject(INSERT_VARIANT_LIMIT, params, (rs, rn) -> rs.getObject("id", UUID.class));
+    }
+
+    private static final String UPDATE_VARIANT_LIMIT = """
+            UPDATE subscription_plan_variant_limit_and_cost SET
+                subscription_plan_id = COALESCE(:subscriptionPlanId, subscription_plan_id),
+                action_feature_variant_id = COALESCE(:actionFeatureVariantId, action_feature_variant_id),
+                member_credit_cost = COALESCE(:memberCreditCost, member_credit_cost),
+                actual_credit_cost = COALESCE(:actualCreditCost, actual_credit_cost),
+                limit_value = COALESCE(:limitValue, limit_value),
+                period_type = COALESCE(:periodType, period_type),
+                apply_credit_after_limit = COALESCE(:applyCreditAfterLimit, apply_credit_after_limit),
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :id
+            """;
+
+    public int updatePlanVariantLimitCost(UUID id, UUID subscriptionPlanId, UUID actionFeatureVariantId,
+                                          Long memberCreditCost, Long actualCreditCost, Integer limitValue,
+                                          String periodType, Boolean applyCreditAfterLimit) {
+        var params = new MapSqlParameterSource()
+                .addValue("id", id)
+                .addValue("subscriptionPlanId", subscriptionPlanId)
+                .addValue("actionFeatureVariantId", actionFeatureVariantId)
+                .addValue("memberCreditCost", memberCreditCost)
+                .addValue("actualCreditCost", actualCreditCost)
+                .addValue("limitValue", limitValue)
+                .addValue("periodType", periodType)
+                .addValue("applyCreditAfterLimit", applyCreditAfterLimit);
+        return jdbc.update(UPDATE_VARIANT_LIMIT, params);
+    }
+
+    private static final String DELETE_VARIANT_LIMIT = """
+            DELETE FROM subscription_plan_variant_limit_and_cost WHERE id = :id
+            """;
+
+    public int deletePlanVariantLimitCost(UUID id) {
+        return jdbc.update(DELETE_VARIANT_LIMIT, Map.of("id", id));
     }
 
     // =========================================================================

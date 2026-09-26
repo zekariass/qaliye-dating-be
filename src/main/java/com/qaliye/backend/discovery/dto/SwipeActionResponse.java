@@ -12,5 +12,7 @@ public record SwipeActionResponse(
         Integer dailySuperLikesRemaining,
         Integer superLikeCreditsRemaining,
         java.time.Instant createdAt,
-        boolean idempotent
+        boolean idempotent,
+        String actionVariantCode,
+        LikeVariantDto actionVariant
 ) {}

@@ -103,6 +103,92 @@ public class ActionLimitRepository {
               AND subscription_plan_limit_and_cost_id = :ruleId
             """;
 
+    // ── Variant-scoped tracker (subscription_plan_variant_limit_and_cost_id) ──
+
+    private static final String FIND_ACTIVE_VARIANT_TRACKER_SQL = """
+            SELECT id, user_id, subscription_plan_limit_and_cost_id,
+                   subscription_plan_variant_limit_and_cost_id,
+                   used_count, period_start_date, period_end_date
+            FROM user_action_limits_tracker
+            WHERE user_id = :userId
+              AND subscription_plan_variant_limit_and_cost_id = :variantRuleId
+              AND period_start_date = :periodStart
+            """;
+
+    private static final String FIND_ACTIVE_VARIANT_TRACKER_FOR_UPDATE_SQL = """
+            SELECT id, user_id, subscription_plan_limit_and_cost_id,
+                   subscription_plan_variant_limit_and_cost_id,
+                   used_count, period_start_date, period_end_date
+            FROM user_action_limits_tracker
+            WHERE user_id = :userId
+              AND subscription_plan_variant_limit_and_cost_id = :variantRuleId
+              AND period_start_date = :periodStart
+            FOR UPDATE
+            """;
+
+    private static final String FIND_LATEST_VARIANT_TRACKER_SQL = """
+            SELECT id, user_id, subscription_plan_limit_and_cost_id,
+                   subscription_plan_variant_limit_and_cost_id,
+                   used_count, period_start_date, period_end_date
+            FROM user_action_limits_tracker
+            WHERE user_id = :userId
+              AND subscription_plan_variant_limit_and_cost_id = :variantRuleId
+            ORDER BY period_start_date DESC
+            LIMIT 1
+            """;
+
+    private static final String INSERT_VARIANT_TRACKER_SQL = """
+            INSERT INTO user_action_limits_tracker
+                (user_id, subscription_plan_variant_limit_and_cost_id, used_count,
+                 period_start_date, period_end_date)
+            VALUES
+                (:userId, :variantRuleId, 0, :periodStart, :periodEnd)
+            ON CONFLICT (user_id, subscription_plan_variant_limit_and_cost_id, period_start_date)
+                WHERE subscription_plan_variant_limit_and_cost_id IS NOT NULL
+                DO NOTHING
+            RETURNING id, user_id, subscription_plan_limit_and_cost_id,
+                      subscription_plan_variant_limit_and_cost_id,
+                      used_count, period_start_date, period_end_date
+            """;
+
+    public Optional<TrackerRow> findByVariant(UUID userId, UUID variantRuleId, LocalDate periodStart) {
+        var params = new MapSqlParameterSource()
+                .addValue("userId", userId)
+                .addValue("variantRuleId", variantRuleId)
+                .addValue("periodStart", periodStart);
+        return jdbc.query(FIND_ACTIVE_VARIANT_TRACKER_SQL, params, this::mapRow)
+                .stream().findFirst();
+    }
+
+    public Optional<TrackerRow> findForVariantUpdate(UUID userId, UUID variantRuleId, LocalDate periodStart) {
+        var params = new MapSqlParameterSource()
+                .addValue("userId", userId)
+                .addValue("variantRuleId", variantRuleId)
+                .addValue("periodStart", periodStart);
+        return jdbc.query(FIND_ACTIVE_VARIANT_TRACKER_FOR_UPDATE_SQL, params, this::mapRow)
+                .stream().findFirst();
+    }
+
+    public Optional<TrackerRow> findLatestByVariant(UUID userId, UUID variantRuleId) {
+        var params = new MapSqlParameterSource()
+                .addValue("userId", userId)
+                .addValue("variantRuleId", variantRuleId);
+        return jdbc.query(FIND_LATEST_VARIANT_TRACKER_SQL, params, this::mapRow)
+                .stream().findFirst();
+    }
+
+    public Optional<TrackerRow> ensureExistsForVariant(UUID userId, UUID variantRuleId,
+                                                        LocalDate periodStart, LocalDate periodEnd) {
+        var params = new MapSqlParameterSource()
+                .addValue("userId", userId)
+                .addValue("variantRuleId", variantRuleId)
+                .addValue("periodStart", periodStart)
+                .addValue("periodEnd", periodEnd);
+        List<TrackerRow> rows = jdbc.query(INSERT_VARIANT_TRACKER_SQL, params, this::mapRow);
+        if (!rows.isEmpty()) return Optional.of(rows.get(0));
+        return findByVariant(userId, variantRuleId, periodStart);
+    }
+
     public Optional<TrackerRow> findForUpdate(UUID userId, UUID ruleId, LocalDate periodStart) {
         var params = new MapSqlParameterSource()
                 .addValue("userId", userId)

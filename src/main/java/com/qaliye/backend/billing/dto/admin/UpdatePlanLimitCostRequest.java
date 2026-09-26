@@ -9,5 +9,7 @@ public record UpdatePlanLimitCostRequest(
         Long actualCreditCost,
         Integer limitValue,
         String periodType,
-        Boolean applyCreditAfterLimit
+        Boolean applyCreditAfterLimit,
+        Boolean variantPricingEnabled,
+        Boolean variantLimitsEnabled
 ) {}

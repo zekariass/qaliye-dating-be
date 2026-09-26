@@ -1,6 +1,7 @@
 package com.qaliye.backend.discovery.controller;
 
 import com.qaliye.backend.discovery.dto.DiscoveryProfilesResponse;
+import com.qaliye.backend.discovery.dto.LikeActionsResponse;
 import com.qaliye.backend.discovery.dto.RevisitPassesResponse;
 import com.qaliye.backend.discovery.dto.RevealResponse;
 import com.qaliye.backend.discovery.dto.RewindResponse;
@@ -14,6 +15,7 @@ import com.qaliye.backend.discovery.exception.ActionLimitExceededException;
 import com.qaliye.backend.discovery.exception.SelfActionException;
 import com.qaliye.backend.discovery.service.DiscoveryFeedService;
 import com.qaliye.backend.discovery.service.DiscoveryQueryService;
+import com.qaliye.backend.discovery.service.LikeVariantService;
 import com.qaliye.backend.discovery.service.RevisitPassesService;
 import com.qaliye.backend.discovery.service.RevealService;
 import com.qaliye.backend.discovery.service.RewindService;
@@ -49,6 +51,7 @@ public class DiscoveryProfilesController {
     private final DiscoveryQueryService queryService;
     private final RevisitPassesService revisitPassesService;
     private final SuperMessageService superMessageService;
+    private final LikeVariantService likeVariantService;
 
     public DiscoveryProfilesController(DiscoveryFeedService feedService,
                                         SwipeActionService swipeService,
@@ -56,7 +59,8 @@ public class DiscoveryProfilesController {
                                         RevealService revealService,
                                         DiscoveryQueryService queryService,
                                         RevisitPassesService revisitPassesService,
-                                        SuperMessageService superMessageService) {
+                                        SuperMessageService superMessageService,
+                                        LikeVariantService likeVariantService) {
         this.feedService = feedService;
         this.swipeService = swipeService;
         this.rewindService = rewindService;
@@ -64,6 +68,7 @@ public class DiscoveryProfilesController {
         this.queryService = queryService;
         this.revisitPassesService = revisitPassesService;
         this.superMessageService = superMessageService;
+        this.likeVariantService = likeVariantService;
     }
 
     @GetMapping("/profiles")
@@ -81,7 +86,7 @@ public class DiscoveryProfilesController {
         UUID actorId = requireActorId(jwt);
         checkSelfAction(actorId, req.targetUserId());
         checkActorEligibility(actorId);
-        return swipeService.recordLike(actorId, req.targetUserId(), req.clientActionId());
+        return swipeService.recordLike(actorId, req.targetUserId(), req.clientActionId(), req.actionVariantCode());
     }
 
     @PostMapping("/actions/pass")
@@ -91,6 +96,7 @@ public class DiscoveryProfilesController {
         UUID actorId = requireActorId(jwt);
         checkSelfAction(actorId, req.targetUserId());
         checkActorEligibility(actorId);
+        checkNoVariantCode(req.actionVariantCode());
         return swipeService.recordPass(actorId, req.targetUserId(), req.clientActionId());
     }
 
@@ -101,6 +107,7 @@ public class DiscoveryProfilesController {
         UUID actorId = requireActorId(jwt);
         checkSelfAction(actorId, req.targetUserId());
         checkActorEligibility(actorId);
+        checkNoVariantCode(req.actionVariantCode());
         return swipeService.recordSuperLike(actorId, req.targetUserId(), req.clientActionId());
     }
 
@@ -190,9 +197,22 @@ public class DiscoveryProfilesController {
         return superMessageService.pass(actorId, messageId);
     }
 
+    @GetMapping("/like-actions")
+    public LikeActionsResponse getLikeActions(@AuthenticationPrincipal Jwt jwt) {
+        UUID actorId = requireActorId(jwt);
+        return likeVariantService.getAvailableLikeActions(actorId);
+    }
+
     private void checkSelfAction(UUID actorId, UUID targetId) {
         if (actorId.equals(targetId)) {
             throw new SelfActionException();
+        }
+    }
+
+    private void checkNoVariantCode(String actionVariantCode) {
+        if (actionVariantCode != null && !actionVariantCode.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "actionVariantCode is only supported for LIKE actions.");
         }
     }
 

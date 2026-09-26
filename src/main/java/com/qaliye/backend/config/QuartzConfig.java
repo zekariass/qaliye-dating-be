@@ -1,6 +1,7 @@
 package com.qaliye.backend.config;
 
 import com.qaliye.backend.billing.worker.PromotionRedemptionCleanupWorker;
+import com.qaliye.backend.blinddate.worker.BlindDateExpiryWorker;
 import com.qaliye.backend.moderation.MessageModerationJob;
 import com.qaliye.backend.moderation.ModerationRetryWorker;
 import com.qaliye.backend.notifications.worker.CampaignFanoutWorker;
@@ -219,6 +220,25 @@ public class QuartzConfig {
                 .withIdentity("promotionCleanupTrigger")
                 .withSchedule(SimpleScheduleBuilder.simpleSchedule()
                         .withIntervalInHours(1)
+                        .repeatForever())
+                .build();
+    }
+
+    @Bean
+    public JobDetail blindDateExpiryJobDetail() {
+        return JobBuilder.newJob(BlindDateExpiryWorker.class)
+                .withIdentity("blindDateExpiryJob")
+                .storeDurably()
+                .build();
+    }
+
+    @Bean
+    public Trigger blindDateExpiryTrigger(JobDetail blindDateExpiryJobDetail) {
+        return TriggerBuilder.newTrigger()
+                .forJob(blindDateExpiryJobDetail)
+                .withIdentity("blindDateExpiryTrigger")
+                .withSchedule(SimpleScheduleBuilder.simpleSchedule()
+                        .withIntervalInMinutes(1)
                         .repeatForever())
                 .build();
     }

@@ -232,7 +232,7 @@ public class AdminPaymentConfigService {
         enforceAdmin(adminId);
         UUID id = repo.createPlanLimitCost(req.subscriptionPlanId(), req.featureActionId(),
                 req.memberCreditCost(), req.actualCreditCost(), req.limitValue(), req.periodType(),
-                req.applyCreditAfterLimit());
+                req.applyCreditAfterLimit(), req.variantPricingEnabled(), req.variantLimitsEnabled());
         return repo.findPlanLimitCostById(id).orElseThrow();
     }
 
@@ -240,7 +240,7 @@ public class AdminPaymentConfigService {
         enforceAdmin(adminId);
         int rows = repo.updatePlanLimitCost(id, req.subscriptionPlanId(), req.featureActionId(),
                 req.memberCreditCost(), req.actualCreditCost(), req.limitValue(), req.periodType(),
-                req.applyCreditAfterLimit());
+                req.applyCreditAfterLimit(), req.variantPricingEnabled(), req.variantLimitsEnabled());
         if (rows == 0) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "plan_limit_cost_not_found");
         return repo.findPlanLimitCostById(id).orElseThrow();
     }
@@ -249,6 +249,44 @@ public class AdminPaymentConfigService {
         enforceAdmin(adminId);
         int rows = repo.deletePlanLimitCost(id);
         if (rows == 0) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "plan_limit_cost_not_found");
+    }
+
+    // =========================================================================
+    // subscription_plan_variant_limit_and_cost
+    // =========================================================================
+
+    public List<PlanVariantLimitCostRow> listPlanVariantLimitCosts(UUID adminId) {
+        enforceAdmin(adminId);
+        return repo.listPlanVariantLimitCosts();
+    }
+
+    public PlanVariantLimitCostRow getPlanVariantLimitCost(UUID adminId, UUID id) {
+        enforceAdmin(adminId);
+        return repo.findPlanVariantLimitCostById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "plan_variant_limit_cost_not_found"));
+    }
+
+    public PlanVariantLimitCostRow createPlanVariantLimitCost(UUID adminId, CreatePlanVariantLimitCostRequest req) {
+        enforceAdmin(adminId);
+        UUID id = repo.createPlanVariantLimitCost(req.subscriptionPlanId(), req.actionFeatureVariantId(),
+                req.memberCreditCost(), req.actualCreditCost(), req.limitValue(), req.periodType(),
+                req.applyCreditAfterLimit());
+        return repo.findPlanVariantLimitCostById(id).orElseThrow();
+    }
+
+    public PlanVariantLimitCostRow updatePlanVariantLimitCost(UUID adminId, UUID id, UpdatePlanVariantLimitCostRequest req) {
+        enforceAdmin(adminId);
+        int rows = repo.updatePlanVariantLimitCost(id, req.subscriptionPlanId(), req.actionFeatureVariantId(),
+                req.memberCreditCost(), req.actualCreditCost(), req.limitValue(), req.periodType(),
+                req.applyCreditAfterLimit());
+        if (rows == 0) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "plan_variant_limit_cost_not_found");
+        return repo.findPlanVariantLimitCostById(id).orElseThrow();
+    }
+
+    public void deletePlanVariantLimitCost(UUID adminId, UUID id) {
+        enforceAdmin(adminId);
+        int rows = repo.deletePlanVariantLimitCost(id);
+        if (rows == 0) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "plan_variant_limit_cost_not_found");
     }
 
     // =========================================================================

@@ -19,17 +19,19 @@ public class DiscoveryActionRepository {
 
     public record ActionRow(UUID id, UUID actorUserId, UUID targetUserId,
                             String actionType, String status, UUID clientActionId,
-                            OffsetDateTime createdAt) {}
+                            OffsetDateTime createdAt, String actionVariantCode) {}
 
     private static final String FIND_BY_CLIENT_ACTION_ID = """
-            SELECT id, actor_user_id, target_user_id, action_type, status, client_action_id, created_at
+            SELECT id, actor_user_id, target_user_id, action_type, status, client_action_id,
+                   created_at, action_variant_code
             FROM user_discovery_actions
             WHERE actor_user_id = :actorId
               AND client_action_id = :clientActionId
             """;
 
     private static final String FIND_ACTIVE_BY_PAIR = """
-            SELECT id, actor_user_id, target_user_id, action_type, status, client_action_id, created_at
+            SELECT id, actor_user_id, target_user_id, action_type, status, client_action_id,
+                   created_at, action_variant_code
             FROM user_discovery_actions
             WHERE actor_user_id = :actorId
               AND target_user_id = :targetId
@@ -37,7 +39,8 @@ public class DiscoveryActionRepository {
             """;
 
     private static final String FIND_LAST_REWINDABLE = """
-            SELECT id, actor_user_id, target_user_id, action_type, status, client_action_id, created_at
+            SELECT id, actor_user_id, target_user_id, action_type, status, client_action_id,
+                   created_at, action_variant_code
             FROM user_discovery_actions
             WHERE actor_user_id = :actorId
               AND status = 'ACTIVE'
@@ -48,10 +51,11 @@ public class DiscoveryActionRepository {
 
     private static final String INSERT_ACTION = """
             INSERT INTO user_discovery_actions
-                (actor_user_id, target_user_id, action_type, status, client_action_id)
+                (actor_user_id, target_user_id, action_type, status, client_action_id, action_variant_code)
             VALUES
-                (:actorId, :targetId, :actionType, 'ACTIVE', :clientActionId)
-            RETURNING id, actor_user_id, target_user_id, action_type, status, client_action_id, created_at
+                (:actorId, :targetId, :actionType, 'ACTIVE', :clientActionId, :actionVariantCode)
+            RETURNING id, actor_user_id, target_user_id, action_type, status, client_action_id,
+                      created_at, action_variant_code
             """;
 
     private static final String REVERSE_ACTION_SQL = """
@@ -74,7 +78,8 @@ public class DiscoveryActionRepository {
             """;
 
     private static final String FIND_MUTUAL_ACTIVE_LIKE = """
-            SELECT id, actor_user_id, target_user_id, action_type, status, client_action_id, created_at
+            SELECT id, actor_user_id, target_user_id, action_type, status, client_action_id,
+                   created_at, action_variant_code
             FROM user_discovery_actions
             WHERE actor_user_id = :targetId
               AND target_user_id = :actorId
@@ -109,11 +114,17 @@ public class DiscoveryActionRepository {
     }
 
     public ActionRow insertAction(UUID actorId, UUID targetId, String actionType, UUID clientActionId) {
+        return insertAction(actorId, targetId, actionType, clientActionId, null);
+    }
+
+    public ActionRow insertAction(UUID actorId, UUID targetId, String actionType, UUID clientActionId,
+                                   String actionVariantCode) {
         var params = new MapSqlParameterSource()
                 .addValue("actorId", actorId)
                 .addValue("targetId", targetId)
                 .addValue("actionType", actionType)
-                .addValue("clientActionId", clientActionId);
+                .addValue("clientActionId", clientActionId)
+                .addValue("actionVariantCode", actionVariantCode);
         ActionRow row = jdbc.query(INSERT_ACTION, params, rs -> {
             if (!rs.next()) return null;
             return mapRow(rs, 0);
@@ -150,7 +161,8 @@ public class DiscoveryActionRepository {
                 rs.getString("action_type"),
                 rs.getString("status"),
                 rs.getObject("client_action_id", UUID.class),
-                createdAt
+                createdAt,
+                rs.getString("action_variant_code")
         );
     }
 }

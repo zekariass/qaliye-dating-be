@@ -9,7 +9,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Map;
@@ -29,6 +31,17 @@ public class GlobalExceptionHandler {
                 .map(f -> f.getField() + ": " + f.getDefaultMessage())
                 .collect(Collectors.joining(", "));
         return error(400, "VALIDATION_ERROR", message);
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<Map<String, Object>> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        return error(400, "INVALID_PARAMETER",
+                "Invalid value for parameter '" + ex.getName() + "'.");
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> handleNoResource(NoResourceFoundException ex) {
+        return error(404, "NOT_FOUND", "The requested resource was not found.");
     }
 
     @ExceptionHandler(DataIntegrityViolationException.class)

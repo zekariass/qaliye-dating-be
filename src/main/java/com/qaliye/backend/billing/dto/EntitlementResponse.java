@@ -52,6 +52,20 @@ public record EntitlementResponse(
             long memberCreditCost,
             long actualCreditCost,
             String periodType,
+            boolean applyCreditAfterLimit,
+            boolean variantPricingEnabled,
+            boolean variantLimitsEnabled,
+            Map<String, VariantLimitAndCost> variants
+    ) {}
+
+    public record VariantLimitAndCost(
+            int used,
+            Integer limit,
+            Integer remaining,
+            Instant resetsAt,
+            long memberCreditCost,
+            long actualCreditCost,
+            String periodType,
             boolean applyCreditAfterLimit
     ) {}
 }

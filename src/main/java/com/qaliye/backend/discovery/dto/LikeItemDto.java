@@ -19,5 +19,7 @@ public record LikeItemDto(
         String region,
         String countryName,
         ActivityStatus activityStatus,
-        Instant revealedAt
+        Instant revealedAt,
+        String actionVariantCode,
+        LikeVariantDto actionVariant
 ) {}

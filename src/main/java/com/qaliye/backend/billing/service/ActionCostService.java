@@ -291,6 +291,270 @@ public class ActionCostService {
         return results.get(0);
     }
 
+    // ── Variant-aware evaluation (LIKE variants: HEART, ROSE, BUNA, ...) ──────
+
+    /**
+     * Result of evaluating the cost/limit of a variant action (e.g. LIKE + ROSE).
+     *
+     * @param trackerRuleId       ID used for usage tracking — either the action-level
+     *                            subscription_plan_limit_and_cost row id, or the
+     *                            variant-level subscription_plan_variant_limit_and_cost
+     *                            row id, depending on {@code variantScopedLimit}.
+     * @param variantScopedLimit  Whether {@code trackerRuleId} refers to a variant-level
+     *                            rule (tracked via ActionLimitRepository's variant methods)
+     *                            rather than the shared action-level rule.
+     */
+    public record VariantCostResult(
+            UUID trackerRuleId,
+            boolean variantScopedLimit,
+            long creditCost,
+            boolean allowanceAvailable,
+            boolean allowanceExhausted,
+            boolean actionBlocked,
+            LocalDate periodStart,
+            LocalDate periodEnd,
+            int currentUsedCount,
+            Integer limitValue,
+            String periodType
+    ) {
+        public boolean requiresCredits() { return creditCost > 0; }
+        public boolean isBlocked() { return actionBlocked; }
+    }
+
+    /**
+     * Thrown when an action's plan configuration enables variant pricing and/or
+     * variant limits ({@code variant_pricing_enabled} / {@code variant_limits_enabled})
+     * but no corresponding {@code subscription_plan_variant_limit_and_cost} row exists
+     * for the resolved plan + variant. Fails safe rather than silently defaulting to
+     * a free or unlimited action.
+     */
+    public static class VariantPricingNotConfiguredException extends RuntimeException {
+        public VariantPricingNotConfiguredException(String message) {
+            super(message);
+        }
+    }
+
+    private record ResolvedActionRule(
+            UUID ruleId, long memberCost, long actualCost, Integer limitValue, String periodType,
+            boolean applyAfter, boolean variantPricingEnabled, boolean variantLimitsEnabled,
+            UUID planId, Object subPeriodStart, Object subPeriodEnd
+    ) {}
+
+    private record ResolvedVariantRule(
+            UUID variantRuleId, long memberCost, long actualCost, Integer limitValue,
+            String periodType, boolean applyAfter
+    ) {}
+
+    private static final String RESOLVE_ACTION_RULE_WITH_VARIANT_FLAGS_SQL = """
+            WITH effective_plan AS (
+                SELECT sp.id AS plan_id, sp.plan_kind
+                FROM user_subscriptions us
+                JOIN subscription_plans sp ON sp.id = us.plan_id
+                WHERE us.user_id = :userId
+                  AND us.status IN ('ACTIVE', 'PENDING_VERIFICATION')
+                  AND sp.is_active = TRUE
+                ORDER BY CASE sp.plan_kind WHEN 'PAID' THEN 0 ELSE 1 END
+                LIMIT 1
+            ),
+            free_plan AS (
+                SELECT id AS plan_id, plan_kind
+                FROM subscription_plans
+                WHERE plan_code = 'FREE' AND country_code = 'GLOBAL' AND is_active = TRUE
+                LIMIT 1
+            ),
+            resolved_plan AS (
+                SELECT * FROM effective_plan
+                UNION ALL
+                SELECT * FROM free_plan
+                WHERE NOT EXISTS (SELECT 1 FROM effective_plan)
+                LIMIT 1
+            )
+            SELECT splac.id AS rule_id,
+                   splac.member_credit_cost,
+                   splac.actual_credit_cost,
+                   splac.limit_value,
+                   splac.period_type,
+                   splac.apply_credit_after_limit,
+                   splac.variant_pricing_enabled,
+                   splac.variant_limits_enabled,
+                   rp.plan_id,
+                   us.current_period_start,
+                   us.current_period_end
+            FROM resolved_plan rp
+            JOIN subscription_plan_limit_and_cost splac
+                ON splac.subscription_plan_id = rp.plan_id
+            JOIN feature_actions fa ON fa.id = splac.feature_action_id
+            LEFT JOIN user_subscriptions us
+                ON us.user_id = :userId
+               AND us.status IN ('ACTIVE', 'PENDING_VERIFICATION')
+               AND us.plan_id = rp.plan_id
+            WHERE fa.code = :actionCode
+            LIMIT 1
+            """;
+
+    private static final String RESOLVE_VARIANT_RULE_SQL = """
+            SELECT id AS variant_rule_id, member_credit_cost, actual_credit_cost,
+                   limit_value, period_type, apply_credit_after_limit
+            FROM subscription_plan_variant_limit_and_cost
+            WHERE subscription_plan_id = :planId
+              AND action_feature_variant_id = :variantId
+            LIMIT 1
+            """;
+
+    private ResolvedActionRule resolveActionRuleWithFlags(UUID userId, String actionCode) {
+        var params = new MapSqlParameterSource()
+                .addValue("userId", userId)
+                .addValue("actionCode", actionCode);
+        List<ResolvedActionRule> results = jdbc.query(RESOLVE_ACTION_RULE_WITH_VARIANT_FLAGS_SQL, params, (rs, rn) -> {
+            UUID ruleId            = rs.getObject("rule_id", UUID.class);
+            long memberCost        = rs.getLong("member_credit_cost");
+            boolean memberWasNull  = rs.wasNull();
+            long actualCost        = rs.getLong("actual_credit_cost");
+            boolean actualWasNull  = rs.wasNull();
+            Object limitValObj     = rs.getObject("limit_value");
+            Integer limitValue     = limitValObj != null ? ((Number) limitValObj).intValue() : null;
+            String periodType      = rs.getString("period_type");
+            boolean applyAfter     = rs.getBoolean("apply_credit_after_limit");
+            boolean variantPricing = rs.getBoolean("variant_pricing_enabled");
+            boolean variantLimits  = rs.getBoolean("variant_limits_enabled");
+            UUID planId            = rs.getObject("plan_id", UUID.class);
+            Object subPeriodStart  = rs.getObject("current_period_start");
+            Object subPeriodEnd    = rs.getObject("current_period_end");
+
+            if (memberWasNull && actualWasNull) {
+                memberCost = 0;
+                actualCost = 0;
+            } else if (memberWasNull) {
+                memberCost = actualCost;
+            } else if (actualWasNull) {
+                actualCost = memberCost;
+            }
+
+            return new ResolvedActionRule(ruleId, memberCost, actualCost, limitValue, periodType,
+                    applyAfter, variantPricing, variantLimits, planId, subPeriodStart, subPeriodEnd);
+        });
+        return results.isEmpty() ? null : results.get(0);
+    }
+
+    private ResolvedVariantRule resolveVariantRule(UUID planId, UUID variantId) {
+        var params = new MapSqlParameterSource()
+                .addValue("planId", planId)
+                .addValue("variantId", variantId);
+        List<ResolvedVariantRule> results = jdbc.query(RESOLVE_VARIANT_RULE_SQL, params, (rs, rn) -> {
+            UUID variantRuleId    = rs.getObject("variant_rule_id", UUID.class);
+            long memberCost       = rs.getLong("member_credit_cost");
+            boolean memberWasNull = rs.wasNull();
+            long actualCost       = rs.getLong("actual_credit_cost");
+            boolean actualWasNull = rs.wasNull();
+            Object limitValObj    = rs.getObject("limit_value");
+            Integer limitValue    = limitValObj != null ? ((Number) limitValObj).intValue() : null;
+            String periodType     = rs.getString("period_type");
+            boolean applyAfter    = rs.getBoolean("apply_credit_after_limit");
+
+            if (memberWasNull && actualWasNull) {
+                memberCost = 0;
+                actualCost = 0;
+            } else if (memberWasNull) {
+                memberCost = actualCost;
+            } else if (actualWasNull) {
+                actualCost = memberCost;
+            }
+
+            return new ResolvedVariantRule(variantRuleId, memberCost, actualCost, limitValue, periodType, applyAfter);
+        });
+        return results.isEmpty() ? null : results.get(0);
+    }
+
+    /**
+     * Evaluates the cost/limit of a variant action (e.g. LIKE + ROSE) for a user.
+     * <p>
+     * Resolves the action-level rule (subscription_plan_limit_and_cost) for
+     * {@code actionCode} first. If that rule has {@code variant_pricing_enabled}
+     * and/or {@code variant_limits_enabled}, the corresponding values are instead
+     * resolved from subscription_plan_variant_limit_and_cost for {@code variantId}.
+     * Fails with {@link VariantPricingNotConfiguredException} rather than silently
+     * defaulting to free/unlimited when a required variant configuration is missing.
+     */
+    public VariantCostResult evaluateVariant(UUID userId, String actionCode, UUID variantId) {
+        ResolvedActionRule actionRule = resolveActionRuleWithFlags(userId, actionCode);
+        if (actionRule == null) {
+            log.warn("No plan rule configured for user={} action={}; defaulting free", userId, actionCode);
+            LocalDate today = LocalDate.now();
+            return new VariantCostResult(null, false, 0, true, false, false,
+                    today, today, 0, null, "DAY");
+        }
+
+        long memberCost           = actionRule.memberCost();
+        long actualCost           = actionRule.actualCost();
+        Integer limitValue        = actionRule.limitValue();
+        String periodType         = actionRule.periodType();
+        boolean applyAfter        = actionRule.applyAfter();
+        UUID trackerRuleId        = actionRule.ruleId();
+        boolean variantScopedLimit = false;
+
+        if (actionRule.variantPricingEnabled() || actionRule.variantLimitsEnabled()) {
+            ResolvedVariantRule variantRule = resolveVariantRule(actionRule.planId(), variantId);
+            if (variantRule == null) {
+                throw new VariantPricingNotConfiguredException(
+                        "No pricing/limit configuration found for variant " + variantId
+                                + " on plan " + actionRule.planId() + " for action " + actionCode);
+            }
+            if (actionRule.variantPricingEnabled()) {
+                memberCost = variantRule.memberCost();
+                actualCost = variantRule.actualCost();
+            }
+            if (actionRule.variantLimitsEnabled()) {
+                limitValue = variantRule.limitValue();
+                periodType = variantRule.periodType();
+                applyAfter = variantRule.applyAfter();
+                trackerRuleId = variantRule.variantRuleId();
+                variantScopedLimit = true;
+            }
+        }
+
+        LocalDate[] period = resolvePeriod(periodType, actionRule.subPeriodStart(), actionRule.subPeriodEnd());
+        LocalDate periodStart = period[0];
+        LocalDate periodEnd   = period[1];
+
+        if (limitValue == null) {
+            return new VariantCostResult(trackerRuleId, variantScopedLimit, memberCost, true, false, false,
+                    periodStart, periodEnd, 0, null, periodType);
+        }
+
+        Optional<ActionLimitRepository.TrackerRow> tracker = variantScopedLimit
+                ? limitRepo.findByVariant(userId, trackerRuleId, periodStart)
+                : limitRepo.find(userId, trackerRuleId, periodStart);
+        int usedCount = tracker.map(ActionLimitRepository.TrackerRow::usedCount).orElse(0);
+
+        if (tracker.isEmpty()) {
+            Optional<ActionLimitRepository.TrackerRow> latest = variantScopedLimit
+                    ? limitRepo.findLatestByVariant(userId, trackerRuleId)
+                    : limitRepo.findLatest(userId, trackerRuleId);
+            if (latest.isPresent()) {
+                ActionLimitRepository.TrackerRow row = latest.get();
+                LocalDate today = LocalDate.now();
+                if (row.periodEndDate() != null && !today.isAfter(row.periodEndDate())) {
+                    usedCount = row.usedCount();
+                }
+            }
+        }
+
+        boolean allowanceAvailable = usedCount < limitValue;
+
+        if (allowanceAvailable) {
+            return new VariantCostResult(trackerRuleId, variantScopedLimit, memberCost, true, false, false,
+                    periodStart, periodEnd, usedCount, limitValue, periodType);
+        }
+
+        if (!applyAfter) {
+            return new VariantCostResult(trackerRuleId, variantScopedLimit, 0, false, true, true,
+                    periodStart, periodEnd, usedCount, limitValue, periodType);
+        }
+
+        return new VariantCostResult(trackerRuleId, variantScopedLimit, actualCost, false, true, false,
+                periodStart, periodEnd, usedCount, limitValue, periodType);
+    }
+
     private LocalDate[] resolvePeriod(String periodType, Object subPeriodStart, Object subPeriodEnd) {
         LocalDate today = LocalDate.now();
 

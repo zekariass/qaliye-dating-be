@@ -479,7 +479,7 @@ Push notifications sent to devices follow the Expo push message format. The `dat
 | Chat message | `CHAT_MESSAGE` | `match_id`, `message_id` |
 | New match | `MATCH_CREATED` | `match_id` |
 | Like received | `LIKE_RECEIVED` | `discovery_action_id` |
-| Account alert | `ACCOUNT_ALERT` | none |
+| Account alert | `ACCOUNT_ALERT` | `alert_code`; also `session_id` for `BLIND_DATE_*` alerts |
 | Marketing | `MARKETING` | `campaign_id` |
 
 **Default titles and bodies by type:**

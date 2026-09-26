@@ -1,11 +1,14 @@
 package com.qaliye.backend.discovery.service;
 
+import com.qaliye.backend.billing.repository.ActionFeatureVariantRepository;
 import com.qaliye.backend.billing.repository.ActionLimitRepository;
 import com.qaliye.backend.billing.service.ActionCostService;
 import com.qaliye.backend.billing.service.CreditService;
+import com.qaliye.backend.discovery.dto.LikeVariantDto;
 import com.qaliye.backend.discovery.dto.MatchSummaryDto;
 import com.qaliye.backend.discovery.dto.SwipeActionResponse;
 import com.qaliye.backend.discovery.exception.ActionLimitExceededException;
+import com.qaliye.backend.discovery.exception.InvalidLikeVariantException;
 import com.qaliye.backend.discovery.exception.TargetIneligibleException;
 import com.qaliye.backend.discovery.repository.DiscoveryActionRepository;
 import com.qaliye.backend.chat.service.MatchLifecycleService;
@@ -25,6 +28,7 @@ public class SwipeActionService {
     private final DiscoveryActionRepository actionRepo;
     private final ActionCostService actionCostService;
     private final ActionLimitRepository actionLimitRepo;
+    private final ActionFeatureVariantRepository variantRepo;
     private final CreditService creditService;
     private final MatchService matchService;
     private final NotificationDispatcher notificationDispatcher;
@@ -34,6 +38,7 @@ public class SwipeActionService {
     public SwipeActionService(DiscoveryActionRepository actionRepo,
                                ActionCostService actionCostService,
                                ActionLimitRepository actionLimitRepo,
+                               ActionFeatureVariantRepository variantRepo,
                                CreditService creditService,
                                MatchService matchService,
                                NotificationDispatcher notificationDispatcher,
@@ -42,6 +47,7 @@ public class SwipeActionService {
         this.actionRepo = actionRepo;
         this.actionCostService = actionCostService;
         this.actionLimitRepo = actionLimitRepo;
+        this.variantRepo = variantRepo;
         this.creditService = creditService;
         this.matchService = matchService;
         this.notificationDispatcher = notificationDispatcher;
@@ -81,12 +87,14 @@ public class SwipeActionService {
             """;
 
     @Transactional
-    public SwipeActionResponse recordLike(UUID actorId, UUID targetId, UUID clientActionId) {
+    public SwipeActionResponse recordLike(UUID actorId, UUID targetId, UUID clientActionId, String actionVariantCode) {
         Optional<DiscoveryActionRepository.ActionRow> idempotent =
                 actionRepo.findByClientActionId(actorId, clientActionId);
         if (idempotent.isPresent()) {
             return buildIdempotentResponse(idempotent.get(), actorId, "LIKE");
         }
+
+        ActionFeatureVariantRepository.VariantRow variant = resolveActiveLikeVariant(actionVariantCode);
 
         checkTargetEligibility(actorId, targetId);
 
@@ -99,23 +107,29 @@ public class SwipeActionService {
             reverseExistingAction(existingAction.get(), actorId);
         }
 
-        ActionCostService.ActionCostResult cost = actionCostService.evaluate(actorId, "LIKE");
+        ActionCostService.VariantCostResult cost = actionCostService.evaluateVariant(actorId, "LIKE", variant.id());
         if (cost.isBlocked()) {
             throw new ActionLimitExceededException("LIKES", cost.periodType());
         }
 
         if (cost.requiresCredits()) {
             String idemKey = "like-" + clientActionId;
-            creditService.consumeCredits(actorId, cost.creditCost(), "LIKE", idemKey);
+            creditService.consumeCredits(actorId, cost.creditCost(), variant.code(), idemKey);
         }
 
         DiscoveryActionRepository.ActionRow action =
-                actionRepo.insertAction(actorId, targetId, "LIKE", clientActionId);
+                actionRepo.insertAction(actorId, targetId, "LIKE", clientActionId, variant.code());
 
-        if (cost.ruleId() != null && cost.limitValue() != null) {
-            actionLimitRepo.ensureExists(actorId, cost.ruleId(), cost.periodStart(), cost.periodEnd());
-            actionLimitRepo.findForUpdate(actorId, cost.ruleId(), cost.periodStart())
-                    .ifPresent(t -> actionLimitRepo.increment(t.id()));
+        if (cost.trackerRuleId() != null && cost.limitValue() != null) {
+            if (cost.variantScopedLimit()) {
+                actionLimitRepo.ensureExistsForVariant(actorId, cost.trackerRuleId(), cost.periodStart(), cost.periodEnd());
+                actionLimitRepo.findForVariantUpdate(actorId, cost.trackerRuleId(), cost.periodStart())
+                        .ifPresent(t -> actionLimitRepo.increment(t.id()));
+            } else {
+                actionLimitRepo.ensureExists(actorId, cost.trackerRuleId(), cost.periodStart(), cost.periodEnd());
+                actionLimitRepo.findForUpdate(actorId, cost.trackerRuleId(), cost.periodStart())
+                        .ifPresent(t -> actionLimitRepo.increment(t.id()));
+            }
         }
 
         notificationDispatcher.dispatchLikeNotification(actorId, targetId, action.id());
@@ -140,8 +154,27 @@ public class SwipeActionService {
                 action.id(), "LIKE", "ACTIVE",
                 match.isPresent(), match.orElse(null),
                 likesRemaining, null, null,
-                createdAt, false
+                createdAt, false,
+                variant.code(), toVariantDto(variant)
         );
+    }
+
+    private ActionFeatureVariantRepository.VariantRow resolveActiveLikeVariant(String actionVariantCode) {
+        if (actionVariantCode == null || actionVariantCode.isBlank()) {
+            throw InvalidLikeVariantException.missing();
+        }
+        ActionFeatureVariantRepository.VariantRow variant = variantRepo
+                .findByActionCodeAndVariantCode("LIKE", actionVariantCode)
+                .orElseThrow(() -> InvalidLikeVariantException.unknown(actionVariantCode));
+        if (!variant.active()) {
+            throw InvalidLikeVariantException.inactive(actionVariantCode);
+        }
+        return variant;
+    }
+
+    private LikeVariantDto toVariantDto(ActionFeatureVariantRepository.VariantRow variant) {
+        if (variant == null) return null;
+        return new LikeVariantDto(variant.code(), variant.name(), variant.description(), variant.icon());
     }
 
     @Transactional
@@ -170,7 +203,8 @@ public class SwipeActionService {
         return new SwipeActionResponse(
                 action.id(), "PASS", "ACTIVE",
                 false, null, null, null, null,
-                createdAt, false
+                createdAt, false,
+                null, null
         );
     }
 
@@ -236,7 +270,8 @@ public class SwipeActionService {
                 action.id(), "SUPERLIKE", "ACTIVE",
                 match.isPresent(), match.orElse(null),
                 null, superLikesRemaining, (int) creditBalance,
-                createdAt, false
+                createdAt, false,
+                null, null
         );
     }
 
@@ -297,10 +332,17 @@ public class SwipeActionService {
                     .map(mr -> matchService.buildMatchSummaryFromRow(mr, actorId))
                     .orElse(null);
         }
+        LikeVariantDto variantDto = null;
+        if ("LIKE".equals(existing.actionType()) && existing.actionVariantCode() != null) {
+            variantDto = variantRepo.findByActionCodeAndVariantCode("LIKE", existing.actionVariantCode())
+                    .map(this::toVariantDto)
+                    .orElse(null);
+        }
         return new SwipeActionResponse(
                 existing.id(), existing.actionType(), "ACTIVE",
                 matchSummary != null, matchSummary, null, null, null,
-                createdAt, true
+                createdAt, true,
+                existing.actionVariantCode(), variantDto
         );
     }
 
