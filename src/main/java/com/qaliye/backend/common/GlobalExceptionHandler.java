@@ -91,7 +91,8 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGeneric(Exception ex) {
         org.slf4j.LoggerFactory.getLogger(GlobalExceptionHandler.class)
-                .error("Unhandled exception in controller", ex);
+                .error("Unhandled exception in controller: {}: {}",
+                        ex.getClass().getName(), ex.getMessage(), ex);
         return error(500, "INTERNAL_ERROR", "An unexpected error occurred.");
     }
 
