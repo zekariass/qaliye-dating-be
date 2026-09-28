@@ -118,9 +118,13 @@ public class BlindDateSessionService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "idempotency_key_required");
         }
 
-        // Idempotent replay: same key returns the existing session.
+        // Idempotent replay: same key returns the existing session — but only
+        // for the creator who owns it; a foreign key must not hand out the row.
         var existing = sessionRepo.findByIdempotencyKey(idempotencyKey);
         if (existing.isPresent()) {
+            if (!existing.get().creatorUserId().equals(creatorId)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "idempotency_key_in_use");
+            }
             return toView(existing.get());
         }
 
@@ -167,8 +171,10 @@ public class BlindDateSessionService {
         UUID setId = questionSetRepo.ensureQuestionSet(creatorId);
         int sortOrder = 1;
 
+        // Dedupe: the same id twice would violate the per-session unique index
+        // on source_question_id / source_custom_question_id as a 500.
         if (questionIds != null) {
-            for (UUID questionId : questionIds) {
+            for (UUID questionId : questionIds.stream().distinct().toList()) {
                 SetQuestionRow setQuestion = questionSetRepo
                         .findSetQuestions(setId, language, false).stream()
                         .filter(q -> q.questionId().equals(questionId))
@@ -184,7 +190,7 @@ public class BlindDateSessionService {
         }
 
         if (customQuestionIds != null) {
-            for (UUID customId : customQuestionIds) {
+            for (UUID customId : customQuestionIds.stream().distinct().toList()) {
                 CustomQuestionRow custom = questionSetRepo
                         .findCustomQuestions(setId, false).stream()
                         .filter(q -> q.id().equals(customId))
@@ -215,6 +221,14 @@ public class BlindDateSessionService {
         }
         if (sessionRepo.findLatestRoundNumber(sessionId) >= properties.getMaxRounds()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "max_rounds_reached");
+        }
+        long survivors = participantRepo.findStillActiveInSession(sessionId).stream()
+                .filter(p -> BlindDateConstants.PARTICIPANT_ADVANCED.equals(p.status()))
+                .count();
+        if (survivors == 0) {
+            // Nobody advanced — a new round would be empty and the session
+            // could never reach a finalist. The creator should close it.
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "no_participants_remaining");
         }
 
         int totalQuestions = (questionIds != null ? questionIds.size() : 0)

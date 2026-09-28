@@ -140,7 +140,14 @@ public class BlindDateSelectionService {
      */
     private void transitionToReveal(SessionRow session, RoundRow round, ParticipantRow finalist) {
         sessionRepo.closeRound(round.id());
+        // Capture the losers first so they still get the elimination
+        // notification, same as an explicit ELIMINATE or a round close.
+        List<ParticipantRow> eliminated = participantRepo.findStillActiveInSession(session.id()).stream()
+                .filter(p -> !p.id().equals(finalist.id()))
+                .toList();
         participantRepo.eliminateAllStillActiveExcept(session.id(), finalist.id());
+        eliminated.forEach(p -> notificationDispatcher.dispatchBlindDateEliminatedNotification(
+                p.userId(), session.id()));
         participantRepo.promoteToFinalist(finalist.id());
         participantRepo.markRevealed(finalist.id());
         sessionRepo.transitionToReveal(session.id());

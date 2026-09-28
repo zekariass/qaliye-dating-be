@@ -2,6 +2,8 @@ package com.qaliye.backend.blinddate.service;
 
 import com.qaliye.backend.blinddate.BlindDateConstants;
 import com.qaliye.backend.blinddate.config.BlindDateProperties;
+import com.qaliye.backend.blinddate.repository.BlindDateFinalDecisionRepository;
+import com.qaliye.backend.blinddate.repository.BlindDateFinalDecisionRepository.FinalDecisionRow;
 import com.qaliye.backend.blinddate.repository.BlindDateParticipantRepository;
 import com.qaliye.backend.blinddate.repository.BlindDateParticipantRepository.AnswerRow;
 import com.qaliye.backend.blinddate.repository.BlindDateParticipantRepository.ParticipantRow;
@@ -9,6 +11,7 @@ import com.qaliye.backend.blinddate.repository.BlindDateSessionRepository;
 import com.qaliye.backend.blinddate.repository.BlindDateSessionRepository.RoundRow;
 import com.qaliye.backend.blinddate.repository.BlindDateSessionRepository.SessionQuestionRow;
 import com.qaliye.backend.blinddate.repository.BlindDateSessionRepository.SessionRow;
+import com.qaliye.backend.notifications.NotificationDispatcher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -31,17 +34,23 @@ public class BlindDateParticipationService {
 
     private final BlindDateSessionRepository sessionRepo;
     private final BlindDateParticipantRepository participantRepo;
+    private final BlindDateFinalDecisionRepository finalDecisionRepo;
     private final BlindDateChargeService chargeService;
     private final BlindDateProperties properties;
+    private final NotificationDispatcher notificationDispatcher;
 
     public BlindDateParticipationService(BlindDateSessionRepository sessionRepo,
                                          BlindDateParticipantRepository participantRepo,
+                                         BlindDateFinalDecisionRepository finalDecisionRepo,
                                          BlindDateChargeService chargeService,
-                                         BlindDateProperties properties) {
+                                         BlindDateProperties properties,
+                                         NotificationDispatcher notificationDispatcher) {
         this.sessionRepo = sessionRepo;
         this.participantRepo = participantRepo;
+        this.finalDecisionRepo = finalDecisionRepo;
         this.chargeService = chargeService;
         this.properties = properties;
+        this.notificationDispatcher = notificationDispatcher;
     }
 
     @Transactional(readOnly = true)
@@ -81,13 +90,21 @@ public class BlindDateParticipationService {
 
     @Transactional(readOnly = true)
     public RoundQuestionsView getRoundQuestions(UUID callerId, UUID roundId) {
-        List<SessionQuestionRow> questions = sessionRepo.findQuestionsForRound(roundId);
-        Map<UUID, String> myAnswers = sessionRepo.findRound(roundId)
-                .flatMap(r -> participantRepo.findBySessionAndUser(r.sessionId(), callerId))
+        RoundRow round = sessionRepo.findRound(roundId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "round_not_found"));
+        SessionRow session = sessionRepo.findSession(round.sessionId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "session_not_found"));
+
+        var participant = participantRepo.findBySessionAndUser(session.id(), callerId);
+        if (!session.creatorUserId().equals(callerId) && participant.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "not_in_session");
+        }
+
+        Map<UUID, String> myAnswers = participant
                 .map(p -> participantRepo.findAnswersForParticipantRound(p.id(), roundId).stream()
                         .collect(Collectors.toMap(AnswerRow::sessionQuestionId, AnswerRow::answer)))
                 .orElse(Map.of());
-        return new RoundQuestionsView(questions, myAnswers);
+        return new RoundQuestionsView(sessionRepo.findQuestionsForRound(roundId), myAnswers);
     }
 
     /**
@@ -106,6 +123,13 @@ public class BlindDateParticipationService {
 
         var existing = participantRepo.findByIdempotencyKey(idempotencyKey);
         if (existing.isPresent()) {
+            // Replay is only valid for the same caller and session — a key
+            // collision must not hand out someone else's (or another
+            // session's) participant row.
+            if (!existing.get().userId().equals(userId)
+                    || !existing.get().sessionId().equals(sessionId)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "idempotency_key_in_use");
+            }
             return existing.get();
         }
 
@@ -120,6 +144,15 @@ public class BlindDateParticipationService {
         }
         if (session.creatorUserId().equals(userId)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "creator_cannot_join");
+        }
+        // The discover feed filters these, but join must enforce them too —
+        // a caller with the session id must not bypass blocks or a creator
+        // who disabled Blind Date.
+        if (participantRepo.isBlocked(session.creatorUserId(), userId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "blocked");
+        }
+        if (!sessionRepo.isBlindDateEnabled(session.creatorUserId())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "creator_disabled_blind_date");
         }
         if (participantRepo.hasParticipated(sessionId, userId)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "already_joined");
@@ -215,5 +248,34 @@ public class BlindDateParticipationService {
         if (!participantRepo.withdrawParticipant(participantId)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "cannot_withdraw");
         }
+
+        // A finalist withdrawing during REVEAL forfeits: resolve the pending
+        // final decision immediately instead of leaving the creator waiting
+        // for the decision-window sweep.
+        resolvePendingDecisionOnWithdraw(participant);
+    }
+
+    private void resolvePendingDecisionOnWithdraw(ParticipantRow participant) {
+        boolean wasFinalist = BlindDateConstants.PARTICIPANT_FINALIST.equals(participant.status())
+                || BlindDateConstants.PARTICIPANT_REVEALED.equals(participant.status());
+        if (!wasFinalist) {
+            return;
+        }
+        // Plain read for the session status: taking FOR UPDATE here would
+        // invert the decide() lock order (session -> participant) and could
+        // deadlock; the final-decision row lock below serializes correctly.
+        SessionRow session = sessionRepo.findSession(participant.sessionId()).orElse(null);
+        if (session == null || !BlindDateConstants.SESSION_REVEAL.equals(session.status())) {
+            return;
+        }
+        FinalDecisionRow fd = finalDecisionRepo.findBySessionForUpdate(participant.sessionId()).orElse(null);
+        if (fd == null || fd.outcome() != null || !participant.id().equals(fd.finalistParticipantId())) {
+            return;
+        }
+        finalDecisionRepo.resolvePendingAsNotInterested(session.id());
+        finalDecisionRepo.setOutcome(session.id(), BlindDateConstants.OUTCOME_NO_MATCH, null);
+        sessionRepo.completeSession(session.id());
+        notificationDispatcher.dispatchBlindDateOutcomeNotification(
+                session.creatorUserId(), participant.userId(), session.id(), false);
     }
 }

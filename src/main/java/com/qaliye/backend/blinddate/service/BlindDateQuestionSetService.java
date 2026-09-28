@@ -124,6 +124,7 @@ public class BlindDateQuestionSetService {
 
     @Transactional
     public void reorderQuestion(UUID userId, UUID setQuestionId, int sortOrder) {
+        validateSortOrder(sortOrder);
         int updated = questionSetRepo.reorderSetQuestion(userId, setQuestionId, sortOrder);
         if (updated == 0) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "set_question_not_found");
@@ -151,6 +152,7 @@ public class BlindDateQuestionSetService {
                                                   String question, String answer, Integer sortOrder) {
         if (question != null) validateCustomQuestion(question);
         if (answer != null) validateAnswer(answer, true);
+        if (sortOrder != null) validateSortOrder(sortOrder);
         int updated = questionSetRepo.updateCustomQuestion(userId, customQuestionId,
                 question != null ? question.trim() : null,
                 answer != null ? answer.trim() : null,
@@ -171,6 +173,12 @@ public class BlindDateQuestionSetService {
     }
 
     // ── Validation ─────────────────────────────────────────────────────────
+
+    private void validateSortOrder(int sortOrder) {
+        if (sortOrder < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid_sort_order");
+        }
+    }
 
     private void validateCustomQuestion(String question) {
         if (question == null || question.isBlank()) {

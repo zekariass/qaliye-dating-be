@@ -66,7 +66,7 @@ class BlindDateFinalDecisionServiceTest {
     private void stubReveal(FinalDecisionRow fd) {
         when(sessionRepo.findSessionForUpdate(sessionId)).thenReturn(Optional.of(revealSession()));
         when(finalDecisionRepo.findBySessionForUpdate(sessionId)).thenReturn(Optional.of(fd));
-        lenient().when(participantRepo.findParticipant(finalistParticipantId))
+        lenient().when(participantRepo.findParticipantForUpdate(finalistParticipantId))
                 .thenReturn(Optional.of(finalist()));
     }
 
@@ -219,6 +219,7 @@ class BlindDateFinalDecisionServiceTest {
     void expireFinalDecision_resolvesAsExpired() {
         FinalDecisionRow fd = pendingDecision();
         when(sessionRepo.findSessionForUpdate(sessionId)).thenReturn(Optional.of(revealSession()));
+        when(finalDecisionRepo.findBySessionForUpdate(sessionId)).thenReturn(Optional.of(fd));
         when(participantRepo.findParticipant(finalistParticipantId))
                 .thenReturn(Optional.of(finalist()));
 

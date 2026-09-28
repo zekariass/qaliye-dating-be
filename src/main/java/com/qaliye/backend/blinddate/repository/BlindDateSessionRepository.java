@@ -124,7 +124,9 @@ public class BlindDateSessionRepository {
             JOIN profiles callerProfile ON callerProfile.user_id = :callerId
             JOIN discovery_preferences creatorPrefs ON creatorPrefs.user_id = s.creator_user_id
             JOIN discovery_preferences callerPrefs ON callerPrefs.user_id = :callerId
+            LEFT JOIN blind_date_configurations creatorCfg ON creatorCfg.user_id = s.creator_user_id
             WHERE s.status = 'OPEN'
+              AND COALESCE(creatorCfg.enabled, TRUE)
               AND s.creator_user_id <> :callerId
               AND (s.expires_at IS NULL OR s.expires_at > NOW())
               AND NOT EXISTS (
@@ -153,6 +155,11 @@ public class BlindDateSessionRepository {
                     BETWEEN callerPrefs.min_age AND COALESCE(callerPrefs.max_age, 120)
             ORDER BY s.created_at DESC
             LIMIT :limit OFFSET :offset
+            """;
+
+    private static final String IS_BLIND_DATE_ENABLED_SQL = """
+            SELECT COALESCE((SELECT enabled FROM blind_date_configurations
+                            WHERE user_id = :userId), TRUE)
             """;
 
     private static final String FIND_MY_SESSIONS_SQL = """
@@ -333,6 +340,13 @@ public class BlindDateSessionRepository {
 
     public boolean completeSession(UUID sessionId) {
         return jdbc.update(COMPLETE_SESSION_SQL, new MapSqlParameterSource("sessionId", sessionId)) > 0;
+    }
+
+    /** Whether the user has Blind Date enabled; defaults to TRUE when unconfigured. */
+    public boolean isBlindDateEnabled(UUID userId) {
+        Boolean enabled = jdbc.queryForObject(IS_BLIND_DATE_ENABLED_SQL,
+                new MapSqlParameterSource("userId", userId), Boolean.class);
+        return !Boolean.FALSE.equals(enabled);
     }
 
     public List<UUID> expireOpenSessions() {

@@ -2,6 +2,7 @@ package com.qaliye.backend.blinddate.service;
 
 import com.qaliye.backend.blinddate.BlindDateConstants;
 import com.qaliye.backend.blinddate.config.BlindDateProperties;
+import com.qaliye.backend.blinddate.repository.BlindDateFinalDecisionRepository;
 import com.qaliye.backend.blinddate.repository.BlindDateParticipantRepository;
 import com.qaliye.backend.blinddate.repository.BlindDateParticipantRepository.ParticipantRow;
 import com.qaliye.backend.blinddate.repository.BlindDateSessionRepository;
@@ -32,7 +33,9 @@ class BlindDateParticipationServiceTest {
 
     @Mock BlindDateSessionRepository sessionRepo;
     @Mock BlindDateParticipantRepository participantRepo;
+    @Mock BlindDateFinalDecisionRepository finalDecisionRepo;
     @Mock BlindDateChargeService chargeService;
+    @Mock com.qaliye.backend.notifications.NotificationDispatcher notificationDispatcher;
 
     BlindDateParticipationService service;
     BlindDateProperties properties;
@@ -46,7 +49,9 @@ class BlindDateParticipationServiceTest {
     @BeforeEach
     void setUp() {
         properties = new BlindDateProperties();
-        service = new BlindDateParticipationService(sessionRepo, participantRepo, chargeService, properties);
+        service = new BlindDateParticipationService(sessionRepo, participantRepo,
+                finalDecisionRepo, chargeService, properties, notificationDispatcher);
+        lenient().when(sessionRepo.isBlindDateEnabled(any())).thenReturn(true);
     }
 
     private SessionRow openSession() {

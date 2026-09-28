@@ -1,6 +1,7 @@
 package com.qaliye.backend.blinddate.worker;
 
 import com.qaliye.backend.blinddate.repository.BlindDateFinalDecisionRepository;
+import com.qaliye.backend.blinddate.repository.BlindDateParticipantRepository;
 import com.qaliye.backend.blinddate.repository.BlindDateSessionRepository;
 import com.qaliye.backend.blinddate.service.BlindDateFinalDecisionService;
 import org.quartz.Job;
@@ -29,6 +30,9 @@ public class BlindDateExpiryWorker implements Job {
     private BlindDateSessionRepository sessionRepo;
 
     @Autowired
+    private BlindDateParticipantRepository participantRepo;
+
+    @Autowired
     private BlindDateFinalDecisionRepository finalDecisionRepo;
 
     @Autowired
@@ -38,8 +42,28 @@ public class BlindDateExpiryWorker implements Job {
     public void execute(JobExecutionContext context) {
         try {
             List<UUID> expiredSessions = sessionRepo.expireOpenSessions();
+            for (UUID sessionId : expiredSessions) {
+                try {
+                    // No orphans: close the open round and eliminate anyone
+                    // still ACTIVE/ADVANCED on the dead session.
+                    sessionRepo.closeOpenRoundsForSession(sessionId);
+                    participantRepo.findStillActiveInSession(sessionId)
+                            .forEach(p -> participantRepo.eliminateParticipant(p.id()));
+                } catch (Exception e) {
+                    log.error("BlindDateExpiry: failed to clean up expired session {}: {}",
+                            sessionId, e.getMessage(), e);
+                }
+            }
             if (!expiredSessions.isEmpty()) {
                 log.info("BlindDateExpiry: expired {} open sessions", expiredSessions.size());
+            }
+
+            // Self-healing sweep: catches participants who joined in the narrow
+            // window between session expiry and the per-session cleanup above.
+            List<UUID> orphaned = participantRepo.eliminateStillActiveInNonOpenSessions();
+            if (!orphaned.isEmpty()) {
+                log.info("BlindDateExpiry: eliminated {} participants on non-open sessions",
+                        orphaned.size());
             }
 
             var expiredDecisions = finalDecisionRepo.findExpiredPending();

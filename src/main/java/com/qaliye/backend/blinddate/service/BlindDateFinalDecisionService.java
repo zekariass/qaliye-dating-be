@@ -69,8 +69,11 @@ public class BlindDateFinalDecisionService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "decision_already_resolved");
         }
 
-        ParticipantRow finalist = participantRepo.findParticipant(fd.finalistParticipantId())
+        ParticipantRow finalist = participantRepo.findParticipantForUpdate(fd.finalistParticipantId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "finalist_not_found"));
+        if (BlindDateConstants.PARTICIPANT_WITHDRAWN.equals(finalist.status())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "finalist_withdrawn");
+        }
 
         boolean isCreator = session.creatorUserId().equals(userId);
         boolean isFinalist = finalist.userId().equals(userId);
@@ -182,10 +185,16 @@ public class BlindDateFinalDecisionService {
     @Transactional
     public void expireFinalDecision(FinalDecisionRow fd) {
         SessionRow session = sessionRepo.findSessionForUpdate(fd.sessionId()).orElse(null);
-        if (session == null || fd.outcome() != null) {
+        if (session == null) {
             return;
         }
-        ParticipantRow finalist = participantRepo.findParticipant(fd.finalistParticipantId()).orElse(null);
+        // Re-read under the session lock: the caller's row may be stale — a
+        // decide() that committed since then must not be overwritten.
+        FinalDecisionRow locked = finalDecisionRepo.findBySessionForUpdate(fd.sessionId()).orElse(null);
+        if (locked == null || locked.outcome() != null) {
+            return;
+        }
+        ParticipantRow finalist = participantRepo.findParticipant(locked.finalistParticipantId()).orElse(null);
         if (finalist == null) {
             return;
         }

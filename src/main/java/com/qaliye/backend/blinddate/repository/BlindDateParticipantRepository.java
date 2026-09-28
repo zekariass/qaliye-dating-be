@@ -216,6 +216,23 @@ public class BlindDateParticipantRepository {
               AND status IN ('ACTIVE', 'ADVANCED', 'FINALIST', 'REVEALED')
             """;
 
+    private static final String BLOCK_EXISTS_SQL = """
+            SELECT COUNT(1) FROM user_blocks
+            WHERE status = 'ACTIVE'
+              AND ((blocker_user_id = :userA AND blocked_user_id = :userB)
+                OR (blocker_user_id = :userB AND blocked_user_id = :userA))
+            """;
+
+    private static final String ELIMINATE_STILL_ACTIVE_IN_NON_OPEN_SESSIONS_SQL = """
+            UPDATE blind_date_session_participants p
+            SET status = 'ELIMINATED', eliminated_at = NOW(), updated_at = NOW()
+            FROM blind_date_sessions s
+            WHERE s.id = p.session_id
+              AND s.status <> 'OPEN'
+              AND p.status IN ('ACTIVE', 'ADVANCED')
+            RETURNING p.id
+            """;
+
     private final NamedParameterJdbcTemplate jdbc;
 
     public BlindDateParticipantRepository(NamedParameterJdbcTemplate jdbc) {
@@ -302,6 +319,25 @@ public class BlindDateParticipantRepository {
 
     public boolean withdrawParticipant(UUID participantId) {
         return jdbc.update(WITHDRAW_PARTICIPANT_SQL, new MapSqlParameterSource("participantId", participantId)) > 0;
+    }
+
+    /** True when an ACTIVE block exists between the two users (either direction). */
+    public boolean isBlocked(UUID userA, UUID userB) {
+        var params = new MapSqlParameterSource().addValue("userA", userA).addValue("userB", userB);
+        Integer count = jdbc.queryForObject(BLOCK_EXISTS_SQL, params, Integer.class);
+        return count != null && count > 0;
+    }
+
+    /**
+     * Self-healing sweep: eliminates ACTIVE/ADVANCED participants whose session
+     * is no longer OPEN. Covers the narrow race where a join commits just after
+     * the expiry worker's per-session cleanup.
+     *
+     * @return ids of the eliminated participants
+     */
+    public List<UUID> eliminateStillActiveInNonOpenSessions() {
+        return jdbc.query(ELIMINATE_STILL_ACTIVE_IN_NON_OPEN_SESSIONS_SQL,
+                new MapSqlParameterSource(), (rs, i) -> rs.getObject("id", UUID.class));
     }
 
     public boolean hasParticipated(UUID sessionId, UUID userId) {
