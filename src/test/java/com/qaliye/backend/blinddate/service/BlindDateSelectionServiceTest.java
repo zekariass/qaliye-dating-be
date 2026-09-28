@@ -1,6 +1,7 @@
 package com.qaliye.backend.blinddate.service;
 
 import com.qaliye.backend.blinddate.BlindDateConstants;
+import com.qaliye.backend.blinddate.config.BlindDateProperties;
 import com.qaliye.backend.blinddate.repository.BlindDateFinalDecisionRepository;
 import com.qaliye.backend.blinddate.repository.BlindDateParticipantRepository;
 import com.qaliye.backend.blinddate.repository.BlindDateParticipantRepository.ParticipantRow;
@@ -43,7 +44,7 @@ class BlindDateSelectionServiceTest {
     @BeforeEach
     void setUp() {
         service = new BlindDateSelectionService(sessionRepo, participantRepo,
-                finalDecisionRepo, notificationDispatcher);
+                finalDecisionRepo, notificationDispatcher, new BlindDateProperties());
     }
 
     private SessionRow openSession() {

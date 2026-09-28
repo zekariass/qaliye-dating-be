@@ -347,8 +347,11 @@ public class SwipeActionService {
     }
 
     private void acquirePairLock(UUID actorId, UUID targetId) {
-        UUID lo = actorId.compareTo(targetId) < 0 ? actorId : targetId;
-        UUID hi = actorId.compareTo(targetId) < 0 ? targetId : actorId;
+        // Ordering must be consistent with other services that lock this pair
+        // (String ordering matches PostgreSQL uuid ordering, not UUID.compareTo).
+        boolean actorIsLo = actorId.toString().compareTo(targetId.toString()) < 0;
+        UUID lo = actorIsLo ? actorId : targetId;
+        UUID hi = actorIsLo ? targetId : actorId;
         jdbc.queryForObject(
                 "SELECT pg_advisory_xact_lock(hashtext(:pairKey))",
                 new MapSqlParameterSource("pairKey", lo.toString() + ":" + hi.toString()),

@@ -22,6 +22,7 @@ class BlindDateMatchServiceTest {
 
     @Mock NamedParameterJdbcTemplate jdbc;
     @Mock NotificationDispatcher notificationDispatcher;
+    @Mock org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     BlindDateMatchService service;
     UUID userA = UUID.randomUUID();
@@ -30,7 +31,7 @@ class BlindDateMatchServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new BlindDateMatchService(jdbc, notificationDispatcher);
+        service = new BlindDateMatchService(jdbc, notificationDispatcher, transactionManager);
     }
 
     @Test

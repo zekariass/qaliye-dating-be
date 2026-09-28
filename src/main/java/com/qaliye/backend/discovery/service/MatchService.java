@@ -8,6 +8,9 @@ import com.qaliye.backend.discovery.repository.DiscoveryMatchRepository;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.List;
@@ -23,17 +26,24 @@ public class MatchService {
     private final StorageSigningService signingService;
     private final DiscoveryProperties props;
     private final NamedParameterJdbcTemplate jdbc;
+    private final TransactionTemplate nestedTx;
 
     public MatchService(DiscoveryMatchRepository matchRepo,
                         DiscoveryActionRepository actionRepo,
                         StorageSigningService signingService,
                         DiscoveryProperties props,
-                        NamedParameterJdbcTemplate jdbc) {
+                        NamedParameterJdbcTemplate jdbc,
+                        PlatformTransactionManager transactionManager) {
         this.matchRepo = matchRepo;
         this.actionRepo = actionRepo;
         this.signingService = signingService;
         this.props = props;
         this.jdbc = jdbc;
+        // NESTED uses a JDBC savepoint (enabled in TransactionConfig): a pair
+        // that fails to insert rolls back to the savepoint only, so one bad
+        // row cannot abort the whole reconciliation transaction (25P02).
+        this.nestedTx = new TransactionTemplate(transactionManager);
+        this.nestedTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
     }
 
     private static final String FETCH_ACTIVE_MATCH_BY_ACTION_SQL = """
@@ -168,14 +178,16 @@ public class MatchService {
         int created = 0;
         for (OrphanedPair pair : orphans) {
             try {
-                matchRepo.insertMatch(
+                nestedTx.executeWithoutResult(status -> matchRepo.insertMatch(
                         pair.userAId(), pair.userBId(),
                         pair.userAActionId(), pair.userBActionId(),
                         pair.userBActionId(),
-                        props.getRewind().matchGracePeriodMinutes());
+                        props.getRewind().matchGracePeriodMinutes()));
                 created++;
             } catch (Exception e) {
-                // Skip pairs that fail (e.g. block constraint, concurrent insert)
+                // Skip pairs that fail (e.g. block constraint, concurrent insert).
+                // The savepoint rollback keeps the outer transaction usable for
+                // the remaining pairs.
             }
         }
         return created;

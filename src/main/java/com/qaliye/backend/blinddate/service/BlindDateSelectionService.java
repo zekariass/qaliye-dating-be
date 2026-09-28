@@ -1,6 +1,7 @@
 package com.qaliye.backend.blinddate.service;
 
 import com.qaliye.backend.blinddate.BlindDateConstants;
+import com.qaliye.backend.blinddate.config.BlindDateProperties;
 import com.qaliye.backend.blinddate.repository.BlindDateFinalDecisionRepository;
 import com.qaliye.backend.blinddate.repository.BlindDateParticipantRepository;
 import com.qaliye.backend.blinddate.repository.BlindDateParticipantRepository.ParticipantRow;
@@ -25,22 +26,22 @@ import java.util.UUID;
 @Service
 public class BlindDateSelectionService {
 
-    /** How long both sides have to submit their final decision after reveal. */
-    private static final long DECISION_WINDOW_HOURS = 48;
-
     private final BlindDateSessionRepository sessionRepo;
     private final BlindDateParticipantRepository participantRepo;
     private final BlindDateFinalDecisionRepository finalDecisionRepo;
     private final NotificationDispatcher notificationDispatcher;
+    private final BlindDateProperties properties;
 
     public BlindDateSelectionService(BlindDateSessionRepository sessionRepo,
                                      BlindDateParticipantRepository participantRepo,
                                      BlindDateFinalDecisionRepository finalDecisionRepo,
-                                     NotificationDispatcher notificationDispatcher) {
+                                     NotificationDispatcher notificationDispatcher,
+                                     BlindDateProperties properties) {
         this.sessionRepo = sessionRepo;
         this.participantRepo = participantRepo;
         this.finalDecisionRepo = finalDecisionRepo;
         this.notificationDispatcher = notificationDispatcher;
+        this.properties = properties;
     }
 
     /**
@@ -144,7 +145,7 @@ public class BlindDateSelectionService {
         participantRepo.markRevealed(finalist.id());
         sessionRepo.transitionToReveal(session.id());
         finalDecisionRepo.insert(session.id(), finalist.id(),
-                OffsetDateTime.now().plusHours(DECISION_WINDOW_HOURS));
+                OffsetDateTime.now().plusHours(properties.getDecisionWindowHours()));
         notificationDispatcher.dispatchBlindDateRevealNotification(
                 session.creatorUserId(), finalist.userId(), session.id());
     }

@@ -252,8 +252,11 @@ public class SuperMessageService {
         notificationDispatcher.dispatchSuperMessageNotification(senderId, receiverId, messageId);
 
         // Check for mutual like and create match if the receiver already liked the sender
-        UUID lo = senderId.compareTo(receiverId) < 0 ? senderId : receiverId;
-        UUID hi = senderId.compareTo(receiverId) < 0 ? receiverId : senderId;
+        // Ordering must be consistent with other services that lock this pair
+        // (String ordering matches PostgreSQL uuid ordering, not UUID.compareTo).
+        boolean senderIsLo = senderId.toString().compareTo(receiverId.toString()) < 0;
+        UUID lo = senderIsLo ? senderId : receiverId;
+        UUID hi = senderIsLo ? receiverId : senderId;
         jdbc.queryForObject(
                 "SELECT pg_advisory_xact_lock(hashtext(:pairKey))",
                 new MapSqlParameterSource("pairKey", lo.toString() + ":" + hi.toString()),

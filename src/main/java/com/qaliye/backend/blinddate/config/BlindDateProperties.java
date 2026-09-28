@@ -27,6 +27,9 @@ public class BlindDateProperties {
     /** Maximum number of active custom questions a user may keep in their question set. */
     private int maxCustomQuestions = 10;
 
+    /** Hours both sides have to submit their final decision after a finalist is revealed. */
+    private long decisionWindowHours = 72;
+
     public int getMaxParticipants() {
         return maxParticipants;
     }
@@ -65,5 +68,13 @@ public class BlindDateProperties {
 
     public void setMaxCustomQuestions(int maxCustomQuestions) {
         this.maxCustomQuestions = maxCustomQuestions;
+    }
+
+    public long getDecisionWindowHours() {
+        return decisionWindowHours;
+    }
+
+    public void setDecisionWindowHours(long decisionWindowHours) {
+        this.decisionWindowHours = decisionWindowHours;
     }
 }

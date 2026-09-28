@@ -7,8 +7,11 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
@@ -80,11 +83,19 @@ public class BlindDateMatchService {
 
     private final NamedParameterJdbcTemplate jdbc;
     private final NotificationDispatcher notificationDispatcher;
+    private final TransactionTemplate nestedTx;
 
     public BlindDateMatchService(NamedParameterJdbcTemplate jdbc,
-                                 NotificationDispatcher notificationDispatcher) {
+                                 NotificationDispatcher notificationDispatcher,
+                                 PlatformTransactionManager transactionManager) {
         this.jdbc = jdbc;
         this.notificationDispatcher = notificationDispatcher;
+        // NESTED uses a JDBC savepoint (enabled in TransactionConfig): a failed
+        // INSERT rolls back to the savepoint only, so the recovery lookups in
+        // the catch blocks below run on a live transaction instead of hitting
+        // "current transaction is aborted" (25P02).
+        this.nestedTx = new TransactionTemplate(transactionManager);
+        this.nestedTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
     }
 
     /**
@@ -101,8 +112,12 @@ public class BlindDateMatchService {
             return new MatchResult(false, null);
         }
 
-        UUID userOne = userA.compareTo(userB) < 0 ? userA : userB;
-        UUID userTwo = userA.compareTo(userB) < 0 ? userB : userA;
+        // PostgreSQL orders uuid values by unsigned bytes (memcmp); UUID.compareTo
+        // uses signed long comparison which disagrees when first bytes straddle 0x80.
+        // toString() comparison matches the DB ordering enforced by check_match_user_order.
+        boolean aIsLower = userA.toString().compareTo(userB.toString()) < 0;
+        UUID userOne = aIsLower ? userA : userB;
+        UUID userTwo = aIsLower ? userB : userA;
 
         Optional<UUID> existingMatch = findActiveMatch(userOne, userTwo);
         if (existingMatch.isPresent()) {
@@ -165,9 +180,10 @@ public class BlindDateMatchService {
                 .addValue("clientActionId", clientActionId)
                 .addValue("metadata", "{\"blind_date_session_id\": \"" + sessionId + "\"}");
         try {
-            return jdbc.query(INSERT_BLIND_DATE_LIKE_SQL, params, (rs, i) -> rs.getObject("id", UUID.class))
-                    .stream().findFirst()
-                    .orElseThrow(() -> new IllegalStateException("Failed to insert blind date like"));
+            return nestedTx.execute(status ->
+                    jdbc.query(INSERT_BLIND_DATE_LIKE_SQL, params, (rs, i) -> rs.getObject("id", UUID.class))
+                            .stream().findFirst()
+                            .orElseThrow(() -> new IllegalStateException("Failed to insert blind date like")));
         } catch (DataIntegrityViolationException e) {
             // A concurrent transaction inserted an active like for this pair.
             return jdbc.query(FIND_ACTIVE_LIKE_FOR_PAIR_SQL, pairParams,
@@ -185,9 +201,10 @@ public class BlindDateMatchService {
                 .addValue("userOneLikeActionId", userOneAction)
                 .addValue("userTwoLikeActionId", userTwoAction)
                 .addValue("createdByActionId", createdByActionId);
-        return jdbc.query(INSERT_MATCH_SQL, params, (rs, i) -> rs.getObject("id", UUID.class))
-                .stream().findFirst()
-                .orElseThrow(() -> new IllegalStateException("Failed to insert blind date match"));
+        return nestedTx.execute(status ->
+                jdbc.query(INSERT_MATCH_SQL, params, (rs, i) -> rs.getObject("id", UUID.class))
+                        .stream().findFirst()
+                        .orElseThrow(() -> new IllegalStateException("Failed to insert blind date match")));
     }
 
     /**

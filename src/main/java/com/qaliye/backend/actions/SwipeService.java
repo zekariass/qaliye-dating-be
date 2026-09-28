@@ -10,7 +10,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.OffsetDateTime;
@@ -135,17 +138,24 @@ public class SwipeService {
     private final ActionLimitRepository actionLimitRepo;
     private final CreditService creditService;
     private final NotificationDispatcher notificationDispatcher;
+    private final TransactionTemplate nestedTx;
 
     public SwipeService(NamedParameterJdbcTemplate jdbc,
                         ActionCostService actionCostService,
                         ActionLimitRepository actionLimitRepo,
                         CreditService creditService,
-                        NotificationDispatcher notificationDispatcher) {
+                        NotificationDispatcher notificationDispatcher,
+                        PlatformTransactionManager transactionManager) {
         this.jdbc = jdbc;
         this.actionCostService = actionCostService;
         this.actionLimitRepo = actionLimitRepo;
         this.creditService = creditService;
         this.notificationDispatcher = notificationDispatcher;
+        // NESTED uses a JDBC savepoint (enabled in TransactionConfig): a failed
+        // match INSERT rolls back to the savepoint only, leaving the outer
+        // transaction usable for the concurrent-match fallback below.
+        this.nestedTx = new TransactionTemplate(transactionManager);
+        this.nestedTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
     }
 
     @Transactional
@@ -347,8 +357,8 @@ public class SwipeService {
                 .addValue("createdByActionId", createdByActionId);
 
         try {
-            List<UUID> ids = jdbc.query(INSERT_MATCH_SQL, params,
-                    (rs, rowNum) -> rs.getObject("id", UUID.class));
+            List<UUID> ids = nestedTx.execute(status -> jdbc.query(INSERT_MATCH_SQL, params,
+                    (rs, rowNum) -> rs.getObject("id", UUID.class)));
             return ids.get(0);
         } catch (DataIntegrityViolationException e) {
             // Concurrent insert or already matched — return existing active match
@@ -361,6 +371,9 @@ public class SwipeService {
     }
 
     private UUID[] canonical(UUID a, UUID b) {
-        return a.compareTo(b) < 0 ? new UUID[]{a, b} : new UUID[]{b, a};
+        // Must match PostgreSQL's unsigned uuid ordering (memcmp of raw bytes),
+        // not UUID.compareTo's signed long comparison — the matches table's
+        // check_match_user_order constraint enforces DB ordering.
+        return a.toString().compareTo(b.toString()) < 0 ? new UUID[]{a, b} : new UUID[]{b, a};
     }
 }
