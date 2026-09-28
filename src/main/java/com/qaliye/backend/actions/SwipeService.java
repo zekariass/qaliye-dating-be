@@ -10,10 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.OffsetDateTime;
@@ -138,24 +135,17 @@ public class SwipeService {
     private final ActionLimitRepository actionLimitRepo;
     private final CreditService creditService;
     private final NotificationDispatcher notificationDispatcher;
-    private final TransactionTemplate nestedTx;
 
     public SwipeService(NamedParameterJdbcTemplate jdbc,
                         ActionCostService actionCostService,
                         ActionLimitRepository actionLimitRepo,
                         CreditService creditService,
-                        NotificationDispatcher notificationDispatcher,
-                        PlatformTransactionManager transactionManager) {
+                        NotificationDispatcher notificationDispatcher) {
         this.jdbc = jdbc;
         this.actionCostService = actionCostService;
         this.actionLimitRepo = actionLimitRepo;
         this.creditService = creditService;
         this.notificationDispatcher = notificationDispatcher;
-        // NESTED uses a JDBC savepoint (enabled in TransactionConfig): a failed
-        // match INSERT rolls back to the savepoint only, leaving the outer
-        // transaction usable for the concurrent-match fallback below.
-        this.nestedTx = new TransactionTemplate(transactionManager);
-        this.nestedTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
     }
 
     @Transactional
@@ -349,6 +339,13 @@ public class SwipeService {
     private UUID createMatch(UUID userOneId, UUID userTwoId,
                              UUID userOneLikeActionId, UUID userTwoLikeActionId,
                              UUID createdByActionId) {
+        // Already-matched is the common conflict path — check before inserting
+        // so the transaction stays usable (JPA tx manager: no savepoints).
+        List<UUID> existing = jdbc.query(FIND_ACTIVE_MATCH_SQL,
+                Map.of("userOneId", userOneId, "userTwoId", userTwoId),
+                (rs, rowNum) -> rs.getObject("id", UUID.class));
+        if (!existing.isEmpty()) return existing.get(0);
+
         MapSqlParameterSource params = new MapSqlParameterSource()
                 .addValue("userOneId", userOneId)
                 .addValue("userTwoId", userTwoId)
@@ -357,16 +354,14 @@ public class SwipeService {
                 .addValue("createdByActionId", createdByActionId);
 
         try {
-            List<UUID> ids = nestedTx.execute(status -> jdbc.query(INSERT_MATCH_SQL, params,
-                    (rs, rowNum) -> rs.getObject("id", UUID.class)));
+            List<UUID> ids = jdbc.query(INSERT_MATCH_SQL, params,
+                    (rs, rowNum) -> rs.getObject("id", UUID.class));
             return ids.get(0);
         } catch (DataIntegrityViolationException e) {
-            // Concurrent insert or already matched — return existing active match
-            List<UUID> existing = jdbc.query(FIND_ACTIVE_MATCH_SQL,
-                    Map.of("userOneId", userOneId, "userTwoId", userTwoId),
-                    (rs, rowNum) -> rs.getObject("id", UUID.class));
-            if (!existing.isEmpty()) return existing.get(0);
-            throw e;
+            // Lost a concurrent insert race: the transaction is now aborted, so
+            // no recovery query is possible — surface a retryable conflict; the
+            // caller's retry hits the pre-check above.
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "match_conflict", e);
         }
     }
 

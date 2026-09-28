@@ -4,14 +4,13 @@ import com.qaliye.backend.notifications.NotificationDispatcher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
@@ -83,19 +82,11 @@ public class BlindDateMatchService {
 
     private final NamedParameterJdbcTemplate jdbc;
     private final NotificationDispatcher notificationDispatcher;
-    private final TransactionTemplate nestedTx;
 
     public BlindDateMatchService(NamedParameterJdbcTemplate jdbc,
-                                 NotificationDispatcher notificationDispatcher,
-                                 PlatformTransactionManager transactionManager) {
+                                 NotificationDispatcher notificationDispatcher) {
         this.jdbc = jdbc;
         this.notificationDispatcher = notificationDispatcher;
-        // NESTED uses a JDBC savepoint (enabled in TransactionConfig): a failed
-        // INSERT rolls back to the savepoint only, so the recovery lookups in
-        // the catch blocks below run on a live transaction instead of hitting
-        // "current transaction is aborted" (25P02).
-        this.nestedTx = new TransactionTemplate(transactionManager);
-        this.nestedTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
     }
 
     /**
@@ -135,12 +126,11 @@ public class BlindDateMatchService {
             notificationDispatcher.dispatchMatchNotification(userOne, userTwo, matchId);
             return new MatchResult(true, matchId);
         } catch (DataIntegrityViolationException e) {
-            // Concurrent match creation for the same pair — treat as already matched.
-            Optional<UUID> concurrent = findActiveMatch(userOne, userTwo);
-            if (concurrent.isPresent()) {
-                return new MatchResult(false, concurrent.get());
-            }
-            throw e;
+            // Lost a concurrent insert race: the transaction is now aborted, so
+            // a recovery query here would fail with 25P02 anyway (JPA tx
+            // manager cannot do savepoints). Surface a retryable 409 — the
+            // decide() retry re-reads state and resolves ALREADY_MATCHED.
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "match_conflict", e);
         }
     }
 
@@ -180,16 +170,13 @@ public class BlindDateMatchService {
                 .addValue("clientActionId", clientActionId)
                 .addValue("metadata", "{\"blind_date_session_id\": \"" + sessionId + "\"}");
         try {
-            return nestedTx.execute(status ->
-                    jdbc.query(INSERT_BLIND_DATE_LIKE_SQL, params, (rs, i) -> rs.getObject("id", UUID.class))
-                            .stream().findFirst()
-                            .orElseThrow(() -> new IllegalStateException("Failed to insert blind date like")));
-        } catch (DataIntegrityViolationException e) {
-            // A concurrent transaction inserted an active like for this pair.
-            return jdbc.query(FIND_ACTIVE_LIKE_FOR_PAIR_SQL, pairParams,
-                            (rs, i) -> rs.getObject("id", UUID.class))
+            return jdbc.query(INSERT_BLIND_DATE_LIKE_SQL, params, (rs, i) -> rs.getObject("id", UUID.class))
                     .stream().findFirst()
-                    .orElseThrow(() -> e);
+                    .orElseThrow(() -> new IllegalStateException("Failed to insert blind date like"));
+        } catch (DataIntegrityViolationException e) {
+            // Concurrent insert for the pair: transaction is aborted, so the
+            // recovery SELECT cannot run (no savepoints under JpaTransactionManager).
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "like_conflict", e);
         }
     }
 
@@ -201,10 +188,9 @@ public class BlindDateMatchService {
                 .addValue("userOneLikeActionId", userOneAction)
                 .addValue("userTwoLikeActionId", userTwoAction)
                 .addValue("createdByActionId", createdByActionId);
-        return nestedTx.execute(status ->
-                jdbc.query(INSERT_MATCH_SQL, params, (rs, i) -> rs.getObject("id", UUID.class))
-                        .stream().findFirst()
-                        .orElseThrow(() -> new IllegalStateException("Failed to insert blind date match")));
+        return jdbc.query(INSERT_MATCH_SQL, params, (rs, i) -> rs.getObject("id", UUID.class))
+                .stream().findFirst()
+                .orElseThrow(() -> new IllegalStateException("Failed to insert blind date match"));
     }
 
     /**

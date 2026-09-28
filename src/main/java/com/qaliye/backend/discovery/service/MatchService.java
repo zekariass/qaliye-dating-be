@@ -39,11 +39,11 @@ public class MatchService {
         this.signingService = signingService;
         this.props = props;
         this.jdbc = jdbc;
-        // NESTED uses a JDBC savepoint (enabled in TransactionConfig): a pair
-        // that fails to insert rolls back to the savepoint only, so one bad
-        // row cannot abort the whole reconciliation transaction (25P02).
+        // Each pair inserts in its own independent transaction: a bad row
+        // cannot abort the batch (JpaTransactionManager cannot do savepoints,
+        // so per-pair REQUIRES_NEW is the isolation primitive that works).
         this.nestedTx = new TransactionTemplate(transactionManager);
-        this.nestedTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
+        this.nestedTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     private static final String FETCH_ACTIVE_MATCH_BY_ACTION_SQL = """

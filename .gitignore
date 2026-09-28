@@ -44,3 +44,6 @@ application-local.yml
 
 notes.txt
 aws-rootkey.csv
+
+# Accidental files from shell redirects to reserved device names
+nul

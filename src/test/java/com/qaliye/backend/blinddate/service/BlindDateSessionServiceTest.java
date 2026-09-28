@@ -14,6 +14,7 @@ import com.qaliye.backend.blinddate.repository.BlindDateSessionRepository.Creato
 import com.qaliye.backend.blinddate.repository.BlindDateSessionRepository.RoundRow;
 import com.qaliye.backend.blinddate.repository.BlindDateSessionRepository.SessionRow;
 import com.qaliye.backend.discovery.service.StorageSigningService;
+import com.qaliye.backend.notifications.NotificationDispatcher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -42,6 +43,7 @@ class BlindDateSessionServiceTest {
     @Mock BlindDateFinalDecisionRepository finalDecisionRepo;
     @Mock BlindDateChargeService chargeService;
     @Mock StorageSigningService signingService;
+    @Mock NotificationDispatcher notificationDispatcher;
 
     BlindDateSessionService service;
     BlindDateProperties properties;
@@ -54,7 +56,8 @@ class BlindDateSessionServiceTest {
     void setUp() {
         properties = new BlindDateProperties();
         service = new BlindDateSessionService(sessionRepo, participantRepo, questionSetRepo,
-                catalogRepo, finalDecisionRepo, chargeService, properties, signingService);
+                catalogRepo, finalDecisionRepo, chargeService, properties, signingService,
+                notificationDispatcher);
     }
 
     private SessionRow openSession() {
@@ -433,5 +436,42 @@ class BlindDateSessionServiceTest {
         verify(sessionRepo).closeOpenRoundsForSession(sessionId);
         verify(participantRepo).eliminateParticipant(participantId);
         verify(sessionRepo).closeSession(sessionId);
+    }
+
+    @Test
+    void closeSession_inReveal_resolvesPendingDecisionAsNoMatch() {
+        UUID finalistParticipantId = UUID.randomUUID();
+        var decision = new FinalDecisionRow(UUID.randomUUID(), sessionId, finalistParticipantId,
+                OffsetDateTime.now(), OffsetDateTime.now().plusHours(24),
+                "INTERESTED", "PENDING", null, null, null, null);
+        var finalist = new BlindDateParticipantRepository.ParticipantRow(
+                finalistParticipantId, sessionId, UUID.randomUUID(),
+                BlindDateConstants.PARTICIPANT_FINALIST,
+                roundId, OffsetDateTime.now(), null, null, null, null, null);
+
+        when(sessionRepo.findSessionForUpdate(sessionId))
+                .thenReturn(Optional.of(sessionWithStatus(BlindDateConstants.SESSION_REVEAL)));
+        when(participantRepo.findStillActiveInSession(sessionId)).thenReturn(List.of());
+        when(finalDecisionRepo.findBySessionForUpdate(sessionId)).thenReturn(Optional.of(decision));
+        when(participantRepo.findParticipant(finalistParticipantId)).thenReturn(Optional.of(finalist));
+
+        service.closeSession(creatorId, sessionId);
+
+        verify(finalDecisionRepo).resolvePendingAsNotInterested(sessionId);
+        verify(finalDecisionRepo).setOutcome(sessionId, BlindDateConstants.OUTCOME_NO_MATCH, null);
+        verify(sessionRepo).completeSession(sessionId);
+        verify(sessionRepo, never()).closeSession(sessionId);
+        verify(notificationDispatcher).dispatchBlindDateOutcomeNotification(
+                creatorId, finalist.userId(), sessionId, false);
+    }
+
+    @Test
+    void closeSession_terminalState_throwsSessionNotOpen() {
+        when(sessionRepo.findSessionForUpdate(sessionId))
+                .thenReturn(Optional.of(sessionWithStatus(BlindDateConstants.SESSION_COMPLETED)));
+
+        assertThatThrownBy(() -> service.closeSession(creatorId, sessionId))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("session_not_open");
     }
 }

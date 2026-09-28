@@ -106,6 +106,10 @@ public class GlobalExceptionHandler {
         if ("NOT_FOUND".equals(reason))                     return "NOT_FOUND";
         if ("UNAUTHORIZED".equals(reason))                  return "UNAUTHORIZED";
         if (status == 422 && isPhotoRejectionMessage(reason)) return "PHOTO_REJECTED";
+        // Machine-shaped reasons (snake_case or UPPER_SNAKE, no spaces) pass
+        // through as the code — e.g. all blind-date reasons like
+        // "session_full" or "finalist_withdrawn" reach the client unmodified.
+        if (reason.matches("[a-z][a-z0-9_]*|[A-Z][A-Z0-9_]*")) return reason;
         if (status == 400) return "VALIDATION_ERROR";
         if (status == 401) return "UNAUTHORIZED";
         if (status == 403) return "FORBIDDEN";

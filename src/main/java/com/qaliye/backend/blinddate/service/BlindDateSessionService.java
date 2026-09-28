@@ -19,6 +19,7 @@ import com.qaliye.backend.blinddate.repository.BlindDateSessionRepository.Sessio
 import com.qaliye.backend.blinddate.repository.BlindDateSessionRepository.SessionRow;
 import com.qaliye.backend.discovery.dto.DiscoveryPhotoDto;
 import com.qaliye.backend.discovery.service.StorageSigningService;
+import com.qaliye.backend.notifications.NotificationDispatcher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -84,6 +85,7 @@ public class BlindDateSessionService {
     private final BlindDateChargeService chargeService;
     private final BlindDateProperties properties;
     private final StorageSigningService signingService;
+    private final NotificationDispatcher notificationDispatcher;
 
     public BlindDateSessionService(BlindDateSessionRepository sessionRepo,
                                    BlindDateParticipantRepository participantRepo,
@@ -92,7 +94,8 @@ public class BlindDateSessionService {
                                    BlindDateFinalDecisionRepository finalDecisionRepo,
                                    BlindDateChargeService chargeService,
                                    BlindDateProperties properties,
-                                   StorageSigningService signingService) {
+                                   StorageSigningService signingService,
+                                   NotificationDispatcher notificationDispatcher) {
         this.sessionRepo = sessionRepo;
         this.participantRepo = participantRepo;
         this.questionSetRepo = questionSetRepo;
@@ -101,6 +104,7 @@ public class BlindDateSessionService {
         this.chargeService = chargeService;
         this.properties = properties;
         this.signingService = signingService;
+        this.notificationDispatcher = notificationDispatcher;
     }
 
     /**
@@ -252,19 +256,42 @@ public class BlindDateSessionService {
     }
 
     /**
-     * Closes a session early (creator only). Open rounds are closed and
-     * still-active participants are eliminated.
+     * Closes a session early (creator only). Allowed while OPEN or REVEAL —
+     * the latter lets a creator end a reveal whose finalist is unresponsive
+     * instead of waiting out the decision deadline. Open rounds are closed
+     * and still-active participants are eliminated. Closing during REVEAL
+     * resolves every still-pending final decision as NOT_INTERESTED and
+     * records NO_MATCH, mirroring the finalist-withdrawal path.
      */
     @Transactional
     public void closeSession(UUID creatorId, UUID sessionId) {
         SessionRow session = sessionRepo.findSessionForUpdate(sessionId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "session_not_found"));
         requireCreator(session, creatorId);
-        requireStatus(session, BlindDateConstants.SESSION_OPEN);
+        if (!BlindDateConstants.SESSION_OPEN.equals(session.status())
+                && !BlindDateConstants.SESSION_REVEAL.equals(session.status())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "session_not_open");
+        }
 
         sessionRepo.closeOpenRoundsForSession(sessionId);
         participantRepo.findStillActiveInSession(sessionId)
                 .forEach(p -> participantRepo.eliminateParticipant(p.id()));
+
+        if (BlindDateConstants.SESSION_REVEAL.equals(session.status())) {
+            FinalDecisionRow fd = finalDecisionRepo.findBySessionForUpdate(sessionId).orElse(null);
+            if (fd != null && fd.outcome() == null) {
+                finalDecisionRepo.resolvePendingAsNotInterested(sessionId);
+                finalDecisionRepo.setOutcome(sessionId, BlindDateConstants.OUTCOME_NO_MATCH, null);
+            }
+            sessionRepo.completeSession(sessionId);
+            if (fd != null) {
+                participantRepo.findParticipant(fd.finalistParticipantId())
+                        .ifPresent(finalist -> notificationDispatcher
+                                .dispatchBlindDateOutcomeNotification(
+                                        session.creatorUserId(), finalist.userId(), sessionId, false));
+            }
+            return;
+        }
         sessionRepo.closeSession(sessionId);
     }
 
