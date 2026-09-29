@@ -58,7 +58,7 @@ class SwipeActionServiceTest {
 
     ActionFeatureVariantRepository.VariantRow heartVariant = new ActionFeatureVariantRepository.VariantRow(
             heartVariantId, UUID.randomUUID(), "LIKE", "HEART", "Heart", "Strong feelings",
-            "https://cdn.qal.app/actions/heart.webp", true, 1);
+            "https://cdn.qal.app/actions/heart.webp", true, true, 1);
 
     @BeforeEach
     void setUp() {
@@ -99,7 +99,7 @@ class SwipeActionServiceTest {
                         OffsetDateTime.now(), "HEART")));
         UUID matchId = UUID.randomUUID();
         when(matchService.tryCreateMatch(eq(actorId), eq(targetId), any(UUID.class), any(UUID.class)))
-                .thenReturn(Optional.of(new MatchSummaryDto(matchId, Instant.now(), Instant.now().plusSeconds(300), null)));
+                .thenReturn(Optional.of(new MatchSummaryDto(matchId, "DISCOVERY", Instant.now(), Instant.now().plusSeconds(300), null)));
 
         service.recordLike(actorId, targetId, clientActionId, "HEART");
 
@@ -155,7 +155,7 @@ class SwipeActionServiceTest {
     void recordLike_inactiveVariantCode_throwsInvalidLikeVariant() {
         ActionFeatureVariantRepository.VariantRow inactiveVariant = new ActionFeatureVariantRepository.VariantRow(
                 UUID.randomUUID(), UUID.randomUUID(), "LIKE", "RING", "Ring", "I'm serious",
-                "https://cdn.qal.app/actions/ring.webp", false, 6);
+                "https://cdn.qal.app/actions/ring.webp", false, false, 6);
         when(actionRepo.findByClientActionId(actorId, clientActionId)).thenReturn(Optional.empty());
         when(variantRepo.findByActionCodeAndVariantCode("LIKE", "RING")).thenReturn(Optional.of(inactiveVariant));
 
@@ -181,7 +181,7 @@ class SwipeActionServiceTest {
                         OffsetDateTime.now(), "HEART")));
         UUID matchId = UUID.randomUUID();
         when(matchService.tryCreateMatch(eq(actorId), eq(targetId), any(UUID.class), any(UUID.class)))
-                .thenReturn(Optional.of(new MatchSummaryDto(matchId, Instant.now(), Instant.now().plusSeconds(300), null)));
+                .thenReturn(Optional.of(new MatchSummaryDto(matchId, "DISCOVERY", Instant.now(), Instant.now().plusSeconds(300), null)));
 
         service.recordSuperLike(actorId, targetId, clientActionId);
 
@@ -208,7 +208,7 @@ class SwipeActionServiceTest {
                         OffsetDateTime.now(), "HEART")));
         UUID newMatchId = UUID.randomUUID();
         when(matchService.tryCreateMatch(eq(actorId), eq(targetId), eq(newActionId), any(UUID.class)))
-                .thenReturn(Optional.of(new MatchSummaryDto(newMatchId, Instant.now(), Instant.now().plusSeconds(300), null)));
+                .thenReturn(Optional.of(new MatchSummaryDto(newMatchId, "DISCOVERY", Instant.now(), Instant.now().plusSeconds(300), null)));
 
         SwipeActionResponse response = service.recordLike(actorId, targetId, newClientActionId, "HEART");
 

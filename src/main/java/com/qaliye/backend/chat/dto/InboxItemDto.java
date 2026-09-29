@@ -6,6 +6,7 @@ import java.util.UUID;
 public record InboxItemDto(
         UUID matchId,
         String status,
+        String matchSource,
         ParticipantDto participant,
         LastMessageDto lastMessage,
         int unreadCount,

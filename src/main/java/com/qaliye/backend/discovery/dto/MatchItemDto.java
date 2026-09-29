@@ -7,6 +7,7 @@ import java.util.UUID;
 
 public record MatchItemDto(
         UUID matchId,
+        String matchSource,
         UUID userId,
         String displayName,
         int age,

@@ -56,6 +56,7 @@ public class MatchesService {
     private static final String MATCHES_SQL = """
             SELECT
                 m.id                                                        AS match_id,
+                m.match_source,
                 CASE WHEN m.user_one_id = :userId
                      THEN m.user_two_id
                      ELSE m.user_one_id
@@ -195,6 +196,7 @@ public class MatchesService {
 
             items.add(new MatchItemDto(
                     rs.getObject("match_id", UUID.class),
+                    rs.getString("match_source"),
                     rs.getObject("other_user_id", UUID.class),
                     rs.getString("display_name"),
                     rs.getInt("age"),

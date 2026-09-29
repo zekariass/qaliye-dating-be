@@ -7,6 +7,7 @@ public record LikeActionDto(
         String name,
         String description,
         String icon,
+        boolean isDefault,
         long credits,
         int sortOrder,
         Integer limit,

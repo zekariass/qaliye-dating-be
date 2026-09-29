@@ -71,11 +71,11 @@ public class BlindDateMatchService {
             INSERT INTO matches
                 (user_one_id, user_two_id,
                  user_one_like_action_id, user_two_like_action_id,
-                 created_by_action_id, rewind_eligible_until)
+                 created_by_action_id, match_source, rewind_eligible_until)
             VALUES
                 (:userOneId, :userTwoId,
                  :userOneLikeActionId, :userTwoLikeActionId,
-                 :createdByActionId,
+                 :createdByActionId, 'BLIND_DATE',
                  NOW() + INTERVAL '60 seconds')
             RETURNING id
             """;

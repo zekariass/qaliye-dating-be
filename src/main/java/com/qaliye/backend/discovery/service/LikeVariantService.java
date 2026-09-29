@@ -52,6 +52,7 @@ public class LikeVariantService {
                     variant.name(),
                     variant.description(),
                     variant.icon(),
+                    variant.isDefault(),
                     cost.creditCost(),
                     variant.sortOrder(),
                     cost.limitValue(),

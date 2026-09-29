@@ -18,7 +18,8 @@ public class DiscoveryMatchRepository {
     }
 
     public record MatchRow(UUID id, UUID userOneId, UUID userTwoId,
-                           String status, OffsetDateTime matchedAt,
+                           String status, String matchSource,
+                           OffsetDateTime matchedAt,
                            OffsetDateTime rewindEligibleUntil,
                            OffsetDateTime firstMessageAt) {}
 
@@ -26,19 +27,19 @@ public class DiscoveryMatchRepository {
             INSERT INTO matches
                 (user_one_id, user_two_id,
                  user_one_like_action_id, user_two_like_action_id,
-                 created_by_action_id, status,
+                 created_by_action_id, status, match_source,
                  rewind_eligible_until)
             VALUES
                 (:userOneId, :userTwoId,
                  :userOneLikeActionId, :userTwoLikeActionId,
-                 :createdByActionId, 'ACTIVE',
+                 :createdByActionId, 'ACTIVE', 'DISCOVERY',
                  NOW() + (:gracePeriodMinutes || ' minutes')::INTERVAL)
-            RETURNING id, user_one_id, user_two_id, status, matched_at,
+            RETURNING id, user_one_id, user_two_id, status, match_source, matched_at,
                       rewind_eligible_until, first_message_at
             """;
 
     private static final String FIND_ACTIVE_BY_PAIR = """
-            SELECT id, user_one_id, user_two_id, status, matched_at,
+            SELECT id, user_one_id, user_two_id, status, match_source, matched_at,
                    rewind_eligible_until, first_message_at
             FROM matches
             WHERE user_one_id = :userOneId
@@ -98,6 +99,7 @@ public class DiscoveryMatchRepository {
                 rs.getObject("user_one_id", UUID.class),
                 rs.getObject("user_two_id", UUID.class),
                 rs.getString("status"),
+                rs.getString("match_source"),
                 rs.getObject("matched_at", OffsetDateTime.class),
                 rs.getObject("rewind_eligible_until", OffsetDateTime.class),
                 rs.getObject("first_message_at", OffsetDateTime.class)

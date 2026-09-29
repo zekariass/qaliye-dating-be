@@ -479,7 +479,7 @@ class MessagePairLimitTest {
     }
 
     private ChatMatchRepository.MatchRow buildMatch(UUID mId, UUID u1, UUID u2) {
-        return new ChatMatchRepository.MatchRow(mId, u1, u2, "ACTIVE",
+        return new ChatMatchRepository.MatchRow(mId, u1, u2, "ACTIVE", "DISCOVERY",
                 null, null, null, 2L, 0L, 0L, 0L, 0L,
                 null, null, null, null, null, null, 0L, 0L, null, null);
     }

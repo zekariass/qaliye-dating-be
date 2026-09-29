@@ -47,7 +47,7 @@ public class MatchService {
     }
 
     private static final String FETCH_ACTIVE_MATCH_BY_ACTION_SQL = """
-            SELECT id, user_one_id, user_two_id, status, matched_at, rewind_eligible_until, first_message_at
+            SELECT id, user_one_id, user_two_id, status, match_source, matched_at, rewind_eligible_until, first_message_at
             FROM matches
             WHERE (created_by_action_id = :actionId
                    OR user_one_like_action_id = :actionId
@@ -102,6 +102,7 @@ public class MatchService {
                     rs.getObject("user_one_id", UUID.class),
                     rs.getObject("user_two_id", UUID.class),
                     rs.getString("status"),
+                    rs.getString("match_source"),
                     rs.getObject("matched_at", java.time.OffsetDateTime.class),
                     rs.getObject("rewind_eligible_until", java.time.OffsetDateTime.class),
                     rs.getObject("first_message_at", java.time.OffsetDateTime.class)
@@ -121,7 +122,7 @@ public class MatchService {
                 ? matchRow.matchedAt().toInstant() : Instant.now();
         Instant rewindEligibleUntil = matchRow.rewindEligibleUntil() != null
                 ? matchRow.rewindEligibleUntil().toInstant() : null;
-        return new MatchSummaryDto(matchRow.id(), matchedAt, rewindEligibleUntil, otherUser);
+        return new MatchSummaryDto(matchRow.id(), matchRow.matchSource(), matchedAt, rewindEligibleUntil, otherUser);
     }
 
     public MatchSummaryDto buildMatchSummaryFromRow(DiscoveryMatchRepository.MatchRow matchRow, UUID actorId) {

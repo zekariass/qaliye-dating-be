@@ -79,6 +79,7 @@ public class ChatQueryService {
     private static final String INBOX_BASE_SQL = """
             SELECT
                 m.id                                                AS match_id,
+                m.match_source,
                 m.matched_at,
                 m.last_message_at,
                 CASE WHEN m.user_one_id = :userId THEN m.user_two_id ELSE m.user_one_id END AS other_user_id,
@@ -188,6 +189,7 @@ public class ChatQueryService {
         List<InboxItemDto> items = new ArrayList<>();
         jdbc.query(sql.toString(), params, rs -> {
             UUID matchId   = rs.getObject("match_id", UUID.class);
+            String matchSource = rs.getString("match_source");
             UUID otherUserId = rs.getObject("other_user_id", UUID.class);
             long myReadSeq = rs.getLong("my_read_seq");
             long myClearedSeq = rs.getLong("my_cleared_seq");
@@ -218,7 +220,7 @@ public class ChatQueryService {
             OffsetDateTime mutedUntil = muteSettings.map(s -> s.mutedUntil()).orElse(null);
 
             items.add(new InboxItemDto(
-                    matchId, "ACTIVE", participant, lastMessageDto,
+                    matchId, "ACTIVE", matchSource, participant, lastMessageDto,
                     unread, toInstant(mutedUntil), toInstant(matchedAt), toInstant(lastMsgAt)));
         });
 
@@ -254,7 +256,7 @@ public class ChatQueryService {
                 ctx.theirLastDeliveredSequence(),
                 ctx.theirLastReadSequence());
 
-        return new ChatMatchMetadataDto(matchId, match.status(), participant, receiptState);
+        return new ChatMatchMetadataDto(matchId, match.status(), match.matchSource(), participant, receiptState);
     }
 
     @Transactional(readOnly = true)

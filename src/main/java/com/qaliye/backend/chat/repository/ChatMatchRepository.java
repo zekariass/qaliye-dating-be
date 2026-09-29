@@ -22,6 +22,7 @@ public class ChatMatchRepository {
 
     public record MatchRow(
             UUID id, UUID userOneId, UUID userTwoId, String status,
+            String matchSource,
             OffsetDateTime matchedAt, OffsetDateTime endedAt, String endReason,
             long nextMessageSequence,
             long userOneLastDeliveredSequence, long userTwoLastDeliveredSequence,
@@ -44,7 +45,7 @@ public class ChatMatchRepository {
     }
 
     private static final String SELECT_COLS = """
-            m.id, m.user_one_id, m.user_two_id, m.status,
+            m.id, m.user_one_id, m.user_two_id, m.status, m.match_source,
             m.matched_at, m.ended_at, m.end_reason,
             m.next_message_sequence,
             m.user_one_last_delivered_sequence, m.user_two_last_delivered_sequence,
@@ -223,6 +224,7 @@ public class ChatMatchRepository {
                 rs.getObject("user_one_id", UUID.class),
                 rs.getObject("user_two_id", UUID.class),
                 rs.getString("status"),
+                rs.getString("match_source"),
                 rs.getObject("matched_at", OffsetDateTime.class),
                 rs.getObject("ended_at", OffsetDateTime.class),
                 rs.getString("end_reason"),

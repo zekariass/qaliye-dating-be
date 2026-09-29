@@ -219,7 +219,7 @@ class LikesServiceTest {
                 UUID.randomUUID(), UUID.randomUUID(), "LIKE",
                 code, capitalize(code), "Send a " + code.toLowerCase(),
                 "https://cdn.qal.app/actions/" + code.toLowerCase() + ".webp",
-                active, 1);
+                active, false, 1);
     }
 
     private String capitalize(String s) {

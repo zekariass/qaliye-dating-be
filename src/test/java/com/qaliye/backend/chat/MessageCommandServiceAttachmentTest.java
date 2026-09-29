@@ -408,7 +408,7 @@ class MessageCommandServiceAttachmentTest {
     }
 
     private ChatMatchRepository.MatchRow buildActiveMatch() {
-        return new ChatMatchRepository.MatchRow(matchId, callerId, otherUser, "ACTIVE",
+        return new ChatMatchRepository.MatchRow(matchId, callerId, otherUser, "ACTIVE", "DISCOVERY",
                 null, null, null, 2L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, 0L, 0L, null, null);
     }
 

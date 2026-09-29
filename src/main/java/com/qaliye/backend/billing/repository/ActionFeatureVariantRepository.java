@@ -32,12 +32,13 @@ public class ActionFeatureVariantRepository {
             String description,
             String icon,
             boolean active,
+            boolean isDefault,
             int sortOrder
     ) {}
 
     private static final String FIND_BY_ACTION_CODE_AND_VARIANT_CODE_SQL = """
             SELECT afv.id, afv.feature_action_id, fa.code AS feature_action_code,
-                   afv.code, afv.name, afv.description, afv.icon, afv.active, afv.sort_order
+                   afv.code, afv.name, afv.description, afv.icon, afv.active, afv.is_default, afv.sort_order
             FROM action_feature_variants afv
             JOIN feature_actions fa ON fa.id = afv.feature_action_id
             WHERE fa.code = :actionCode
@@ -46,7 +47,7 @@ public class ActionFeatureVariantRepository {
 
     private static final String FIND_ACTIVE_BY_ACTION_CODE_SQL = """
             SELECT afv.id, afv.feature_action_id, fa.code AS feature_action_code,
-                   afv.code, afv.name, afv.description, afv.icon, afv.active, afv.sort_order
+                   afv.code, afv.name, afv.description, afv.icon, afv.active, afv.is_default, afv.sort_order
             FROM action_feature_variants afv
             JOIN feature_actions fa ON fa.id = afv.feature_action_id
             WHERE fa.code = :actionCode
@@ -58,7 +59,7 @@ public class ActionFeatureVariantRepository {
 
     private static final String FIND_ALL_BY_ACTION_CODE_SQL = """
             SELECT afv.id, afv.feature_action_id, fa.code AS feature_action_code,
-                   afv.code, afv.name, afv.description, afv.icon, afv.active, afv.sort_order
+                   afv.code, afv.name, afv.description, afv.icon, afv.active, afv.is_default, afv.sort_order
             FROM action_feature_variants afv
             JOIN feature_actions fa ON fa.id = afv.feature_action_id
             WHERE fa.code = :actionCode
@@ -66,7 +67,7 @@ public class ActionFeatureVariantRepository {
 
     private static final String FIND_BY_ID_SQL = """
             SELECT afv.id, afv.feature_action_id, fa.code AS feature_action_code,
-                   afv.code, afv.name, afv.description, afv.icon, afv.active, afv.sort_order
+                   afv.code, afv.name, afv.description, afv.icon, afv.active, afv.is_default, afv.sort_order
             FROM action_feature_variants afv
             JOIN feature_actions fa ON fa.id = afv.feature_action_id
             WHERE afv.id = :id
@@ -121,6 +122,7 @@ public class ActionFeatureVariantRepository {
                 rs.getString("description"),
                 rs.getString("icon"),
                 rs.getBoolean("active"),
+                rs.getBoolean("is_default"),
                 rs.getInt("sort_order")
         );
     }

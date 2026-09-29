@@ -104,7 +104,7 @@ class ReceiptServiceTest {
 
     private ChatMatchRepository.MatchRow activeMatch(long nextSeq, long u1Delivered, long u2Delivered,
                                   long u1Read, long u2Read) {
-        return new ChatMatchRepository.MatchRow(matchId, callerId, otherId, "ACTIVE",
+        return new ChatMatchRepository.MatchRow(matchId, callerId, otherId, "ACTIVE", "DISCOVERY",
                 null, null, null, nextSeq,
                 u1Delivered, u2Delivered, u1Read, u2Read,
                 null, null, null, null, null, null, 0L, 0L, null, null);
@@ -112,7 +112,7 @@ class ReceiptServiceTest {
 
     private ChatMatchRepository.MatchRow endedMatch() {
         return new ChatMatchRepository.MatchRow(matchId, callerId, otherId, "ENDED",
-                null, null, "USER_UNMATCH", 3L,
+                "DISCOVERY", null, null, "USER_UNMATCH", 3L,
                 0L, 0L, 0L, 0L, null, null, null, null, null, null, 0L, 0L, null, null);
     }
 }
