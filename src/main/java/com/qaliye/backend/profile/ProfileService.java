@@ -811,6 +811,21 @@ public class ProfileService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "PROFILE_NOT_FOUND");
         }
 
+        return loadOtherUserProfile(callerId, targetUserId, true);
+    }
+
+    /**
+     * Partner detail for a matchmaking introduction. Unlike
+     * {@link #getOtherUserProfile}, block and discovery-visibility checks do NOT
+     * apply — a matchmaker-curated introduction must always render the proposed
+     * partner even if they have left discovery visibility.
+     */
+    public OtherUserProfileDto getMatchmakingPartnerProfile(UUID viewerId, UUID targetUserId) {
+        return loadOtherUserProfile(viewerId, targetUserId, false);
+    }
+
+    private OtherUserProfileDto loadOtherUserProfile(UUID viewerId, UUID targetUserId,
+                                                     boolean requireVisible) {
         List<Map<String, Object>> rows = jdbc.queryForList("""
                 SELECT
                     p.user_id, p.display_name, p.gender,
@@ -831,7 +846,8 @@ public class ProfileService {
                 WHERE p.user_id = :targetUserId
                 """, Map.of("targetUserId", targetUserId));
 
-        if (rows.isEmpty() || !Boolean.TRUE.equals(rows.get(0).get("is_visible"))) {
+        if (rows.isEmpty()
+                || (requireVisible && !Boolean.TRUE.equals(rows.get(0).get("is_visible")))) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "PROFILE_NOT_FOUND");
         }
 
@@ -858,7 +874,7 @@ public class ProfileService {
                 .filter(Objects::nonNull)
                 .findFirst().orElse(null);
 
-        RelationInfo relationInfo = resolveRelationInfo(callerId, targetUserId);
+        RelationInfo relationInfo = resolveRelationInfo(viewerId, targetUserId);
 
         java.time.OffsetDateTime lastActiveAt =
                 r.get("last_active_at") instanceof java.time.OffsetDateTime odt ? odt : null;

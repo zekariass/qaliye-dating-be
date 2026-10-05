@@ -161,7 +161,7 @@ public class AdminPaymentConfigRepository {
                 price_minor_units = COALESCE(:priceMinorUnits, price_minor_units),
                 currency = COALESCE(:currency, currency),
                 billing_interval = COALESCE(:billingInterval, billing_interval),
-                features = CASE WHEN :features IS NULL THEN features ELSE :features::jsonb END,
+                features = CASE WHEN :features::jsonb IS NULL THEN features ELSE :features::jsonb END,
                 is_active = COALESCE(:isActive, is_active),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = :id
@@ -635,8 +635,8 @@ public class AdminPaymentConfigRepository {
                 payment_instructions = COALESCE(:paymentInstructions, payment_instructions),
                 is_active = COALESCE(:isActive, is_active),
                 display_order = COALESCE(:displayOrder, display_order),
-                metadata = CASE WHEN :metadata IS NULL THEN metadata ELSE :metadata::jsonb END,
-                verification_params = CASE WHEN :verificationParams IS NULL THEN verification_params ELSE :verificationParams::jsonb END,
+                metadata = CASE WHEN :metadata::jsonb IS NULL THEN metadata ELSE :metadata::jsonb END,
+                verification_params = CASE WHEN :verificationParams::jsonb IS NULL THEN verification_params ELSE :verificationParams::jsonb END,
                 logo_url = COALESCE(:logoUrl, logo_url),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = :id

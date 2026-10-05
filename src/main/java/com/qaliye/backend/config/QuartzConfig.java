@@ -2,6 +2,8 @@ package com.qaliye.backend.config;
 
 import com.qaliye.backend.billing.worker.PromotionRedemptionCleanupWorker;
 import com.qaliye.backend.blinddate.worker.BlindDateExpiryWorker;
+import com.qaliye.backend.matchmaking.worker.MatchmakingIntroductionExpiryWorker;
+import com.qaliye.backend.matchmaking.worker.MatchmakingRequestExpiryWorker;
 import com.qaliye.backend.moderation.MessageModerationJob;
 import com.qaliye.backend.moderation.ModerationRetryWorker;
 import com.qaliye.backend.notifications.worker.CampaignFanoutWorker;
@@ -11,6 +13,7 @@ import com.qaliye.backend.notifications.worker.NotificationOutboxFanoutWorker;
 import com.qaliye.backend.notifications.worker.NotificationRecoveryWorker;
 import com.qaliye.backend.payments.SubscriptionReconciliationJob;
 import com.qaliye.backend.user.DataDeletionJob;
+import com.qaliye.backend.videocall.worker.VideoCallRequestSweeper;
 import org.quartz.CronScheduleBuilder;
 import org.quartz.JobBuilder;
 import org.quartz.JobDetail;
@@ -239,6 +242,63 @@ public class QuartzConfig {
                 .withIdentity("blindDateExpiryTrigger")
                 .withSchedule(SimpleScheduleBuilder.simpleSchedule()
                         .withIntervalInMinutes(1)
+                        .repeatForever())
+                .build();
+    }
+
+    @Bean
+    public JobDetail matchmakingRequestExpiryJobDetail() {
+        return JobBuilder.newJob(MatchmakingRequestExpiryWorker.class)
+                .withIdentity("matchmakingRequestExpiryJob")
+                .storeDurably()
+                .build();
+    }
+
+    @Bean
+    public Trigger matchmakingRequestExpiryTrigger(JobDetail matchmakingRequestExpiryJobDetail) {
+        return TriggerBuilder.newTrigger()
+                .forJob(matchmakingRequestExpiryJobDetail)
+                .withIdentity("matchmakingRequestExpiryTrigger")
+                .withSchedule(SimpleScheduleBuilder.simpleSchedule()
+                        .withIntervalInMinutes(5)
+                        .repeatForever())
+                .build();
+    }
+
+    @Bean
+    public JobDetail matchmakingIntroductionExpiryJobDetail() {
+        return JobBuilder.newJob(MatchmakingIntroductionExpiryWorker.class)
+                .withIdentity("matchmakingIntroductionExpiryJob")
+                .storeDurably()
+                .build();
+    }
+
+    @Bean
+    public Trigger matchmakingIntroductionExpiryTrigger(JobDetail matchmakingIntroductionExpiryJobDetail) {
+        return TriggerBuilder.newTrigger()
+                .forJob(matchmakingIntroductionExpiryJobDetail)
+                .withIdentity("matchmakingIntroductionExpiryTrigger")
+                .withSchedule(SimpleScheduleBuilder.simpleSchedule()
+                        .withIntervalInMinutes(5)
+                        .repeatForever())
+                .build();
+    }
+
+    @Bean
+    public JobDetail videoCallRequestSweeperJobDetail() {
+        return JobBuilder.newJob(VideoCallRequestSweeper.class)
+                .withIdentity("videoCallRequestSweeperJob")
+                .storeDurably()
+                .build();
+    }
+
+    @Bean
+    public Trigger videoCallRequestSweeperTrigger(JobDetail videoCallRequestSweeperJobDetail) {
+        return TriggerBuilder.newTrigger()
+                .forJob(videoCallRequestSweeperJobDetail)
+                .withIdentity("videoCallRequestSweeperTrigger")
+                .withSchedule(SimpleScheduleBuilder.simpleSchedule()
+                        .withIntervalInMinutes(15)
                         .repeatForever())
                 .build();
     }

@@ -125,7 +125,7 @@ public class DiscoveryService {
                     AND (:showVerifiedOnly = FALSE OR p.is_verified = TRUE)
                     AND (:skipDistance = TRUE
                          OR ST_DWithin(a.coords, ca.coords, :maxDistanceMeters))
-                    AND (:scopeResidencyType IS NULL
+                    AND (:scopeResidencyType::text IS NULL
                          OR p.residency_type = :scopeResidencyType)
                     AND EXISTS (
                         SELECT 1 FROM profile_photos pph

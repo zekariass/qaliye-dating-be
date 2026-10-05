@@ -213,6 +213,23 @@ blind-date:
   max-custom-questions: ${BLIND_DATE_MAX_CUSTOM_QUESTIONS:10}
   decision-window-hours: ${BLIND_DATE_DECISION_WINDOW_HOURS:72}
 
+video:
+  # Which VideoCallProvider backs IN_APP calls — swap vendors via config only.
+  platform: ${VIDEO_PLATFORM:AGORA}
+  agora:
+    app-id: ${AGORA_APP_ID:d8bd422f57a149c9989cfc23fc84b27b}
+    app-certificate: ${AGORA_APP_CERTIFICATE:e033bd8a94144ebe9aae965889c42821}
+    token-ttl-seconds: ${AGORA_TOKEN_TTL_SECONDS:3600}
+
+matchmaking:
+  request-lifetime-days: ${MATCHMAKING_REQUEST_LIFETIME_DAYS:90}
+  introduction-decision-window-hours: ${MATCHMAKING_INTRODUCTION_DECISION_WINDOW_HOURS:72}
+  reintroduction-cooldown-days: ${MATCHMAKING_REINTRODUCTION_COOLDOWN_DAYS:30}
+  candidate-search-cap: ${MATCHMAKING_CANDIDATE_SEARCH_CAP:200}
+  introductions-per-request: ${MATCHMAKING_INTRODUCTIONS_PER_REQUEST:1}
+  video-call-request-expiry-hours: ${MATCHMAKING_VIDEO_CALL_REQUEST_EXPIRY_HOURS:48}
+  video-call-reminder-cooldown-seconds: ${MATCHMAKING_VIDEO_CALL_REMINDER_COOLDOWN_SECONDS:60}
+
 storage:
   signed-url:
     ttl-seconds: 7200

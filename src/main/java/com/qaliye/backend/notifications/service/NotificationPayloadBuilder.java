@@ -134,16 +134,17 @@ public class NotificationPayloadBuilder {
 
     private ExpoMessage buildAccountAlert(OutboxRow outbox, String deviceToken) {
         String alertCode = extractAlertCode(outbox.payloadJson());
-        String sessionId = extractJsonString(outbox.payloadJson(), "session_id");
 
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("notification_type", "ACCOUNT_ALERT");
         if (alertCode != null) {
             data.put("alert_code", alertCode);
         }
-        if (sessionId != null) {
-            data.put("session_id", sessionId);
-        }
+        // Forward every other textual payload field (session_id, request_id,
+        // introduction_id, match_id, video_call_request_id, ...) so clients
+        // can deep-link without a round-trip.
+        data.putAll(extractJsonFields(outbox.payloadJson(),
+                Set.of("notification_type", "notification_id", "alert_code")));
 
         String title = "Qaliye";
         String body  = alertBody(alertCode);
@@ -165,6 +166,24 @@ public class NotificationPayloadBuilder {
             case "BLIND_DATE_ELIMINATED" -> "This Blind Date has moved on without you.";
             case "BLIND_DATE_MATCHED"    -> "It's a match! Your Blind Date said yes too. 💕";
             case "BLIND_DATE_NO_MATCH"   -> "Your Blind Date reveal has ended without a match.";
+            case "MATCHMAKING_REQUEST_CREATED"         -> "Your matchmaking request is live — our matchmakers are on it. ✨";
+            case "MATCHMAKING_REQUEST_CANCELLED"       -> "Your matchmaking request was cancelled.";
+            case "MATCHMAKING_REQUEST_EXPIRED"         -> "Your matchmaking request has expired.";
+            case "MATCHMAKING_INTRODUCTION_PROPOSED"   -> "Your matchmaker found someone for you! 💌";
+            case "MATCHMAKING_INTRODUCTION_DECLINED"   -> "A matchmaking introduction was declined.";
+            case "MATCHMAKING_INTRODUCTION_CANCELLED"  -> "A matchmaking introduction was cancelled.";
+            case "MATCHMAKING_INTRODUCTION_EXPIRED"    -> "A matchmaking introduction has expired.";
+            case "MATCHMAKING_MATCHED"                 -> "It's a match! You both said yes. 💕";
+            case "VIDEO_CALL_REQUESTED"   -> "Incoming video call request 📹";
+            case "VIDEO_CALL_ACCEPTED"    -> "Your video call request was accepted!";
+            case "VIDEO_CALL_DECLINED"    -> "Your video call request was declined.";
+            case "VIDEO_CALL_CANCELLED"   -> "The video call request was cancelled.";
+            case "VIDEO_CALL_EXPIRED"     -> "Your video call request has expired.";
+            case "AUDIO_CALL_REQUESTED"   -> "Incoming audio call request 📞";
+            case "AUDIO_CALL_ACCEPTED"    -> "Your audio call request was accepted!";
+            case "AUDIO_CALL_DECLINED"    -> "Your audio call request was declined.";
+            case "AUDIO_CALL_CANCELLED"   -> "The audio call request was cancelled.";
+            case "AUDIO_CALL_EXPIRED"     -> "Your audio call request has expired.";
             default                      -> "Important account update";
         };
     }
@@ -185,6 +204,21 @@ public class NotificationPayloadBuilder {
             if (node.has(field) && node.get(field).isTextual()) return node.get(field).asText();
         } catch (Exception ignored) {}
         return null;
+    }
+
+    /** Returns all textual fields of payload_json except the excluded keys. */
+    private Map<String, Object> extractJsonFields(String payloadJson, Set<String> exclude) {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        if (payloadJson == null || payloadJson.isBlank()) return fields;
+        try {
+            var node = MAPPER.readTree(payloadJson);
+            node.fields().forEachRemaining(entry -> {
+                if (!exclude.contains(entry.getKey()) && entry.getValue().isTextual()) {
+                    fields.put(entry.getKey(), entry.getValue().asText());
+                }
+            });
+        } catch (Exception ignored) {}
+        return fields;
     }
 
     private ExpoMessage buildMarketing(OutboxRow outbox, String deviceToken) {

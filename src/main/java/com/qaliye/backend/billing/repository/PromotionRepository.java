@@ -168,14 +168,14 @@ public class PromotionRepository {
 
     private static final String LIST_CAMPAIGNS_SQL =
             CAMPAIGN_SELECT + """
-            WHERE (:status IS NULL OR status = :status)
+            WHERE (:status::text IS NULL OR status = :status)
             ORDER BY created_at DESC
             LIMIT :limit OFFSET :offset
             """;
 
     private static final String COUNT_CAMPAIGNS_SQL = """
             SELECT COUNT(*) FROM promotion_campaigns
-            WHERE (:status IS NULL OR status = :status)
+            WHERE (:status::text IS NULL OR status = :status)
             """;
 
     private static final String ATOMIC_RESERVE_SQL = """

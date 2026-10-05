@@ -2,8 +2,10 @@ package com.qaliye.backend.common;
 
 import com.qaliye.backend.billing.service.CreditService;
 import com.qaliye.backend.discovery.exception.ActionLimitExceededException;
+import com.qaliye.backend.videocall.service.VideoCallRequestService;
 import org.postgresql.util.PSQLException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -68,6 +70,17 @@ public class GlobalExceptionHandler {
                         "message", ex.getMessage(),
                         "details", Map.of("action_type", ex.getActionType(),
                                           "period_type", ex.getPeriodType()))));
+    }
+
+    @ExceptionHandler(VideoCallRequestService.ReminderCooldownException.class)
+    public ResponseEntity<Map<String, Object>> handleReminderCooldown(
+            VideoCallRequestService.ReminderCooldownException ex) {
+        return ResponseEntity.status(429)
+                .header(HttpHeaders.RETRY_AFTER, Long.toString(ex.getRetryAfterSeconds()))
+                .body(Map.of("error", Map.of(
+                        "code", "RATE_LIMITED",
+                        "message", ex.getReason(),
+                        "details", Map.of("retry_after_seconds", ex.getRetryAfterSeconds()))));
     }
 
     @ExceptionHandler(ResponseStatusException.class)

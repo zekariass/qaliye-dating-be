@@ -92,7 +92,11 @@ public class ChatQueryService {
                 pp.storage_bucket,
                 pp.storage_path,
                 au.last_active_at,
-                au.show_activity_status
+                au.show_activity_status,
+                vcr.id                                                AS vcr_id,
+                vcr.status                                            AS vcr_status,
+                vcr.call_type                                         AS vcr_call_type,
+                (vcr.requester_user_id = :userId)                     AS vcr_is_requester
             FROM matches m
             JOIN profiles p ON p.user_id = CASE WHEN m.user_one_id = :userId
                                                 THEN m.user_two_id ELSE m.user_one_id END
@@ -105,6 +109,12 @@ public class ChatQueryService {
                AND pp.is_primary = TRUE
                AND pp.moderation_status = 'APPROVED'
                AND pp.deleted_at IS NULL
+            -- Live video-call request only: uq_video_call_request_per_match
+            -- guarantees ≤1 row per match, so this join cannot fan out.
+            LEFT JOIN video_call_requests vcr
+                ON vcr.match_id = m.id
+               AND vcr.status IN ('PENDING', 'ACCEPTED')
+               AND (vcr.status = 'ACCEPTED' OR vcr.request_expires_at > now())
             WHERE (m.user_one_id = :userId OR m.user_two_id = :userId)
               AND m.status = 'ACTIVE'
               AND (cu.role = 'TEST' AND au.role = 'TEST'
@@ -141,7 +151,7 @@ public class ChatQueryService {
     private static final String CURSOR_SQL = """
               AND (
                   m.last_message_at < :cursorLastMessageAt
-                  OR (m.last_message_at IS NULL AND :cursorLastMessageAt IS NULL
+                  OR (m.last_message_at IS NULL AND :cursorLastMessageAt::timestamptz IS NULL
                       AND (m.matched_at < :cursorMatchedAt
                            OR (m.matched_at = :cursorMatchedAt AND m.id < :cursorMatchId)))
                   OR (m.last_message_at = :cursorLastMessageAt
@@ -219,9 +229,23 @@ public class ChatQueryService {
             var muteSettings = notifSettingsRepo.find(matchId, callerId);
             OffsetDateTime mutedUntil = muteSettings.map(s -> s.mutedUntil()).orElse(null);
 
+            InboxItemDto.VideoCallRequestSummary vcrSummary = null;
+            UUID vcrId = rs.getObject("vcr_id", UUID.class);
+            if (vcrId != null) {
+                String vcrStatus = rs.getString("vcr_status");
+                boolean vcrIsRequester = rs.getBoolean("vcr_is_requester");
+                boolean vcrPending = "PENDING".equals(vcrStatus);
+                vcrSummary = new InboxItemDto.VideoCallRequestSummary(
+                        vcrId, vcrStatus, rs.getString("vcr_call_type"), vcrIsRequester,
+                        /* canAccept */ vcrPending && !vcrIsRequester,
+                        /* canCancel */ vcrPending && vcrIsRequester,
+                        /* canJoin   */ "ACCEPTED".equals(vcrStatus));
+            }
+
             items.add(new InboxItemDto(
                     matchId, "ACTIVE", matchSource, participant, lastMessageDto,
-                    unread, toInstant(mutedUntil), toInstant(matchedAt), toInstant(lastMsgAt)));
+                    unread, toInstant(mutedUntil), toInstant(matchedAt), toInstant(lastMsgAt),
+                    vcrSummary));
         });
 
         boolean hasMore = items.size() > limit;

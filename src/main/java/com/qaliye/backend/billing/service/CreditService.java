@@ -420,6 +420,23 @@ public class CreditService {
     }
 
     /**
+     * Returns the positive credit amount previously consumed under an idempotency key,
+     * or {@code null} when no ACTION_CONSUMPTION ledger entry exists (e.g. the action
+     * was covered by a free plan allowance and no credits were deducted).
+     */
+    public Long findConsumedAmount(UUID userId, String idempotencyKey) {
+        List<Long> rows = jdbc.query(
+                "SELECT -amount FROM user_credit_ledger "
+                        + "WHERE user_id = :userId AND idempotency_key = :key "
+                        + "AND transaction_type = 'ACTION_CONSUMPTION'",
+                new MapSqlParameterSource()
+                        .addValue("userId", userId)
+                        .addValue("key", idempotencyKey),
+                (rs, i) -> rs.getLong(1));
+        return rows.stream().findFirst().orElse(null);
+    }
+
+    /**
      * Allocates a credit deduction across existing lots using FIFO expiry order
      * (earliest-expiring first, then purchased/non-expiring).
      */

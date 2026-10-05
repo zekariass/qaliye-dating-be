@@ -1349,8 +1349,8 @@ public class BillingRepository {
             LEFT JOIN payment_methods pm ON pm.id = po.payment_method_id
             LEFT JOIN profiles p ON p.user_id = po.user_id
             WHERE (:statusesEmpty OR po.status IN (:statuses))
-              AND (:methodCode IS NULL OR pm.method_code = :methodCode)
-              AND (:countryCode IS NULL OR EXISTS (
+              AND (:methodCode::text IS NULL OR pm.method_code = :methodCode)
+              AND (:countryCode::text IS NULL OR EXISTS (
                   SELECT 1 FROM app_users au
                   JOIN addresses a ON a.id = au.address_id
                   WHERE au.id = po.user_id AND a.country_code = :countryCode
@@ -1363,7 +1363,7 @@ public class BillingRepository {
             SELECT COUNT(*) FROM payment_orders po
             LEFT JOIN payment_methods pm ON pm.id = po.payment_method_id
             WHERE (:statusesEmpty OR po.status IN (:statuses))
-              AND (:methodCode IS NULL OR pm.method_code = :methodCode)
+              AND (:methodCode::text IS NULL OR pm.method_code = :methodCode)
             """;
 
     public List<Map<String, Object>> listOrders(List<String> statuses, String methodCode,

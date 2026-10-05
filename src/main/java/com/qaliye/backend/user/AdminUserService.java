@@ -28,9 +28,9 @@ public class AdminUserService {
                    p.display_name, p.is_onboarded, p.is_verified, p.profile_completion_score
             FROM app_users u
             LEFT JOIN profiles p ON p.user_id = u.id
-            WHERE (:status IS NULL OR u.status = :status)
-              AND (:role IS NULL OR u.role = :role)
-              AND (:search IS NULL OR LOWER(p.display_name) LIKE LOWER(:search))
+            WHERE (:status::text IS NULL OR u.status = :status)
+              AND (:role::text IS NULL OR u.role = :role)
+              AND (:search::text IS NULL OR LOWER(p.display_name) LIKE LOWER(:search))
             ORDER BY u.created_at DESC
             LIMIT :pageSize OFFSET :offset
             """;
@@ -39,9 +39,9 @@ public class AdminUserService {
             SELECT COUNT(*)
             FROM app_users u
             LEFT JOIN profiles p ON p.user_id = u.id
-            WHERE (:status IS NULL OR u.status = :status)
-              AND (:role IS NULL OR u.role = :role)
-              AND (:search IS NULL OR LOWER(p.display_name) LIKE LOWER(:search))
+            WHERE (:status::text IS NULL OR u.status = :status)
+              AND (:role::text IS NULL OR u.role = :role)
+              AND (:search::text IS NULL OR LOWER(p.display_name) LIKE LOWER(:search))
             """;
 
     private static final String USER_DETAIL_SQL = """

@@ -4,6 +4,7 @@ import com.qaliye.backend.chat.repository.ChatMatchRepository;
 import com.qaliye.backend.chat.service.ChatOutboxService;
 import com.qaliye.backend.chat.service.MatchLifecycleService;
 import com.qaliye.backend.discovery.repository.DiscoveryActionRepository;
+import com.qaliye.backend.videocall.service.VideoCallRequestService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -23,6 +24,7 @@ class MatchLifecycleServiceTest {
     @Mock ChatMatchRepository matchRepository;
     @Mock ChatOutboxService outboxService;
     @Mock DiscoveryActionRepository actionRepository;
+    @Mock VideoCallRequestService videoCallRequestService;
 
     MatchLifecycleService service;
 
@@ -35,7 +37,8 @@ class MatchLifecycleServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new MatchLifecycleService(matchRepository, outboxService, actionRepository);
+        service = new MatchLifecycleService(matchRepository, outboxService, actionRepository,
+                videoCallRequestService);
     }
 
     @Test
@@ -48,6 +51,7 @@ class MatchLifecycleServiceTest {
         boolean result = service.endMatch(matchId, "USER_UNMATCH", endedByUser);
 
         assertThat(result).isTrue();
+        verify(videoCallRequestService).cancelActiveForMatch(matchId);
         verify(outboxService).createMatchEndedEvent(eq(matchId), eq("USER_UNMATCH"), any());
         verify(outboxService).createInboxMatchRemovedEvent(eq(matchId), eq(userOneId), any());
         verify(outboxService).createInboxMatchRemovedEvent(eq(matchId), eq(userTwoId), any());

@@ -146,8 +146,34 @@ public class NotificationOutboxService {
 
     public void createAccountAlertEvent(UUID recipientUserId, String alertCode,
                                         UUID businessEventId, OffsetDateTime occurredAt) {
+        createAccountAlertEvent(recipientUserId, alertCode, businessEventId, occurredAt, null);
+    }
+
+    /**
+     * Same as {@link #createAccountAlertEvent(UUID, String, UUID, OffsetDateTime)}
+     * plus extra string fields merged into payload_json (e.g. request_id,
+     * introduction_id, match_id) so the push data payload can carry the ids
+     * the client needs for deep-linking.
+     */
+    public void createAccountAlertEvent(UUID recipientUserId, String alertCode,
+                                        UUID businessEventId, OffsetDateTime occurredAt,
+                                        Map<String, Object> extraData) {
+        createAccountAlertEvent(recipientUserId, alertCode, businessEventId,
+                occurredAt, extraData, null);
+    }
+
+    /**
+     * Same as the 5-arg overload but appends {@code dedupeQualifier} to the
+     * dedupe key — required when the same alert re-fires for the same
+     * business event (e.g. call-request reminders), otherwise the resend is
+     * silently deduped against the original event.
+     */
+    public void createAccountAlertEvent(UUID recipientUserId, String alertCode,
+                                        UUID businessEventId, OffsetDateTime occurredAt,
+                                        Map<String, Object> extraData, String dedupeQualifier) {
         String dedupeKey = "account-alert:" + alertCode + ":" + recipientUserId
-                + ":" + businessEventId;
+                + ":" + businessEventId
+                + (dedupeQualifier != null ? ":" + dedupeQualifier : "");
 
         if (outboxRepo.existsByDedupeKey(dedupeKey)) {
             return;
@@ -159,6 +185,9 @@ public class NotificationOutboxService {
         payload.put("alert_code", alertCode);
         if (alertCode != null && alertCode.startsWith("BLIND_DATE_") && businessEventId != null) {
             payload.put("session_id", businessEventId.toString());
+        }
+        if (extraData != null) {
+            extraData.forEach(payload::put);
         }
 
         outboxRepo.insert(

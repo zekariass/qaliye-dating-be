@@ -3,6 +3,7 @@ package com.qaliye.backend.chat.service;
 import com.qaliye.backend.chat.repository.ChatMatchRepository;
 import com.qaliye.backend.chat.repository.ChatMatchRepository.MatchRow;
 import com.qaliye.backend.discovery.repository.DiscoveryActionRepository;
+import com.qaliye.backend.videocall.service.VideoCallRequestService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -21,13 +22,16 @@ public class MatchLifecycleService {
     private final ChatMatchRepository matchRepository;
     private final ChatOutboxService chatOutboxService;
     private final DiscoveryActionRepository actionRepository;
+    private final VideoCallRequestService videoCallRequestService;
 
     public MatchLifecycleService(ChatMatchRepository matchRepository,
                                   ChatOutboxService chatOutboxService,
-                                  DiscoveryActionRepository actionRepository) {
+                                  DiscoveryActionRepository actionRepository,
+                                  VideoCallRequestService videoCallRequestService) {
         this.matchRepository = matchRepository;
         this.chatOutboxService = chatOutboxService;
         this.actionRepository = actionRepository;
+        this.videoCallRequestService = videoCallRequestService;
     }
 
     @Transactional(propagation = Propagation.REQUIRED)
@@ -45,6 +49,9 @@ public class MatchLifecycleService {
 
         actionRepository.reverseActionWithReason(match.userOneLikeActionId(), "MATCH_ENDED");
         actionRepository.reverseActionWithReason(match.userTwoLikeActionId(), "MATCH_ENDED");
+
+        // Kill any live video-call request for this match (PENDING/ACCEPTED).
+        videoCallRequestService.cancelActiveForMatch(matchId);
 
         OffsetDateTime now = OffsetDateTime.now();
         chatOutboxService.createMatchEndedEvent(matchId, endReason, now);
