@@ -13,6 +13,7 @@ import com.qaliye.backend.notifications.worker.NotificationOutboxFanoutWorker;
 import com.qaliye.backend.notifications.worker.NotificationRecoveryWorker;
 import com.qaliye.backend.payments.SubscriptionReconciliationJob;
 import com.qaliye.backend.user.DataDeletionJob;
+import com.qaliye.backend.videocall.worker.VideoCallDeadlineSweeper;
 import com.qaliye.backend.videocall.worker.VideoCallRequestSweeper;
 import org.quartz.CronScheduleBuilder;
 import org.quartz.JobBuilder;
@@ -299,6 +300,26 @@ public class QuartzConfig {
                 .withIdentity("videoCallRequestSweeperTrigger")
                 .withSchedule(SimpleScheduleBuilder.simpleSchedule()
                         .withIntervalInMinutes(15)
+                        .repeatForever())
+                .build();
+    }
+
+    @Bean
+    public JobDetail videoCallDeadlineSweeperJobDetail() {
+        return JobBuilder.newJob(VideoCallDeadlineSweeper.class)
+                .withIdentity("videoCallDeadlineSweeperJob")
+                .storeDurably()
+                .build();
+    }
+
+    /** Every 30s: ACCEPTED calls past call_deadline_at → COMPLETED + alerts. */
+    @Bean
+    public Trigger videoCallDeadlineSweeperTrigger(JobDetail videoCallDeadlineSweeperJobDetail) {
+        return TriggerBuilder.newTrigger()
+                .forJob(videoCallDeadlineSweeperJobDetail)
+                .withIdentity("videoCallDeadlineSweeperTrigger")
+                .withSchedule(SimpleScheduleBuilder.simpleSchedule()
+                        .withIntervalInSeconds(30)
                         .repeatForever())
                 .build();
     }

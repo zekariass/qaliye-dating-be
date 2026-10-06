@@ -17,11 +17,35 @@ public class VideoProperties {
 
     private Agora agora = new Agora();
 
+    private Call call = new Call();
+
     public String getPlatform() { return platform; }
     public void setPlatform(String platform) { this.platform = platform; }
 
     public Agora getAgora() { return agora; }
     public void setAgora(Agora agora) { this.agora = agora; }
+
+    public Call getCall() { return call; }
+    public void setCall(Call call) { this.call = call; }
+
+    /**
+     * Per-call maximum durations, keyed by call_type. The deadline is
+     * anchored on the first join (call_deadline_at) and enforced by minting
+     * RTC tokens that expire no later than it — Agora drops both
+     * participants server-side when the privilege timestamp passes.
+     */
+    public static class Call {
+        /** Max seconds a VIDEO call may run. */
+        private int videoMaxSeconds = 1800;
+        /** Max seconds an AUDIO call may run. */
+        private int audioMaxSeconds = 1800;
+
+        public int getVideoMaxSeconds() { return videoMaxSeconds; }
+        public void setVideoMaxSeconds(int videoMaxSeconds) { this.videoMaxSeconds = videoMaxSeconds; }
+
+        public int getAudioMaxSeconds() { return audioMaxSeconds; }
+        public void setAudioMaxSeconds(int audioMaxSeconds) { this.audioMaxSeconds = audioMaxSeconds; }
+    }
 
     public static class Agora {
         private String appId;

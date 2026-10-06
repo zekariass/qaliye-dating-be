@@ -220,6 +220,11 @@ video:
     app-id: ${AGORA_APP_ID:d8bd422f57a149c9989cfc23fc84b27b}
     app-certificate: ${AGORA_APP_CERTIFICATE:e033bd8a94144ebe9aae965889c42821}
     token-ttl-seconds: ${AGORA_TOKEN_TTL_SECONDS:3600}
+  call:
+    # Per-call max duration; the deadline anchors on first join and the RTC
+    # token's privilege expiry is clamped to it — Agora drops both parties.
+    video-max-seconds: ${VIDEO_CALL_MAX_SECONDS:600}
+    audio-max-seconds: ${AUDIO_CALL_MAX_SECONDS:900}
 
 matchmaking:
   request-lifetime-days: ${MATCHMAKING_REQUEST_LIFETIME_DAYS:90}

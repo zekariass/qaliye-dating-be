@@ -42,6 +42,15 @@ public final class VideoCallConstants {
     public static final String ALERT_AUDIO_CANCELLED = "AUDIO_CALL_CANCELLED";
     public static final String ALERT_AUDIO_EXPIRED   = "AUDIO_CALL_EXPIRED";
 
+    /**
+     * Call hit its per-type duration cap (call_deadline_at elapsed) — the
+     * deadline sweeper / post-deadline join completes the request and both
+     * parties get this so the client can render "time limit reached"
+     * instead of a generic ended screen.
+     */
+    public static final String ALERT_ENDED_TIME_LIMIT       = "VIDEO_CALL_ENDED_TIME_LIMIT";
+    public static final String ALERT_AUDIO_ENDED_TIME_LIMIT = "AUDIO_CALL_ENDED_TIME_LIMIT";
+
     /** Picks the VIDEO_CALL_* or AUDIO_CALL_* alert code by call_type. */
     public static String alertCode(String videoCode, String audioCode, String callType) {
         return CALL_TYPE_AUDIO.equals(callType) ? audioCode : videoCode;

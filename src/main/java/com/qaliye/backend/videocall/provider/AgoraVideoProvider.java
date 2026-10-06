@@ -5,6 +5,7 @@ import io.agora.media.RtcTokenBuilder2.Role;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
 
@@ -36,7 +37,8 @@ public class AgoraVideoProvider implements VideoCallProvider {
     }
 
     @Override
-    public JoinSession issueJoin(UUID videoCallRequestId, UUID userId, boolean host) {
+    public JoinSession issueJoin(UUID videoCallRequestId, UUID userId, boolean host,
+                                 OffsetDateTime notAfter) {
         var agora = props.getAgora();
         if (agora.getAppId() == null || agora.getAppId().isBlank()
                 || agora.getAppCertificate() == null || agora.getAppCertificate().isBlank()) {
@@ -48,8 +50,21 @@ public class AgoraVideoProvider implements VideoCallProvider {
         String channelName = channelFor(videoCallRequestId);
         long uid = uidFor(videoCallRequestId, userId);
         int uidInt = (int) uid;
-        int ttl = agora.getTokenTtlSeconds();
-        Instant expiresAt = Instant.now().plusSeconds(ttl);
+
+        // Call-duration cap: the privilege expiry is min(configured TTL,
+        // notAfter). When notAfter is the anchored call_deadline_at, Agora's
+        // edge servers drop this user at the deadline — server-side max-
+        // duration enforcement shared by both participants.
+        Instant now = Instant.now();
+        Instant expiresAt = now.plusSeconds(agora.getTokenTtlSeconds());
+        if (notAfter != null && notAfter.toInstant().isBefore(expiresAt)) {
+            expiresAt = notAfter.toInstant();
+        }
+        // Seconds-from-now, rounded up so a sub-second remainder still yields
+        // a 1s token rather than an instantly-dead one.
+        long ttlSeconds = Math.max(1L,
+                (expiresAt.toEpochMilli() - now.toEpochMilli() + 999) / 1000);
+        int ttl = (int) Math.min(Integer.MAX_VALUE, ttlSeconds);
 
         // All joiners publish/subscribe — both parties are full participants,
         // so ROLE_PUBLISHER applies to everyone.

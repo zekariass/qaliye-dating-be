@@ -354,4 +354,20 @@ public class NotificationDispatcher {
             log.error("dispatchVideoCallExpired failed for request {}: {}", requestId, e.getMessage());
         }
     }
+
+    /**
+     * One participant learns the call hit its per-type duration cap — sent
+     * to BOTH parties by the deadline sweeper / post-deadline join.
+     */
+    public void dispatchVideoCallEndedTimeLimit(UUID userId, UUID requestId, String callType) {
+        try {
+            outboxService.createAccountAlertEvent(userId,
+                    VideoCallConstants.alertCode(VideoCallConstants.ALERT_ENDED_TIME_LIMIT,
+                            VideoCallConstants.ALERT_AUDIO_ENDED_TIME_LIMIT, callType),
+                    requestId, OffsetDateTime.now(),
+                    Map.of("video_call_request_id", requestId.toString()));
+        } catch (Exception e) {
+            log.error("dispatchVideoCallEndedTimeLimit failed for request {}: {}", requestId, e.getMessage());
+        }
+    }
 }

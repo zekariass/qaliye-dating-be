@@ -22,10 +22,16 @@ public interface VideoCallProvider {
      * Mints join credentials on demand for a participant. Tokens are never
      * persisted — a fresh one is issued on every call.
      *
-     * @param host true when the joiner facilitates the call (unused today —
-     *             both parties join as regular participants)
+     * @param host      true when the joiner facilitates the call (unused
+     *                  today — both parties join as regular participants)
+     * @param notAfter  upper bound for the token's privilege expiry —
+     *                  typically the per-call deadline. The token lives at
+     *                  most {@code notAfter}, and no longer than the
+     *                  provider's configured max TTL. {@code null} =
+     *                  uncapped (max TTL applies).
      */
-    JoinSession issueJoin(UUID videoCallRequestId, UUID userId, boolean host);
+    JoinSession issueJoin(UUID videoCallRequestId, UUID userId, boolean host,
+                          OffsetDateTime notAfter);
 
     /** Everything a client needs to join a call. */
     record JoinSession(

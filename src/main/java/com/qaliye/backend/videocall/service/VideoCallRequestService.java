@@ -9,6 +9,7 @@ import com.qaliye.backend.notifications.NotificationDispatcher;
 import com.qaliye.backend.videocall.VideoCallConstants;
 import com.qaliye.backend.videocall.dto.VideoCallRequestView;
 import com.qaliye.backend.videocall.provider.VideoCallProvider;
+import com.qaliye.backend.videocall.provider.VideoProperties;
 import com.qaliye.backend.videocall.repository.VideoCallRequestRepository;
 import com.qaliye.backend.videocall.repository.VideoCallRequestRepository.MatchPair;
 import com.qaliye.backend.videocall.repository.VideoCallRequestRepository.VideoCallRequestRow;
@@ -46,6 +47,7 @@ public class VideoCallRequestService {
     private final VideoCallRequestRepository requestRepo;
     private final VideoCallProvider videoProvider;
     private final MatchmakingProperties props;
+    private final VideoProperties videoProps;
     private final NotificationDispatcher notificationDispatcher;
     private final ActionCostService actionCostService;
     private final ActionLimitRepository actionLimitRepo;
@@ -54,6 +56,7 @@ public class VideoCallRequestService {
     public VideoCallRequestService(VideoCallRequestRepository requestRepo,
                                    VideoCallProvider videoProvider,
                                    MatchmakingProperties props,
+                                   VideoProperties videoProps,
                                    NotificationDispatcher notificationDispatcher,
                                    ActionCostService actionCostService,
                                    ActionLimitRepository actionLimitRepo,
@@ -61,6 +64,7 @@ public class VideoCallRequestService {
         this.requestRepo = requestRepo;
         this.videoProvider = videoProvider;
         this.props = props;
+        this.videoProps = videoProps;
         this.notificationDispatcher = notificationDispatcher;
         this.actionCostService = actionCostService;
         this.actionLimitRepo = actionLimitRepo;
@@ -185,12 +189,33 @@ public class VideoCallRequestService {
      * The requester's FIRST join stamps the charge key and charges the
      * VIDEO_CALL action — stamped first under the row lock so a retry never
      * double-charges. Responder never pays.
+     *
+     * <p>The FIRST successful join of either party anchors
+     * {@code call_deadline_at = now + <per-type cap>}; every join (initial,
+     * renew, reconnect) gets a token whose privilege expiry is
+     * {@code min(deadline, now + maxTokenTtl)}, so Agora drops both parties
+     * at the same instant. A join after the deadline completes the request
+     * and fails 409 CALL_DURATION_EXCEEDED — the client's mid-call token
+     * renewal dies exactly at the deadline.
+     *
+     * <p>{@code noRollbackFor}: the COMPLETED transition + time-limit alerts
+     * must commit even though the 409 ends the call — otherwise the
+     * rejection would silently undo the state change.
      */
-    @Transactional
+    @Transactional(noRollbackFor = ResponseStatusException.class)
     public VideoCallProvider.JoinSession join(UUID requestId, UUID userId) {
         VideoCallRequestRow row = lockAndGuard(requestId, userId);
         requireParticipant(row, userId);
 
+        OffsetDateTime now = OffsetDateTime.now();
+        OffsetDateTime deadline = row.callDeadlineAt();
+        if (deadline != null && now.isAfter(deadline)) {
+            // Checked before the ACCEPTED guard so a renewal that lands
+            // after the sweeper already completed the request still reports
+            // the duration cap, not a generic conflict.
+            completeForTimeLimit(row);
+            throw new CallDurationExceededException();
+        }
         if (!VideoCallConstants.STATUS_ACCEPTED.equals(row.status())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Video call is not accepted — cannot join.");
@@ -201,13 +226,20 @@ public class VideoCallRequestService {
             chargeAndStamp(row, userId);
         }
 
+        if (deadline == null) {
+            // First successful join of either party — anchor the shared
+            // deadline at now + the per-call-type cap.
+            deadline = now.plusSeconds(maxCallSeconds(row.callType()));
+            requestRepo.anchorDeadline(requestId, deadline);
+        }
+
         if (isRequester) {
             requestRepo.stampRequesterJoin(requestId);
         } else {
             requestRepo.stampResponderJoin(requestId);
         }
 
-        return videoProvider.issueJoin(requestId, userId, false);
+        return videoProvider.issueJoin(requestId, userId, false, deadline);
     }
 
     /** Either participant ends an ACCEPTED call → COMPLETED (idempotent). */
@@ -256,6 +288,25 @@ public class VideoCallRequestService {
                     notificationDispatcher.dispatchVideoCallExpired(row.requesterUserId(), row.id(),
                             row.callType());
                     log.info("Video-call request expired: id={}", row.id());
+                })
+                .map(VideoCallRequestRow::id)
+                .toList();
+    }
+
+    /**
+     * Deadline sweeper (~30 s): ACCEPTED calls whose call_deadline_at has
+     * elapsed are completed — Agora already dropped the participants when
+     * the token privilege expired; this is state hygiene. Both parties get
+     * the *_ENDED_TIME_LIMIT alert so the client renders "time limit
+     * reached" rather than a generic ended screen.
+     */
+    @Transactional
+    public List<UUID> deadlineSweep() {
+        return requestRepo.findDeadlinePassed().stream()
+                .filter(row -> requestRepo.completeTimeLimit(row.id()))
+                .peek(row -> {
+                    notifyTimeLimitReached(row);
+                    log.info("Video-call duration cap reached: id={}", row.id());
                 })
                 .map(VideoCallRequestRow::id)
                 .toList();
@@ -346,6 +397,27 @@ public class VideoCallRequestService {
         }
     }
 
+    /** Max call duration in seconds for the request's call_type. */
+    private int maxCallSeconds(String callType) {
+        return VideoCallConstants.CALL_TYPE_AUDIO.equals(callType)
+                ? videoProps.getCall().getAudioMaxSeconds()
+                : videoProps.getCall().getVideoMaxSeconds();
+    }
+
+    /** Transitions to COMPLETED (ended_at = deadline) and alerts both parties. */
+    private void completeForTimeLimit(VideoCallRequestRow row) {
+        if (requestRepo.completeTimeLimit(row.id())) {
+            notifyTimeLimitReached(row);
+        }
+    }
+
+    private void notifyTimeLimitReached(VideoCallRequestRow row) {
+        notificationDispatcher.dispatchVideoCallEndedTimeLimit(
+                row.requesterUserId(), row.id(), row.callType());
+        notificationDispatcher.dispatchVideoCallEndedTimeLimit(
+                row.responderUserId(), row.id(), row.callType());
+    }
+
     /**
      * Stamps the charge key first (guarded WHERE charge_key IS NULL), then
      * charges. Under the row lock only one tx wins the stamp; a lost race
@@ -404,8 +476,21 @@ public class VideoCallRequestService {
                 /* canJoin    */ accepted,
                 row.requesterJoinedAt() != null,
                 row.responderJoinedAt() != null,
+                row.callDeadlineAt(),
                 row.endedAt(), row.createdAt(),
                 nextRemindInSeconds);
+    }
+
+    /**
+     * 409 when a join/renewal arrives after call_deadline_at — carries the
+     * {@code CALL_DURATION_EXCEEDED} code (the reason IS the code;
+     * GlobalExceptionHandler passes machine-shaped reasons through
+     * unchanged) so clients distinguish it from "not ACCEPTED" conflicts.
+     */
+    public static class CallDurationExceededException extends ResponseStatusException {
+        public CallDurationExceededException() {
+            super(HttpStatus.CONFLICT, "CALL_DURATION_EXCEEDED");
+        }
     }
 
     /**

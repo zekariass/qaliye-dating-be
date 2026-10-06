@@ -32,6 +32,7 @@ public class VideoCallRequestRepository {
             OffsetDateTime requesterChargedAt,
             OffsetDateTime requesterJoinedAt,
             OffsetDateTime responderJoinedAt,
+            OffsetDateTime callDeadlineAt,
             OffsetDateTime endedAt,
             int reminderCount,
             OffsetDateTime lastRemindedAt,
@@ -47,6 +48,7 @@ public class VideoCallRequestRepository {
             request_expires_at, responded_at, channel_name,
             requester_charge_key, requester_charged_at,
             requester_joined_at, responder_joined_at,
+            call_deadline_at,
             ended_at, reminder_count, last_reminded_at,
             created_at, updated_at
             """;
@@ -132,6 +134,30 @@ public class VideoCallRequestRepository {
             """;
 
     /**
+     * Anchors the per-call deadline on the FIRST join of either party —
+     * guarded so a second joiner never moves the deadline. Under the row
+     * lock exactly one join wins; retries/rejoins keep the original anchor.
+     */
+    private static final String ANCHOR_DEADLINE_SQL = """
+            UPDATE video_call_requests
+            SET call_deadline_at = :deadline, updated_at = CURRENT_TIMESTAMP
+            WHERE id = :id AND status = 'ACCEPTED' AND call_deadline_at IS NULL
+            """;
+
+    /**
+     * Deadline hit → COMPLETED with ended_at stamped at the deadline itself
+     * (accurate end time regardless of sweeper lag). Guarded to ACCEPTED so
+     * the sweeper and a post-deadline join can't double-transition.
+     */
+    private static final String COMPLETE_TIME_LIMIT_SQL = """
+            UPDATE video_call_requests
+            SET status = 'COMPLETED',
+                ended_at = call_deadline_at,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :id AND status = 'ACCEPTED'
+            """;
+
+    /**
      * Idempotent charge stamp — UNIQUE(requester_charge_key) makes exactly
      * one caller win. The loser re-reads and sees chargeKey non-NULL → no
      * second charge (invariant §15.2).
@@ -172,6 +198,13 @@ public class VideoCallRequestRepository {
     private static final String FIND_EXPIRED_PENDING_SQL = """
             SELECT %s FROM video_call_requests
             WHERE status = 'PENDING' AND request_expires_at < CURRENT_TIMESTAMP
+            """.formatted(SELECT_COLS);
+
+    private static final String FIND_DEADLINE_PASSED_SQL = """
+            SELECT %s FROM video_call_requests
+            WHERE status = 'ACCEPTED'
+              AND call_deadline_at IS NOT NULL
+              AND call_deadline_at < CURRENT_TIMESTAMP
             """.formatted(SELECT_COLS);
 
     private static final String CANCEL_ACTIVE_FOR_MATCH_SQL = """
@@ -284,6 +317,17 @@ public class VideoCallRequestRepository {
         return jdbc.update(END_SQL, new MapSqlParameterSource("id", id)) > 0;
     }
 
+    /** Wins exactly once; returns false when the deadline was already set. */
+    public boolean anchorDeadline(UUID id, OffsetDateTime deadline) {
+        var params = new MapSqlParameterSource("id", id).addValue("deadline", deadline);
+        return jdbc.update(ANCHOR_DEADLINE_SQL, params) > 0;
+    }
+
+    /** Ends an ACCEPTED call at its deadline; false if already terminal. */
+    public boolean completeTimeLimit(UUID id) {
+        return jdbc.update(COMPLETE_TIME_LIMIT_SQL, new MapSqlParameterSource("id", id)) > 0;
+    }
+
     /**
      * Stamps a reminder when the cooldown elapsed; returns the new
      * {@code reminder_count}, or {@code null} when the guard rejected it
@@ -299,6 +343,11 @@ public class VideoCallRequestRepository {
 
     public List<VideoCallRequestRow> findExpiredPending() {
         return jdbc.query(FIND_EXPIRED_PENDING_SQL, new MapSqlParameterSource(), this::mapRow);
+    }
+
+    /** ACCEPTED calls whose anchored deadline has elapsed (sweeper input). */
+    public List<VideoCallRequestRow> findDeadlinePassed() {
+        return jdbc.query(FIND_DEADLINE_PASSED_SQL, new MapSqlParameterSource(), this::mapRow);
     }
 
     /** Cancels every live request for a match (unmatch / block / end). */
@@ -343,6 +392,7 @@ public class VideoCallRequestRepository {
                 rs.getObject("requester_charged_at", OffsetDateTime.class),
                 rs.getObject("requester_joined_at", OffsetDateTime.class),
                 rs.getObject("responder_joined_at", OffsetDateTime.class),
+                rs.getObject("call_deadline_at", OffsetDateTime.class),
                 rs.getObject("ended_at", OffsetDateTime.class),
                 rs.getInt("reminder_count"),
                 rs.getObject("last_reminded_at", OffsetDateTime.class),

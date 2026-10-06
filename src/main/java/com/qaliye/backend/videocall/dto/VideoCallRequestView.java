@@ -23,6 +23,12 @@ public record VideoCallRequestView(
         boolean canJoin,
         boolean requesterJoined,
         boolean responderJoined,
+        /**
+         * Absolute instant both participants are dropped from the channel —
+         * anchored on the first successful join (now + per-call-type cap).
+         * {@code null} until anyone joins. Use for the in-call countdown.
+         */
+        OffsetDateTime callDeadlineAt,
         OffsetDateTime endedAt,
         OffsetDateTime createdAt,
         /**

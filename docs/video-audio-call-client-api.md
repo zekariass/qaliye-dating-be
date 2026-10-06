@@ -13,6 +13,11 @@ a new one can be created once the previous is terminal.
   credits). The responder joins free.
 - **Expiry** — a `PENDING` request auto-expires after ~48 h (server-side
   sweeper); the requester is notified.
+- **Duration cap** — every call has a per-type max duration
+  (`VIDEO_CALL_MAX_SECONDS` / `AUDIO_CALL_MAX_SECONDS`, default 1800 s).
+  The deadline is anchored on the **first join of either party** and is
+  shared: late joiners get only the remaining time. Agora drops both
+  participants at the deadline — no client cooperation needed.
 - **Killswitch** — if the match ends or either party blocks, live requests
   are cancelled; in-flight calls return `409`.
 
@@ -114,10 +119,22 @@ due. Credentials are generated on demand by the RTC provider (Agora) and are
 never stored; fetch a fresh session on every join. For `AUDIO` requests join
 the same channel but publish audio only — tokens are media-agnostic.
 
+**Token renewal uses this same endpoint.** Agora fires
+`onTokenPrivilegeWillExpire` ~30 s before expiry — re-call `join` for a
+fresh token. Before the deadline the renewal succeeds; at/after the
+deadline it fails `409 CALL_DURATION_EXCEEDED` — that failure IS the
+end-of-call signal.
+
 **First requester join charges** the `VIDEO_CALL` or `AUDIO_CALL` action
 (selected by the request's `call_type` — each is priced and ledgered
 separately). Charged exactly once per request — retried joins are free;
 the responder never pays.
+
+**Call deadline:** the first successful join anchors
+`call_deadline_at = now + cap`. Every token's privilege expiry is
+`min(call_deadline_at, now + max_token_ttl)`, so both participants are
+dropped at the same instant. `expires_at` in the response is that exact
+instant — use it as both token expiry and the countdown target.
 
 **Success:** `200 OK` →
 
@@ -130,8 +147,16 @@ the responder never pays.
 }
 ```
 
-**Errors:** `402` insufficient credits · `403` not a participant · `404`
-unknown · `409` request not `ACCEPTED` · `429` video-call action limit
+**Errors:**
+
+| Status | `error.code` | Condition |
+|--------|--------------|-----------|
+| 402 | `insufficient_credits` | First requester join with no allowance/credits |
+| 403 | `FORBIDDEN` | Not a participant |
+| 404 | `NOT_FOUND` | Unknown request |
+| 409 | `CONFLICT` | Request not `ACCEPTED`, or killswitch fired |
+| 409 | `CALL_DURATION_EXCEEDED` | `now > call_deadline_at` — the call is over; the request is transitioned to `COMPLETED` with `ended_at` set |
+| 429 | `RATE_LIMITED` | Video-call action limit |
 
 ### `POST /api/v1/video-call-requests/{id}/end`
 
@@ -159,6 +184,7 @@ flags tell the client which actions are currently valid.
 | `can_accept` | boolean | `PENDING` && caller is responder |
 | `can_join` | boolean | `ACCEPTED` (either participant) |
 | `requester_joined`, `responder_joined` | boolean | Join stamps — render "other party is in" UI |
+| `call_deadline_at` | ISO-8601 | Absolute instant Agora drops both participants — `null` until the first join anchors it. Drive the in-call countdown from this |
 | `ended_at` | ISO-8601 | |
 | `created_at` | ISO-8601 | |
 | `next_remind_in_seconds` | integer | `null` when remind isn't possible (not `PENDING`, or caller is responder); `0` = can remind now; `>0` = seconds until the cooldown lifts — drive the remind-button countdown from this |
@@ -179,6 +205,7 @@ flags tell the client which actions are currently valid.
   "can_join": true,
   "requester_joined": false,
   "responder_joined": true,
+  "call_deadline_at": "2026-10-03T20:30:00+00:00",
   "ended_at": null,
   "created_at": "2026-10-03T20:00:00+00:00",
   "next_remind_in_seconds": null
@@ -218,7 +245,8 @@ Lifecycle events arrive as in-app/push notifications, grouped by feature.
 | `VIDEO_CALL_DECLINED` | Your request was declined | Requester |
 | `VIDEO_CALL_CANCELLED` | Request withdrawn / match ended | The other party |
 | `VIDEO_CALL_EXPIRED` | Pending request timed out | Requester |
-| `AUDIO_CALL_*` | Same five events for `call_type=AUDIO` requests (`AUDIO_CALL_REQUESTED`, `AUDIO_CALL_ACCEPTED`, `AUDIO_CALL_DECLINED`, `AUDIO_CALL_CANCELLED`, `AUDIO_CALL_EXPIRED`) | Same recipients |
+| `VIDEO_CALL_ENDED_TIME_LIMIT` | Call hit the duration cap — render "time limit reached", not a generic ended screen | **Both** parties |
+| `AUDIO_CALL_*` | Same events for `call_type=AUDIO` requests (`AUDIO_CALL_REQUESTED`, `AUDIO_CALL_ACCEPTED`, `AUDIO_CALL_DECLINED`, `AUDIO_CALL_CANCELLED`, `AUDIO_CALL_EXPIRED`, `AUDIO_CALL_ENDED_TIME_LIMIT`) | Same recipients |
 
 Every `*_CALL_*` code tells the client the call type without a fetch —
 render the incoming-call screen as audio or video directly from the code
@@ -263,6 +291,11 @@ directly, no fetch needed.
 - **Call flow:** create → wait for `*_CALL_ACCEPTED` → `join` → `end`.
   Poll `GET /matches/{matchId}/video-call-requests` for state changes;
   the `can_*` flags drive which buttons to show.
+- **Time limit:** run the in-call countdown against `call_deadline_at`
+  (on the view) or `expires_at` (from `join` — same instant). At the
+  deadline Agora drops both users server-side; expect a
+  `*_CALL_ENDED_TIME_LIMIT` push and/or `409 CALL_DURATION_EXCEEDED` on
+  the next `join` renewal — show "time limit reached" for both.
 - **`call_type` is everywhere:** create body (optional, default `VIDEO`),
   `VideoCallRequestView`, inbox `video_call_request` summary, and the
   `*_CALL_*` notification prefix. For `AUDIO`, join with audio-only — the
