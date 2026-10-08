@@ -370,4 +370,20 @@ public class NotificationDispatcher {
             log.error("dispatchVideoCallEndedTimeLimit failed for request {}: {}", requestId, e.getMessage());
         }
     }
+
+    /**
+     * One participant learns the accepted call closed because someone never
+     * joined — sent to BOTH parties by the no-show sweeper.
+     */
+    public void dispatchVideoCallNoShow(UUID userId, UUID requestId, String callType) {
+        try {
+            outboxService.createAccountAlertEvent(userId,
+                    VideoCallConstants.alertCode(VideoCallConstants.ALERT_NO_SHOW,
+                            VideoCallConstants.ALERT_AUDIO_NO_SHOW, callType),
+                    requestId, OffsetDateTime.now(),
+                    Map.of("video_call_request_id", requestId.toString()));
+        } catch (Exception e) {
+            log.error("dispatchVideoCallNoShow failed for request {}: {}", requestId, e.getMessage());
+        }
+    }
 }

@@ -43,5 +43,10 @@ public record ProfileMeDto(
         DiscoveryPreferencesDto discoveryPreferences,
         String primaryPhotoUrl,
         List<ProfilePhotoDto> photos,
-        String role
+        String role,
+        String marriageTimeline,
+        String longDistanceRelationship,
+        String familyInvolvement,
+        String religionImportance,
+        String willingToRelocate
 ) {}

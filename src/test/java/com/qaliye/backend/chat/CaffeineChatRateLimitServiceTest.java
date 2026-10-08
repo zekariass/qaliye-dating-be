@@ -34,8 +34,11 @@ class CaffeineChatRateLimitServiceTest {
 
     @Test
     void requestsBelowUserLimit_areAllowed() {
+        // Distinct matchIds keep the per-match counter at 1 so only the
+        // per-user limit is exercised (match limit would trip first at 3).
         for (int i = 0; i < USER_LIMIT; i++) {
-            assertThatNoException().isThrownBy(() -> service.checkSendMessage(userId, matchId));
+            UUID localMatch = UUID.randomUUID();
+            assertThatNoException().isThrownBy(() -> service.checkSendMessage(userId, localMatch));
         }
     }
 
@@ -54,8 +57,10 @@ class CaffeineChatRateLimitServiceTest {
 
     @Test
     void exceedingUserLimit_throwsRateLimited() {
+        // Prime the user limit across distinct matches so the per-match
+        // limit (lower) doesn't trip first.
         for (int i = 0; i < USER_LIMIT; i++) {
-            service.checkSendMessage(userId, matchId);
+            service.checkSendMessage(userId, UUID.randomUUID());
         }
         assertThatThrownBy(() -> service.checkSendMessage(userId, matchId))
                 .isInstanceOf(RateLimitedException.class)
@@ -81,7 +86,7 @@ class CaffeineChatRateLimitServiceTest {
     void differentUsers_haveIndependentCounters() {
         UUID otherUser = UUID.randomUUID();
         for (int i = 0; i < USER_LIMIT; i++) {
-            service.checkSendMessage(userId, matchId);
+            service.checkSendMessage(userId, UUID.randomUUID());
         }
         // otherUser's counter starts fresh
         assertThatNoException()
@@ -111,7 +116,7 @@ class CaffeineChatRateLimitServiceTest {
     @Test
     void windowExpiry_resetsCounter() throws InterruptedException {
         for (int i = 0; i < USER_LIMIT; i++) {
-            service.checkSendMessage(userId, matchId);
+            service.checkSendMessage(userId, UUID.randomUUID());
         }
         // Limit is reached
         assertThatThrownBy(() -> service.checkSendMessage(userId, matchId))
@@ -146,7 +151,7 @@ class CaffeineChatRateLimitServiceTest {
 
     @Test
     void rateLimited_retryAfterIsPositive() {
-        for (int i = 0; i < USER_LIMIT; i++) service.checkSendMessage(userId, matchId);
+        for (int i = 0; i < USER_LIMIT; i++) service.checkSendMessage(userId, UUID.randomUUID());
         try {
             service.checkSendMessage(userId, matchId);
             fail("Expected RateLimitedException");
@@ -186,7 +191,7 @@ class CaffeineChatRateLimitServiceTest {
 
     @Test
     void directCalls_alwaysConsumeQuota() {
-        for (int i = 0; i < USER_LIMIT; i++) service.checkSendMessage(userId, matchId);
+        for (int i = 0; i < USER_LIMIT; i++) service.checkSendMessage(userId, UUID.randomUUID());
         // A second identical call still counts — callers must guard themselves
         assertThatThrownBy(() -> service.checkSendMessage(userId, matchId))
                 .isInstanceOf(RateLimitedException.class);

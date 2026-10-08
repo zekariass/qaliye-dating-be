@@ -27,7 +27,10 @@ public class DiscoveryExceptionHandler {
     @ExceptionHandler(CreditService.InsufficientCreditsException.class)
     public ResponseEntity<Map<String, Object>> handleInsufficientCredits(CreditService.InsufficientCreditsException ex) {
         return ResponseEntity.status(HttpStatus.PAYMENT_REQUIRED)
-                .body(errorBody("insufficient_credits", "You don't have enough credits for this action."));
+                .body(errorBodyWithDetails("insufficient_credits",
+                        "You don't have enough credits for this action.",
+                        Map.of("needed", ex.getNeeded(),
+                               "balance", ex.getBalance())));
     }
 
     @ExceptionHandler(ActionCostService.VariantPricingNotConfiguredException.class)

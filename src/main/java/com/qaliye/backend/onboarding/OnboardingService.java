@@ -230,6 +230,11 @@ public class OnboardingService {
             if (notBlank(profile.getEducationLevel())) score += 5;
             if (notBlank(profile.getNationality()))  score += 5;
             if (profile.getEthnicityIds() != null && profile.getEthnicityIds().length > 0) score += 5;
+            if (notBlank(profile.getMarriageTimeline()))         score += 2;
+            if (notBlank(profile.getLongDistanceRelationship())) score += 2;
+            if (notBlank(profile.getFamilyInvolvement()))        score += 2;
+            if (notBlank(profile.getReligionImportance()))       score += 2;
+            if (notBlank(profile.getWillingToRelocate()))        score += 2;
         }
         Integer extraPhotos = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM profile_photos WHERE user_id = :uid AND is_primary = FALSE AND moderation_status <> 'REJECTED'",

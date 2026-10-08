@@ -12,8 +12,11 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Quartz sweeper: expires PENDING video-call requests past their
- * request_expires_at window and notifies the requester.
+ * Quartz sweeper: expires video-call requests past their
+ * request_expires_at window — PENDING requests that were never answered,
+ * and ACCEPTED requests where neither participant ever joined (the long
+ * both-absent window). Requester always notified; responder too when the
+ * request had been accepted.
  *
  * <p>Runs every 15 minutes.
  */

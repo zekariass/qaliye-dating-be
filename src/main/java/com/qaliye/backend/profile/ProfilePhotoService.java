@@ -313,6 +313,8 @@ public class ProfilePhotoService {
                     p.bio, p.ethnicity_ids, p.nationality, p.religion, p.education_level, p.occupation,
                     p.relationship_intention, p.marital_status, p.has_children, p.wants_children,
                     p.smoking_detail, p.drinking_detail, p.activity_level, p.interests, p.language_ids,
+                    p.marriage_timeline, p.long_distance_relationship,
+                    p.family_involvement, p.religion_importance, p.willing_to_relocate,
                     au.address_id
                 FROM profiles p
                 JOIN app_users au ON au.id = p.user_id
@@ -347,6 +349,12 @@ public class ProfilePhotoService {
         if (isNonEmptyArray(r.get("interests")))                   filled++;
         if (isNonEmptyArray(r.get("language_ids")))                filled++;
 
+        if (r.get("marriage_timeline") != null)                    filled++;
+        if (r.get("long_distance_relationship") != null)           filled++;
+        if (r.get("family_involvement") != null)                   filled++;
+        if (r.get("religion_importance") != null)                  filled++;
+        if (r.get("willing_to_relocate") != null)                  filled++;
+
         Boolean hasPrefs = jdbc.queryForObject(
                 "SELECT EXISTS(SELECT 1 FROM discovery_preferences WHERE user_id = :userId)",
                 Map.of("userId", userId), Boolean.class);
@@ -357,7 +365,7 @@ public class ProfilePhotoService {
                 Map.of("userId", userId), Boolean.class);
         if (Boolean.TRUE.equals(hasPhotos))                        filled++;
 
-        return (int) Math.round((filled / 23.0) * 100);
+        return (int) Math.round((filled / 28.0) * 100);
     }
 
     private boolean notBlank(String s) {

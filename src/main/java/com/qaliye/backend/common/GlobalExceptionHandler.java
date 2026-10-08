@@ -59,7 +59,13 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(CreditService.InsufficientCreditsException.class)
     public ResponseEntity<Map<String, Object>> handleInsufficientCredits(CreditService.InsufficientCreditsException ex) {
-        return error(402, "insufficient_credits", "You don't have enough credits for this action.");
+        return ResponseEntity.status(402)
+                .body(Map.of("error", Map.of(
+                        "code", "insufficient_credits",
+                        "message", "You don't have enough credits for this action.",
+                        "details", Map.of(
+                                "needed", ex.getNeeded(),
+                                "balance", ex.getBalance()))));
     }
 
     @ExceptionHandler(ActionLimitExceededException.class)

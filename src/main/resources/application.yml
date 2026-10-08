@@ -225,6 +225,9 @@ video:
     # token's privilege expiry is clamped to it — Agora drops both parties.
     video-max-seconds: ${VIDEO_CALL_MAX_SECONDS:600}
     audio-max-seconds: ${AUDIO_CALL_MAX_SECONDS:900}
+    # Both participants must join within this many seconds of accept, or the
+    # sweeper closes the call as NO_SHOW and refunds the unused duration.
+    join-grace-seconds: ${VIDEO_CALL_JOIN_GRACE_SECONDS:120}
 
 matchmaking:
   request-lifetime-days: ${MATCHMAKING_REQUEST_LIFETIME_DAYS:90}

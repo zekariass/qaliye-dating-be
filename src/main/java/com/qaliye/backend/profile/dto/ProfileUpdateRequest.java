@@ -32,5 +32,10 @@ public record ProfileUpdateRequest(
         @Pattern(regexp = "PUBLIC|INCOGNITO") String discoveryMode,
         @Size(max = 10) List<UUID> ethnicityIds,
         @Size(max = 200) String ethnicityOtherText,
-        @Size(max = 20) List<UUID> languageIds
+        @Size(max = 20) List<UUID> languageIds,
+        @Pattern(regexp = "WITHIN_6_MONTHS|WITHIN_1_YEAR|1_TO_2_YEARS|2_TO_5_YEARS|MORE_THAN_5_YEARS|NOT_SURE") String marriageTimeline,
+        @Pattern(regexp = "YES|NO|MAYBE") String longDistanceRelationship,
+        @Pattern(regexp = "VERY_IMPORTANT|IMPORTANT|SOMEWHAT_IMPORTANT|NOT_IMPORTANT") String familyInvolvement,
+        @Pattern(regexp = "VERY_IMPORTANT|SOMEWHAT_IMPORTANT|NOT_IMPORTANT") String religionImportance,
+        @Pattern(regexp = "YES|NO|MAYBE") String willingToRelocate
 ) {}

@@ -27,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
@@ -59,6 +60,7 @@ class VideoCallRequestServiceTest {
     private VideoCallRequestRepository requestRepo;
     private VideoCallProvider videoProvider;
     private NotificationDispatcher notificationDispatcher;
+    private CreditService creditService;
     private VideoCallRequestService service;
 
     @BeforeEach
@@ -66,13 +68,15 @@ class VideoCallRequestServiceTest {
         requestRepo = mock(VideoCallRequestRepository.class);
         videoProvider = mock(VideoCallProvider.class);
         notificationDispatcher = mock(NotificationDispatcher.class);
+        creditService = mock(CreditService.class);
         VideoProperties videoProps = new VideoProperties();
         videoProps.getCall().setVideoMaxSeconds(1800);
         videoProps.getCall().setAudioMaxSeconds(600);
+        videoProps.getCall().setJoinGraceSeconds(120);
         service = new VideoCallRequestService(requestRepo, videoProvider,
                 new MatchmakingProperties(), videoProps, notificationDispatcher,
                 mock(ActionCostService.class), mock(ActionLimitRepository.class),
-                mock(CreditService.class));
+                creditService);
 
         lenient().when(requestRepo.blockExists(any(), any())).thenReturn(false);
         lenient().when(requestRepo.findMatch(MATCH_ID))
@@ -242,6 +246,155 @@ class VideoCallRequestServiceTest {
         verify(requestRepo, never()).completeTimeLimit(any());
     }
 
+    // -- No-show sweeper --
+
+    @Test
+    void noShowSweep_requesterCharged_responderMissing_partialRefund() {
+        // Requester joined 60 s ago and paid 1800 credits (video cap 1800 s);
+        // responder never showed → refund 1800 × (1800 − 60) / 1800 = 1740.
+        UUID chargeKey = UUID.randomUUID();
+        VideoCallRequestRow row = noShowRow(chargeKey, TYPE_VIDEO,
+                OffsetDateTime.now(ZoneOffset.UTC).minusSeconds(60), null);
+        when(requestRepo.findNoShowCandidates(120)).thenReturn(List.of(row));
+        when(requestRepo.markNoShow(REQUEST_ID)).thenReturn(true);
+        when(creditService.findConsumedAmount(REQUESTER, "vcr:" + chargeKey))
+                .thenReturn(1800L);
+
+        assertThat(service.noShowSweep()).containsExactly(REQUEST_ID);
+
+        ArgumentCaptor<Long> refund = ArgumentCaptor.forClass(Long.class);
+        verify(creditService).refundCredits(eq(REQUESTER), refund.capture(),
+                eq(REQUEST_ID), eq(VideoCallConstants.ACTION_VIDEO_CALL),
+                eq("vcr-refund:" + REQUEST_ID));
+        assertThat(refund.getValue()).isBetween(1739L, 1741L);
+        verify(notificationDispatcher).dispatchVideoCallNoShow(
+                REQUESTER, REQUEST_ID, TYPE_VIDEO);
+        verify(notificationDispatcher).dispatchVideoCallNoShow(
+                RESPONDER, REQUEST_ID, TYPE_VIDEO);
+    }
+
+    @Test
+    void noShowSweep_requesterNeverJoined_noChargeNoRefund() {
+        // Responder waited; requester never joined → no charge key, nothing
+        // to refund. Still closes NO_SHOW and alerts both parties.
+        VideoCallRequestRow row = noShowRow(null, TYPE_AUDIO, null,
+                OffsetDateTime.now(ZoneOffset.UTC).minusSeconds(90));
+        when(requestRepo.findNoShowCandidates(120)).thenReturn(List.of(row));
+        when(requestRepo.markNoShow(REQUEST_ID)).thenReturn(true);
+
+        assertThat(service.noShowSweep()).containsExactly(REQUEST_ID);
+
+        verify(creditService, never()).refundCredits(any(), anyLong(),
+                any(), any(), any());
+        verify(notificationDispatcher).dispatchVideoCallNoShow(
+                REQUESTER, REQUEST_ID, TYPE_AUDIO);
+        verify(notificationDispatcher).dispatchVideoCallNoShow(
+                RESPONDER, REQUEST_ID, TYPE_AUDIO);
+    }
+
+    @Test
+    void noShowSweep_chargeCoveredByAllowance_noRefund() {
+        // Charge key stamped but findConsumedAmount is NULL → the call ran on
+        // a free allowance; no credits were deducted so nothing is refunded.
+        UUID chargeKey = UUID.randomUUID();
+        VideoCallRequestRow row = noShowRow(chargeKey, TYPE_VIDEO,
+                OffsetDateTime.now(ZoneOffset.UTC).minusSeconds(60), null);
+        when(requestRepo.findNoShowCandidates(120)).thenReturn(List.of(row));
+        when(requestRepo.markNoShow(REQUEST_ID)).thenReturn(true);
+        when(creditService.findConsumedAmount(REQUESTER, "vcr:" + chargeKey))
+                .thenReturn(null);
+
+        service.noShowSweep();
+
+        verify(creditService, never()).refundCredits(any(), anyLong(),
+                any(), any(), any());
+    }
+
+    @Test
+    void noShowSweep_guardedUpdateLost_skipsRefundAndAlerts() {
+        UUID chargeKey = UUID.randomUUID();
+        VideoCallRequestRow row = noShowRow(chargeKey, TYPE_VIDEO,
+                OffsetDateTime.now(ZoneOffset.UTC).minusSeconds(60), null);
+        when(requestRepo.findNoShowCandidates(120)).thenReturn(List.of(row));
+        when(requestRepo.markNoShow(REQUEST_ID)).thenReturn(false);
+
+        assertThat(service.noShowSweep()).isEmpty();
+        verify(creditService, never()).refundCredits(any(), anyLong(),
+                any(), any(), any());
+        verify(notificationDispatcher, never())
+                .dispatchVideoCallNoShow(any(), any(), any());
+    }
+
+    // -- Expiry sweeper --
+
+    @Test
+    void expireSweep_acceptedNobodyJoined_expiresAndNotifiesBoth() {
+        // Accepted but neither party joined → lives until request_expires_at,
+        // then EXPIRED (not NO_SHOW); both parties are told it lapsed.
+        VideoCallRequestRow row = noShowRow(null, TYPE_VIDEO, null, null);
+        when(requestRepo.findExpired()).thenReturn(List.of(row));
+        when(requestRepo.expire(REQUEST_ID)).thenReturn(true);
+
+        assertThat(service.expireSweep()).containsExactly(REQUEST_ID);
+        verify(notificationDispatcher).dispatchVideoCallExpired(
+                REQUESTER, REQUEST_ID, TYPE_VIDEO);
+        verify(notificationDispatcher).dispatchVideoCallExpired(
+                RESPONDER, REQUEST_ID, TYPE_VIDEO);
+        verify(creditService, never()).refundCredits(any(), anyLong(),
+                any(), any(), any());
+    }
+
+    @Test
+    void expireSweep_pendingRequest_notifiesRequesterOnly() {
+        VideoCallRequestRow row = row(STATUS_PENDING, TYPE_VIDEO, null);
+        when(requestRepo.findExpired()).thenReturn(List.of(row));
+        when(requestRepo.expire(REQUEST_ID)).thenReturn(true);
+
+        assertThat(service.expireSweep()).containsExactly(REQUEST_ID);
+        verify(notificationDispatcher).dispatchVideoCallExpired(
+                REQUESTER, REQUEST_ID, TYPE_VIDEO);
+        verify(notificationDispatcher, never()).dispatchVideoCallExpired(
+                eq(RESPONDER), any(), any());
+    }
+
+    // -- end() refund consistency --
+
+    @Test
+    void end_responderNeverJoined_refundsUnusedPortion() {
+        // Same policy as the sweep: requester paid, hung up before the
+        // responder connected → pro-rata refund, not the full charge.
+        UUID chargeKey = UUID.randomUUID();
+        VideoCallRequestRow accepted = noShowRow(chargeKey, TYPE_VIDEO,
+                OffsetDateTime.now(ZoneOffset.UTC).minusSeconds(60), null);
+        when(requestRepo.lockById(REQUEST_ID)).thenReturn(Optional.of(accepted));
+        when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(accepted));
+        when(creditService.findConsumedAmount(REQUESTER, "vcr:" + chargeKey))
+                .thenReturn(1800L);
+
+        service.end(REQUEST_ID, REQUESTER);
+
+        ArgumentCaptor<Long> refund = ArgumentCaptor.forClass(Long.class);
+        verify(creditService).refundCredits(eq(REQUESTER), refund.capture(),
+                eq(REQUEST_ID), eq(VideoCallConstants.ACTION_VIDEO_CALL),
+                eq("vcr-refund:" + REQUEST_ID));
+        assertThat(refund.getValue()).isBetween(1739L, 1741L);
+    }
+
+    @Test
+    void end_bothJoined_normalBillingNoRefund() {
+        // A real call happened — early hangup keeps normal billing.
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        VideoCallRequestRow accepted = noShowRow(UUID.randomUUID(), TYPE_VIDEO,
+                now.minusSeconds(60), now.minusSeconds(50));
+        when(requestRepo.lockById(REQUEST_ID)).thenReturn(Optional.of(accepted));
+        when(requestRepo.findById(REQUEST_ID)).thenReturn(Optional.of(accepted));
+
+        service.end(REQUEST_ID, REQUESTER);
+
+        verify(creditService, never()).refundCredits(any(), anyLong(),
+                any(), any(), any());
+    }
+
     // -- Row factory --
 
     private static VideoCallRequestRow row(String status, String callType,
@@ -255,6 +408,30 @@ class VideoCallRequestServiceTest {
                                            OffsetDateTime responderJoinedAt) {
         return row(REQUEST_ID, status, callType, deadline,
                 requesterJoinedAt, responderJoinedAt);
+    }
+
+    /**
+     * ACCEPTED row accepted long enough ago to be past the join grace —
+     * controls the charge key and both join stamps independently.
+     */
+    private static VideoCallRequestRow noShowRow(UUID chargeKey, String callType,
+                                                 OffsetDateTime requesterJoinedAt,
+                                                 OffsetDateTime responderJoinedAt) {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        return new VideoCallRequestRow(
+                REQUEST_ID, MATCH_ID, REQUESTER, RESPONDER,
+                STATUS_ACCEPTED, callType,
+                now.plusHours(48),          // requestExpiresAt
+                now.minusMinutes(5),        // respondedAt — past the grace
+                "vcr_" + REQUEST_ID,        // channelName
+                chargeKey,
+                chargeKey != null ? now.minusMinutes(4) : null, // requesterChargedAt
+                requesterJoinedAt,
+                responderJoinedAt,
+                null,                       // callDeadlineAt — irrelevant here
+                null,                       // endedAt
+                0, null,                    // reminderCount, lastRemindedAt
+                now.minusMinutes(10), now); // createdAt, updatedAt
     }
 
     private static VideoCallRequestRow row(UUID id, String status, String callType,

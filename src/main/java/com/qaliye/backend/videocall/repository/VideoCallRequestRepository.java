@@ -115,10 +115,20 @@ public class VideoCallRequestRepository {
             WHERE id = :id AND status IN ('PENDING', 'ACCEPTED')
             """;
 
+    /**
+     * Expiry — PENDING rows past request_expires_at, or ACCEPTED rows that
+     * hit it while NEITHER participant ever joined (the long both-absent
+     * window). The join predicates are re-evaluated after waiting on a
+     * join's row lock, so a last-instant join wins the race.
+     */
     private static final String EXPIRE_SQL = """
             UPDATE video_call_requests
             SET status = 'EXPIRED', updated_at = CURRENT_TIMESTAMP
-            WHERE id = :id AND status = 'PENDING'
+            WHERE id = :id
+              AND (status = 'PENDING'
+                   OR (status = 'ACCEPTED'
+                       AND requester_joined_at IS NULL
+                       AND responder_joined_at IS NULL))
             """;
 
     private static final String STAMP_REQUESTER_JOIN_SQL = """
@@ -195,9 +205,13 @@ public class VideoCallRequestRepository {
             WHERE id = :id AND status = 'ACCEPTED'
             """;
 
-    private static final String FIND_EXPIRED_PENDING_SQL = """
+    private static final String FIND_EXPIRED_SQL = """
             SELECT %s FROM video_call_requests
-            WHERE status = 'PENDING' AND request_expires_at < CURRENT_TIMESTAMP
+            WHERE request_expires_at < CURRENT_TIMESTAMP
+              AND (status = 'PENDING'
+                   OR (status = 'ACCEPTED'
+                       AND requester_joined_at IS NULL
+                       AND responder_joined_at IS NULL))
             """.formatted(SELECT_COLS);
 
     private static final String FIND_DEADLINE_PASSED_SQL = """
@@ -206,6 +220,40 @@ public class VideoCallRequestRepository {
               AND call_deadline_at IS NOT NULL
               AND call_deadline_at < CURRENT_TIMESTAMP
             """.formatted(SELECT_COLS);
+
+    /**
+     * ACCEPTED calls where EXACTLY ONE participant joined and has been
+     * waiting alone longer than the join grace — the other party gets
+     * graceSeconds measured from that first join, so a late join (the
+     * request can live up to request_expires_at while nobody has joined)
+     * still earns a full grace window instead of an instant close.
+     * Both-missing rows are not here — they live until request_expires_at
+     * and expire via FIND_EXPIRED_SQL.
+     */
+    private static final String FIND_NO_SHOW_SQL = """
+            SELECT %s FROM video_call_requests
+            WHERE status = 'ACCEPTED'
+              AND (requester_joined_at IS NULL)
+                     <> (responder_joined_at IS NULL)
+              AND COALESCE(requester_joined_at, responder_joined_at)
+                     <= CURRENT_TIMESTAMP
+                        - (:graceSeconds * INTERVAL '1 second')
+            """.formatted(SELECT_COLS);
+
+    /**
+     * No-show close — guarded to ACCEPTED so a racing join/transition can't
+     * double-close, and the join-stamp predicate is re-evaluated after
+     * waiting on a join's row lock: if the missing participant joined while
+     * the sweeper was blocked, this update matches nothing and the join wins.
+     */
+    private static final String MARK_NO_SHOW_SQL = """
+            UPDATE video_call_requests
+            SET status = 'NO_SHOW',
+                ended_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :id AND status = 'ACCEPTED'
+              AND (requester_joined_at IS NULL OR responder_joined_at IS NULL)
+            """;
 
     private static final String CANCEL_ACTIVE_FOR_MATCH_SQL = """
             UPDATE video_call_requests
@@ -341,13 +389,31 @@ public class VideoCallRequestRepository {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
-    public List<VideoCallRequestRow> findExpiredPending() {
-        return jdbc.query(FIND_EXPIRED_PENDING_SQL, new MapSqlParameterSource(), this::mapRow);
+    /**
+     * Expirable rows: PENDING past the request window, or ACCEPTED past it
+     * with neither participant ever joined (sweeper input).
+     */
+    public List<VideoCallRequestRow> findExpired() {
+        return jdbc.query(FIND_EXPIRED_SQL, new MapSqlParameterSource(), this::mapRow);
     }
 
     /** ACCEPTED calls whose anchored deadline has elapsed (sweeper input). */
     public List<VideoCallRequestRow> findDeadlinePassed() {
         return jdbc.query(FIND_DEADLINE_PASSED_SQL, new MapSqlParameterSource(), this::mapRow);
+    }
+
+    /**
+     * ACCEPTED calls past {@code graceSeconds} since accept where at least
+     * one participant never joined (no-show sweeper input).
+     */
+    public List<VideoCallRequestRow> findNoShowCandidates(int graceSeconds) {
+        return jdbc.query(FIND_NO_SHOW_SQL,
+                new MapSqlParameterSource("graceSeconds", graceSeconds), this::mapRow);
+    }
+
+    /** Closes an ACCEPTED call as NO_SHOW; false if already transitioned. */
+    public boolean markNoShow(UUID id) {
+        return jdbc.update(MARK_NO_SHOW_SQL, new MapSqlParameterSource("id", id)) > 0;
     }
 
     /** Cancels every live request for a match (unmatch / block / end). */

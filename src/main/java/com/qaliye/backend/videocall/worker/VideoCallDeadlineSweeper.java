@@ -17,6 +17,11 @@ import java.util.UUID;
  * Token expiry already drops participants from the Agora channel; this is
  * state hygiene. Both parties get the {@code *_CALL_ENDED_TIME_LIMIT} alert.
  *
+ * <p>Same cadence drives the no-show sweep: ACCEPTED calls where a
+ * participant never joined within {@code video.call.join-grace-seconds} of
+ * accept are closed NO_SHOW (pro-rata refund when the requester paid) and
+ * both parties get the {@code *_CALL_NO_SHOW} alert.
+ *
  * <p>Runs every 30 seconds.
  */
 @Component
@@ -33,6 +38,10 @@ public class VideoCallDeadlineSweeper implements Job {
             List<UUID> ended = service.deadlineSweep();
             if (!ended.isEmpty()) {
                 log.info("VideoCallDeadlineSweeper: ended {} calls at the time limit", ended.size());
+            }
+            List<UUID> noShows = service.noShowSweep();
+            if (!noShows.isEmpty()) {
+                log.info("VideoCallDeadlineSweeper: closed {} no-show calls", noShows.size());
             }
         } catch (Exception e) {
             log.error("VideoCallDeadlineSweeper failed: {}", e.getMessage(), e);

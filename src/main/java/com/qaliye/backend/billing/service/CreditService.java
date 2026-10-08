@@ -374,6 +374,48 @@ public class CreditService {
     }
 
     /**
+     * Refunds credits for a reversed action (e.g. a video-call no-show where
+     * the requester paid but the call never connected). Adds a REFUND ledger
+     * entry backed by a VIDEO_CALL_REFUND lot so lot totals stay consistent
+     * with the central balance. Idempotent on idempotencyKey.
+     *
+     * @param userId           original payer
+     * @param amount           credits to return
+     * @param sourceId         the request/entity this refund is for (audit)
+     * @param actionType       original action code (e.g. VIDEO_CALL)
+     * @param idempotencyKey   prevents double-refund on sweeper retries
+     * @return true if credits were refunded, false if duplicate
+     */
+    @Transactional
+    public boolean refundCredits(UUID userId, long amount, UUID sourceId,
+                                 String actionType, String idempotencyKey) {
+        if (amount <= 0) return true;
+        ensureBalanceRowExists(userId);
+
+        Long newBalance = jdbc.queryForObject(
+                "UPDATE user_credit_balances SET balance = balance + :amount, updated_at = CURRENT_TIMESTAMP "
+                        + "WHERE user_id = :userId RETURNING balance",
+                new MapSqlParameterSource().addValue("userId", userId).addValue("amount", amount),
+                Long.class);
+        if (newBalance == null) return false;
+
+        UUID ledgerEntryId = insertLedgerEntry(userId, "REFUND", amount,
+                newBalance, "VIDEO_CALL_REQUEST", sourceId, actionType, idempotencyKey);
+        if (ledgerEntryId == null) {
+            jdbc.update("UPDATE user_credit_balances SET balance = balance - :amount, "
+                            + "updated_at = CURRENT_TIMESTAMP WHERE user_id = :userId",
+                    new MapSqlParameterSource().addValue("userId", userId).addValue("amount", amount));
+            log.info("refundCredits: duplicate idempotencyKey={}, skipped", idempotencyKey);
+            return false;
+        }
+
+        insertCreditLot(userId, "VIDEO_CALL_REFUND", ledgerEntryId, amount, null);
+        log.info("Refunded credits: user={}, amount={}, action={}, source={}",
+                userId, amount, actionType, sourceId);
+        return true;
+    }
+
+    /**
      * Deducts credits for an action. Allocates across credit lots using FIFO expiry order.
      * Throws {@link InsufficientCreditsException} if the balance is too low.
      *

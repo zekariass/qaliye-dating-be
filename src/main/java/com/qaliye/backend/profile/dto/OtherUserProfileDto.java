@@ -34,5 +34,10 @@ public record OtherUserProfileDto(
         List<ProfilePhotoDto> photos,
         String relationStatus,
         UUID matchId,
-        ActivityStatus activityStatus
+        ActivityStatus activityStatus,
+        String marriageTimeline,
+        String longDistanceRelationship,
+        String familyInvolvement,
+        String religionImportance,
+        String willingToRelocate
 ) {}

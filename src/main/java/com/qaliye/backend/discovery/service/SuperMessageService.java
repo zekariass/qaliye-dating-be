@@ -264,14 +264,37 @@ public class SuperMessageService {
 
         Optional<DiscoveryActionRepository.ActionRow> mutualAction =
                 actionRepo.findMutualActiveLike(senderId, receiverId);
+        UUID matchId = null;
+        Instant respondedAt = null;
         if (mutualAction.isPresent()) {
             Optional<MatchSummaryDto> match = matchService.tryCreateMatch(
                     senderId, receiverId, action.id(), mutualAction.get().id());
-            match.ifPresent(m -> {
-                notificationDispatcher.dispatchMatchNotification(senderId, receiverId, m.matchId());
+            if (match.isPresent()) {
+                matchId = match.get().matchId();
+
+                // The receiver's existing like is an implicit accept: mark the
+                // message responded and link it to the match so it collapses
+                // into the conversation instead of lingering as a pending row.
+                List<java.sql.Timestamp> respondedRows = jdbc.query(
+                        MARK_ACCEPTED_SQL,
+                        new MapSqlParameterSource()
+                                .addValue("id", messageId)
+                                .addValue("matchId", matchId),
+                        (rs, rn) -> rs.getTimestamp("responded_at"));
+                if (!respondedRows.isEmpty()) {
+                    respondedAt = toInstant(respondedRows.get(0));
+                }
+
+                // Copy the super message text as the first chat message,
+                // same as the explicit accept path.
+                long sequenceNumber = chatMatchRepository.reserveAndIncrementSequence(matchId);
+                chatMessageRepository.insert(
+                        matchId, senderId, UUID.randomUUID(), "TEXT", message, sequenceNumber);
+
+                notificationDispatcher.dispatchMatchNotification(senderId, receiverId, matchId);
                 log.info("Match created from super message: sender={}, receiver={}, matchId={}",
-                        senderId, receiverId, m.matchId());
-            });
+                        senderId, receiverId, matchId);
+            }
         }
 
         UserProfileBrief senderBrief = fetchProfileBrief(senderId);
@@ -279,7 +302,8 @@ public class SuperMessageService {
 
         return new SuperMessageResponse(
                 messageId, senderId, receiverId, senderBrief, receiverBrief, message, "SUPER_MESSAGE",
-                creditCost, "SENT", null, null, null, action.id(), createdAt
+                creditCost, matchId != null ? "ACCEPTED" : "SENT", null, respondedAt, matchId,
+                action.id(), createdAt
         );
     }
 

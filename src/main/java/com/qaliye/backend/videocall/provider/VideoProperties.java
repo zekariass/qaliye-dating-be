@@ -39,12 +39,22 @@ public class VideoProperties {
         private int videoMaxSeconds = 1800;
         /** Max seconds an AUDIO call may run. */
         private int audioMaxSeconds = 1800;
+        /**
+         * Seconds after accept within which BOTH participants must join —
+         * elapsed grace with a missing joiner → NO_SHOW auto-close (and a
+         * pro-rata refund when the requester paid but the responder never
+         * showed).
+         */
+        private int joinGraceSeconds = 120;
 
         public int getVideoMaxSeconds() { return videoMaxSeconds; }
         public void setVideoMaxSeconds(int videoMaxSeconds) { this.videoMaxSeconds = videoMaxSeconds; }
 
         public int getAudioMaxSeconds() { return audioMaxSeconds; }
         public void setAudioMaxSeconds(int audioMaxSeconds) { this.audioMaxSeconds = audioMaxSeconds; }
+
+        public int getJoinGraceSeconds() { return joinGraceSeconds; }
+        public void setJoinGraceSeconds(int joinGraceSeconds) { this.joinGraceSeconds = joinGraceSeconds; }
     }
 
     public static class Agora {

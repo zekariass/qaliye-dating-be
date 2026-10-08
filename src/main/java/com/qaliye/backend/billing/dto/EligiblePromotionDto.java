@@ -13,6 +13,7 @@ public record EligiblePromotionDto(
         Long discountValue,
         String discountCurrency,
         UUID subscriptionProductId,
+        UUID consumableProductId,
         Integer durationDays,
         Integer maxRedemptions,
         int reservedCount,

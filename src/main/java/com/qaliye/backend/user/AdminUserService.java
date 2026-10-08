@@ -48,7 +48,9 @@ public class AdminUserService {
             SELECT u.id, u.status, u.role, u.preferred_language,
                    u.last_active_at, u.deleted_at, u.created_at, u.updated_at,
                    p.display_name, p.gender, p.residency_type, p.relationship_intention,
-                   p.is_onboarded, p.is_verified, p.is_visible, p.profile_completion_score
+                   p.is_onboarded, p.is_verified, p.is_visible, p.profile_completion_score,
+                   p.marriage_timeline, p.long_distance_relationship,
+                   p.family_involvement, p.religion_importance, p.willing_to_relocate
             FROM app_users u
             LEFT JOIN profiles p ON p.user_id = u.id
             WHERE u.id = :userId
@@ -195,6 +197,11 @@ public class AdminUserService {
                 ((Number) reportStats.get("pending")).intValue(),
                 verificationStatus,
                 activeMatchCount != null ? activeMatchCount.intValue() : 0,
+                (String) row.get("marriage_timeline"),
+                (String) row.get("long_distance_relationship"),
+                (String) row.get("family_involvement"),
+                (String) row.get("religion_importance"),
+                (String) row.get("willing_to_relocate"),
                 toOffsetDateTime((Timestamp) row.get("last_active_at")),
                 toOffsetDateTime((Timestamp) row.get("deleted_at")),
                 toOffsetDateTime((Timestamp) row.get("created_at")),

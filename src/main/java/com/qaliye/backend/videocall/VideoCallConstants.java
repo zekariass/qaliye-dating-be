@@ -26,6 +26,12 @@ public final class VideoCallConstants {
     public static final String STATUS_CANCELLED = "CANCELLED";
     public static final String STATUS_EXPIRED   = "EXPIRED";
     public static final String STATUS_COMPLETED = "COMPLETED";
+    /**
+     * ACCEPTED but one participant never joined within the join-grace
+     * window — auto-closed by the sweeper. Terminal; frees the match's
+     * live-request slot like the other end states.
+     */
+    public static final String STATUS_NO_SHOW   = "NO_SHOW";
 
     // ── Notification alert codes ─────────────────────────────────────────
     // Selected per video_call_requests.call_type — AUDIO_CALL_* variants
@@ -50,6 +56,14 @@ public final class VideoCallConstants {
      */
     public static final String ALERT_ENDED_TIME_LIMIT       = "VIDEO_CALL_ENDED_TIME_LIMIT";
     public static final String ALERT_AUDIO_ENDED_TIME_LIMIT = "AUDIO_CALL_ENDED_TIME_LIMIT";
+
+    /**
+     * One participant never joined within the join-grace window — sent to
+     * BOTH parties: the waiter learns why the call closed, the absent party
+     * learns they missed it.
+     */
+    public static final String ALERT_NO_SHOW       = "VIDEO_CALL_NO_SHOW";
+    public static final String ALERT_AUDIO_NO_SHOW = "AUDIO_CALL_NO_SHOW";
 
     /** Picks the VIDEO_CALL_* or AUDIO_CALL_* alert code by call_type. */
     public static String alertCode(String videoCode, String audioCode, String callType) {

@@ -107,6 +107,21 @@ public class Profile {
     @Column(name = "is_verified", nullable = false)
     private Boolean isVerified;
 
+    @Column(name = "marriage_timeline")
+    private String marriageTimeline;
+
+    @Column(name = "long_distance_relationship")
+    private String longDistanceRelationship;
+
+    @Column(name = "family_involvement")
+    private String familyInvolvement;
+
+    @Column(name = "religion_importance")
+    private String religionImportance;
+
+    @Column(name = "willing_to_relocate")
+    private String willingToRelocate;
+
     @Column(name = "profile_completion_score")
     private Integer profileCompletionScore;
 

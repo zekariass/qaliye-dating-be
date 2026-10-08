@@ -103,6 +103,8 @@ public class ProfileService {
                     p.has_children, p.wants_children,
                     p.smoking, p.drinking, p.smoking_detail, p.drinking_detail,
                     p.activity_level, p.interests, p.language_ids,
+                    p.marriage_timeline, p.long_distance_relationship,
+                    p.family_involvement, p.religion_importance, p.willing_to_relocate,
                     p.discovery_mode, p.is_visible, p.is_onboarded, p.is_verified, p.profile_completion_score,
                     a.id AS address_id, a.city, a.region, a.country_code, a.country_name,
                     a.formatted_address, a.location_source,
@@ -170,7 +172,12 @@ public class ProfileService {
                 prefs,
                 primaryPhotoUrl,
                 photos,
-                (String) r.get("role")
+                (String) r.get("role"),
+                (String) r.get("marriage_timeline"),
+                (String) r.get("long_distance_relationship"),
+                (String) r.get("family_involvement"),
+                (String) r.get("religion_importance"),
+                (String) r.get("willing_to_relocate")
         );
     }
 
@@ -269,6 +276,11 @@ public class ProfileService {
                 .addValue("otherText", ethnicityOtherText)
                 .addValue("updateLanguages", updateLanguages)
                 .addValue("langIds", langArray)
+                .addValue("marriageTimeline", request.marriageTimeline())
+                .addValue("longDistanceRelationship", request.longDistanceRelationship())
+                .addValue("familyInvolvement", request.familyInvolvement())
+                .addValue("religionImportance", request.religionImportance())
+                .addValue("willingToRelocate", request.willingToRelocate())
                 .addValue("score", newScore);
 
         jdbc.update("""
@@ -296,6 +308,11 @@ public class ProfileService {
                     ethnicity_ids          = CASE WHEN :updateEthnicities THEN :ethIds::UUID[] ELSE ethnicity_ids END,
                     ethnicity_other_text   = CASE WHEN :updateEthOtherText THEN :otherText ELSE ethnicity_other_text END,
                     language_ids           = CASE WHEN :updateLanguages THEN :langIds::UUID[] ELSE language_ids END,
+                    marriage_timeline          = COALESCE(:marriageTimeline, marriage_timeline),
+                    long_distance_relationship = COALESCE(:longDistanceRelationship, long_distance_relationship),
+                    family_involvement         = COALESCE(:familyInvolvement, family_involvement),
+                    religion_importance        = COALESCE(:religionImportance, religion_importance),
+                    willing_to_relocate        = COALESCE(:willingToRelocate, willing_to_relocate),
                     profile_completion_score = :score
                 WHERE user_id = :userId
                 """, params);
@@ -763,13 +780,17 @@ public class ProfileService {
                     bio, nationality, religion, education_level, occupation,
                     relationship_intention, marital_status, has_children, wants_children,
                     smoking, drinking, smoking_detail, drinking_detail,
-                    activity_level, interests, profile_completion_score
+                    activity_level, interests, profile_completion_score,
+                    marriage_timeline, long_distance_relationship,
+                    family_involvement, religion_importance, willing_to_relocate
                 ) VALUES (
                     :userId, :displayName, :gender, :dateOfBirth, :heightCm, 'DIASPORA',
                     :bio, :nationality, :religion, :educationLevel, :occupation,
                     :relationshipIntention, :maritalStatus, :hasChildren, :wantsChildren,
                     :smoking, :drinking, :smokingDetail, :drinkingDetail,
-                    :activityLevel, :interests, 0
+                    :activityLevel, :interests, 0,
+                    :marriageTimeline, :longDistanceRelationship,
+                    :familyInvolvement, :religionImportance, :willingToRelocate
                 )
                 """,
                 new MapSqlParameterSource()
@@ -792,7 +813,12 @@ public class ProfileService {
                         .addValue("smokingDetail", smokingDetail)
                         .addValue("drinkingDetail", drinkingDetail)
                         .addValue("activityLevel", request.activityLevel())
-                        .addValue("interests", interestsArray));
+                        .addValue("interests", interestsArray)
+                        .addValue("marriageTimeline", request.marriageTimeline())
+                        .addValue("longDistanceRelationship", request.longDistanceRelationship())
+                        .addValue("familyInvolvement", request.familyInvolvement())
+                        .addValue("religionImportance", request.religionImportance())
+                        .addValue("willingToRelocate", request.willingToRelocate()));
     }
 
     public OtherUserProfileDto getOtherUserProfile(UUID callerId, UUID targetUserId) {
@@ -836,6 +862,8 @@ public class ProfileService {
                     p.relationship_intention, p.marital_status,
                     p.has_children, p.wants_children,
                     p.activity_level, p.interests, p.language_ids,
+                    p.marriage_timeline, p.long_distance_relationship,
+                    p.family_involvement, p.religion_importance, p.willing_to_relocate,
                     p.is_visible, p.is_verified,
                     a.id AS address_id, a.city, a.region, a.country_code, a.country_name,
                     a.formatted_address, a.location_source,
@@ -908,7 +936,12 @@ public class ProfileService {
                 photos,
                 relationInfo.status(),
                 relationInfo.matchId(),
-                activityStatus
+                activityStatus,
+                (String) r.get("marriage_timeline"),
+                (String) r.get("long_distance_relationship"),
+                (String) r.get("family_involvement"),
+                (String) r.get("religion_importance"),
+                (String) r.get("willing_to_relocate")
         );
     }
 

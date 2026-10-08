@@ -92,7 +92,7 @@ public class PromotionController {
                 c.id(), c.campaignKey(), c.name(), c.description(),
                 c.triggerType(), c.benefitType(),
                 c.discountType(), c.discountValue(), c.discountCurrency(),
-                c.subscriptionProductId(), c.durationDays(),
+                c.subscriptionProductId(), c.consumableProductId(), c.durationDays(),
                 c.maxRedemptions(), c.reservedCount(), c.fulfilledCount(),
                 c.endsAt() != null ? ISO_FMT.format(c.endsAt()) : null,
                 c.targetGender(),

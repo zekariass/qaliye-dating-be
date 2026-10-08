@@ -269,7 +269,8 @@ class ProfileServiceResidencyInferenceTest {
                     "Test Name", "MALE", java.time.LocalDate.of(1990, 1, 1),
                     null, null, null, null, null, null,
                     "MARRIAGE", null, null, null,
-                    null, null, null, null, null, null, null, null, null, null);
+                    null, null, null, null, null, null, null, null, null, null,
+                    null, null, null, null, null);
 
             service.updateProfile(userId, request);
 

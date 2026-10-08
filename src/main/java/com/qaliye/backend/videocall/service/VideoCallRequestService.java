@@ -220,6 +220,12 @@ public class VideoCallRequestService {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Video call is not accepted — cannot join.");
         }
+        if (row.requestExpiresAt() != null && now.isAfter(row.requestExpiresAt())) {
+            // Accepted-but-never-joined rows live until the request window —
+            // reject joins that slip past expiry before the sweeper runs.
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Video-call request has expired.");
+        }
 
         boolean isRequester = userId.equals(row.requesterUserId());
         if (isRequester && row.requesterChargeKey() == null) {
@@ -256,6 +262,9 @@ public class VideoCallRequestService {
                     "Video call is not in progress.");
         }
         requestRepo.end(requestId);
+        // Same policy as the no-show sweep: if the other party never joined
+        // the requester only pays pro-rata for the time actually used.
+        refundUnusedForMissingJoin(row);
         return toView(requestRepo.findById(requestId).orElseThrow(), userId);
     }
 
@@ -278,16 +287,27 @@ public class VideoCallRequestService {
         return result;
     }
 
-    /** Sweeper: expire PENDING requests past their window; notify requester. */
+    /**
+     * Sweeper: expire requests past their request_expires_at window —
+     * PENDING rows (never answered), plus ACCEPTED rows where NEITHER
+     * participant ever joined (the long both-absent window; once someone
+     * joins, the join-grace no-show sweep owns the lifecycle). The
+     * requester is always alerted; an ACCEPTED expiry also alerts the
+     * responder since they had agreed to the call.
+     */
     @Transactional
     public List<UUID> expireSweep() {
-        List<VideoCallRequestRow> expired = requestRepo.findExpiredPending();
+        List<VideoCallRequestRow> expired = requestRepo.findExpired();
         return expired.stream()
                 .filter(row -> requestRepo.expire(row.id()))
                 .peek(row -> {
                     notificationDispatcher.dispatchVideoCallExpired(row.requesterUserId(), row.id(),
                             row.callType());
-                    log.info("Video-call request expired: id={}", row.id());
+                    if (VideoCallConstants.STATUS_ACCEPTED.equals(row.status())) {
+                        notificationDispatcher.dispatchVideoCallExpired(
+                                row.responderUserId(), row.id(), row.callType());
+                    }
+                    log.info("Video-call request expired: id={}, status={}", row.id(), row.status());
                 })
                 .map(VideoCallRequestRow::id)
                 .toList();
@@ -307,6 +327,43 @@ public class VideoCallRequestService {
                 .peek(row -> {
                     notifyTimeLimitReached(row);
                     log.info("Video-call duration cap reached: id={}", row.id());
+                })
+                .map(VideoCallRequestRow::id)
+                .toList();
+    }
+
+    /**
+     * Join-grace sweeper (~30 s, same cadence as the deadline sweep):
+     * ACCEPTED calls where EXACTLY ONE participant joined and the other has
+     * not followed within {@code video.call.join-grace-seconds} of that
+     * first join are closed NO_SHOW — terminal, so the match's live-request
+     * slot frees up. Measuring grace from the first join (not from accept)
+     * keeps it symmetric in both directions and gives a participant who
+     * joins a long-idle request the full window.
+     *
+     * <p>ACCEPTED rows where NEITHER party ever joined are not here — they
+     * stay open until request_expires_at and then lapse EXPIRED via
+     * {@link #expireSweep()}.
+     *
+     * <p>When the requester paid (charge key stamped) but the call never
+     * connected, the unused portion is refunded pro-rata:
+     * {@code charged × (maxSeconds − usedSeconds) / maxSeconds} where
+     * {@code usedSeconds} is requester-join → close, clamped to the per-type
+     * cap. Responder-first no-shows carry no charge → nothing to refund.
+     * Both parties get the *_CALL_NO_SHOW alert.
+     */
+    @Transactional
+    public List<UUID> noShowSweep() {
+        int grace = videoProps.getCall().getJoinGraceSeconds();
+        return requestRepo.findNoShowCandidates(grace).stream()
+                .filter(row -> requestRepo.markNoShow(row.id()))
+                .peek(row -> {
+                    refundUnusedForMissingJoin(row);
+                    notificationDispatcher.dispatchVideoCallNoShow(
+                            row.requesterUserId(), row.id(), row.callType());
+                    notificationDispatcher.dispatchVideoCallNoShow(
+                            row.responderUserId(), row.id(), row.callType());
+                    log.info("Video-call no-show: id={}, callType={}", row.id(), row.callType());
                 })
                 .map(VideoCallRequestRow::id)
                 .toList();
@@ -416,6 +473,46 @@ public class VideoCallRequestService {
                 row.requesterUserId(), row.id(), row.callType());
         notificationDispatcher.dispatchVideoCallEndedTimeLimit(
                 row.responderUserId(), row.id(), row.callType());
+    }
+
+    /**
+     * Pro-rata refund of the requester charge when a call ends with a
+     * participant who never joined (NO_SHOW sweep, or end() before the other
+     * side connected):
+     *
+     * <pre>refund = charged × (maxSeconds − usedSeconds) / maxSeconds</pre>
+     *
+     * where {@code usedSeconds} is requester-join → now clamped to
+     * [0, maxSeconds]. Both-joined rows take the normal billing path — no
+     * refund. No charge key → the requester never joined → never billed.
+     * NULL consumed amount → the call ran on a free allowance. The
+     * {@code vcr-refund:{id}} key keeps sweeper retries/end() idempotent —
+     * refund can never exceed the original charge or apply twice.
+     */
+    private void refundUnusedForMissingJoin(VideoCallRequestRow row) {
+        if (row.requesterJoinedAt() != null && row.responderJoinedAt() != null) {
+            return; // both joined — a real call happened
+        }
+        if (row.requesterChargeKey() == null || row.requesterJoinedAt() == null) {
+            return; // requester never joined → never billed
+        }
+        Long charged = creditService.findConsumedAmount(
+                row.requesterUserId(), "vcr:" + row.requesterChargeKey());
+        if (charged == null || charged <= 0) {
+            return; // covered by free allowance — nothing was spent
+        }
+        long maxSeconds = maxCallSeconds(row.callType());
+        long usedSeconds = Math.max(0, Math.min(maxSeconds,
+                Duration.between(row.requesterJoinedAt(), OffsetDateTime.now()).getSeconds()));
+        long refund = charged * (maxSeconds - usedSeconds) / maxSeconds;
+        if (refund <= 0) {
+            return;
+        }
+        String actionCode = VideoCallConstants.CALL_TYPE_AUDIO.equals(row.callType())
+                ? VideoCallConstants.ACTION_AUDIO_CALL
+                : VideoCallConstants.ACTION_VIDEO_CALL;
+        creditService.refundCredits(row.requesterUserId(), refund, row.id(),
+                actionCode, "vcr-refund:" + row.id());
     }
 
     /**
