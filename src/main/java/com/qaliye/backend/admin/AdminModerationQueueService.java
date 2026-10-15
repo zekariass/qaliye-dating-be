@@ -25,7 +25,9 @@ public class AdminModerationQueueService {
     private static final String MANUAL_REVIEW_QUEUE_SQL = """
             SELECT pp.id, pp.user_id, pp.storage_bucket, pp.storage_path, pp.moderation_status,
                    pp.created_at, pp.rejection_reason, p.display_name,
-                   imr.selected_face_confidence, imr.moderation_labels, imr.status AS imr_status
+                   imr.selected_face_confidence, imr.moderation_labels, imr.status AS imr_status,
+                   imr.ai_generated_detected, imr.ai_generated_confidence,
+                   imr.ai_detected_generator, imr.ai_detection_action
             FROM profile_photos pp
             JOIN profiles p ON p.user_id = pp.user_id
             LEFT JOIN image_moderation_results imr ON imr.image_id = pp.id
@@ -38,7 +40,9 @@ public class AdminModerationQueueService {
     private static final String REVIEW_QUEUE_SQL = """
             SELECT pp.id, pp.user_id, pp.storage_bucket, pp.storage_path, pp.moderation_status,
                    pp.created_at, pp.rejection_reason, p.display_name,
-                   imr.selected_face_confidence, imr.moderation_labels, imr.status AS imr_status
+                   imr.selected_face_confidence, imr.moderation_labels, imr.status AS imr_status,
+                   imr.ai_generated_detected, imr.ai_generated_confidence,
+                   imr.ai_detected_generator, imr.ai_detection_action
             FROM profile_photos pp
             JOIN profiles p ON p.user_id = pp.user_id
             LEFT JOIN image_moderation_results imr ON imr.image_id = pp.id
@@ -125,7 +129,11 @@ public class AdminModerationQueueService {
                             rs.getString("storage_path"), 3600),
                     rs.getString("moderation_status"),
                     toOffsetDateTime(rs.getTimestamp("created_at")),
-                    rs.getString("display_name")
+                    rs.getString("display_name"),
+                    (Boolean) rs.getObject("ai_generated_detected"),
+                    (Double) rs.getObject("ai_generated_confidence"),
+                    rs.getString("ai_detected_generator"),
+                    rs.getString("ai_detection_action")
             ));
         });
         return items;
@@ -143,7 +151,11 @@ public class AdminModerationQueueService {
                             rs.getString("storage_path"), 3600),
                     rs.getString("moderation_status"),
                     toOffsetDateTime(rs.getTimestamp("created_at")),
-                    rs.getString("display_name")
+                    rs.getString("display_name"),
+                    (Boolean) rs.getObject("ai_generated_detected"),
+                    (Double) rs.getObject("ai_generated_confidence"),
+                    rs.getString("ai_detected_generator"),
+                    rs.getString("ai_detection_action")
             ));
         });
         return items;

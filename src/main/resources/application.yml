@@ -326,9 +326,18 @@ image:
       min-confidence: ${IMAGE_NUDITY_MIN_CONFIDENCE:90.0}
       suggestive-content-action: ${IMAGE_SUGGESTIVE_CONTENT_ACTION:MANUAL_REVIEW} # MANUAL_REVIEW, APPROVE or REJECT
 
+  ai-detection:
+    enabled: ${IMAGE_AI_DETECTION_ENABLED:true}
+    provider: ${IMAGE_AI_DETECTION_PROVIDER:AI_OR_NOT}
+    confidence-threshold: ${IMAGE_AI_DETECTION_CONFIDENCE_THRESHOLD:0.85}
+    action: ${IMAGE_AI_DETECTION_ACTION:REJECTED} # ADVISE_ONLY, MANUAL_REVIEW or REJECTED
+    ai-or-not:
+      api-key: ${IMAGE_AI_OR_NOT_API_KEY:aion_prod_d9c4154065cc4cf1b4f456490c3cbb3428f1938e030c4912b686a9a96fa63fb6}
+      base-url: ${IMAGE_AI_OR_NOT_BASE_URL:https://api.aiornot.com/v2/image/sync}
+
 links:
-  terms: ${LINK_TERMS:https://www.qaliye.com/terms}
-  privacy: ${LINK_PRIVACY:https://www.qaliye.com/privacy}
+  terms: ${LINK_TERMS:https://www.qaldating.com/terms}
+  privacy: ${LINK_PRIVACY:https://www.qaldating.com/privacy}
   ios-app-store: ${LINK_IOS_APP_STORE:https://apps.apple.com/app/qaliye/id123456789}
   play-store: ${LINK_PLAY_STORE:https://play.google.com/store/apps/details?id=com.qaliye.app}
 

@@ -1,14 +1,15 @@
 package com.qaliye.backend.profile;
 
 import com.qaliye.backend.moderation.PhotoModerationService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.qaliye.backend.profile.dto.AiDetectionAdvisoryDto;
 import com.qaliye.backend.profile.dto.PhotoRegistrationRequest;
 import com.qaliye.backend.profile.dto.PhotoReorderItem;
 import com.qaliye.backend.profile.dto.PhotoReorderRequest;
 import com.qaliye.backend.profile.dto.ProfilePhotoDto;
 import com.qaliye.backend.profile.dto.ProfilePhotosResponse;
 import com.qaliye.backend.storage.SupabaseStorageService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -44,10 +45,14 @@ public class ProfilePhotoService {
 
     public ProfilePhotosResponse getPhotos(UUID userId) {
         List<Map<String, Object>> rows = jdbc.queryForList("""
-                SELECT id, photo_order, is_primary, moderation_status, rejection_reason, storage_bucket, storage_path, created_at
-                FROM profile_photos
-                WHERE user_id = :userId AND deleted_at IS NULL AND moderation_status <> 'REJECTED'
-                ORDER BY photo_order ASC
+                SELECT pp.id, pp.photo_order, pp.is_primary, pp.moderation_status, pp.rejection_reason,
+                       pp.storage_bucket, pp.storage_path, pp.created_at,
+                       imr.ai_generated_detected, imr.ai_generated_confidence,
+                       imr.ai_detected_generator, imr.ai_detection_action
+                FROM profile_photos pp
+                LEFT JOIN image_moderation_results imr ON imr.image_id = pp.id
+                WHERE pp.user_id = :userId AND pp.deleted_at IS NULL AND pp.moderation_status <> 'REJECTED'
+                ORDER BY pp.photo_order ASC
                 """, Map.of("userId", userId));
 
         List<ProfilePhotoDto> photos = rows.stream()
@@ -94,7 +99,7 @@ public class ProfilePhotoService {
 
         String fullStoragePath = request.storageBucket() + "/" + request.storagePath();
         PhotoModerationService.SyncModerationOutcome outcome =
-                photoModerationService.processPhotoModerationSync(photoId, userId, fullStoragePath, isPrimary);
+                photoModerationService.processPhotoModerationSync(photoId, userId, fullStoragePath, isPrimary, order);
 
         if ("REJECTED".equals(outcome.status())) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
@@ -104,7 +109,7 @@ public class ProfilePhotoService {
 
         String signedUrl = storageService.generateSignedUrl(request.storageBucket(), request.storagePath(), SIGNED_URL_TTL_SECONDS);
         return new ProfilePhotoDto(photoId, order, isPrimary, signedUrl,
-                Instant.now().plusSeconds(SIGNED_URL_TTL_SECONDS), outcome.status(), null);
+                Instant.now().plusSeconds(SIGNED_URL_TTL_SECONDS), outcome.status(), null, outcome.aiAdvisory());
     }
 
     @Transactional
@@ -392,8 +397,17 @@ public class ProfilePhotoService {
         String bucket = (String) row.get("storage_bucket");
         String path = (String) row.get("storage_path");
 
+        Boolean aiDetected = (Boolean) row.get("ai_generated_detected");
+        String aiAction = (String) row.get("ai_detection_action");
+        AiDetectionAdvisoryDto advisory = null;
+        if (Boolean.TRUE.equals(aiDetected) && "ADVISE_ONLY".equals(aiAction)) {
+            Number conf = (Number) row.get("ai_generated_confidence");
+            String gen = (String) row.get("ai_detected_generator");
+            advisory = new AiDetectionAdvisoryDto(true, conf != null ? conf.doubleValue() : 0.0, gen);
+        }
+
         String signedUrl = storageService.generateSignedUrl(bucket, path, ttlSeconds);
         Instant expiresAt = Instant.now().plusSeconds(ttlSeconds);
-        return new ProfilePhotoDto(id, order, isPrimary, signedUrl, expiresAt, status, rejectionReason);
+        return new ProfilePhotoDto(id, order, isPrimary, signedUrl, expiresAt, status, rejectionReason, advisory);
     }
 }

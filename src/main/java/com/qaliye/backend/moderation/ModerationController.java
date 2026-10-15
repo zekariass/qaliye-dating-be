@@ -45,24 +45,30 @@ public class ModerationController {
 
         WebhookPayload.PhotoRecord rec = payload.getRecord();
         if (rec != null) {
-            boolean isPrimary = resolveIsPrimary(rec.getId());
+            PhotoRef ref = resolvePhotoRef(rec.getId());
             photoModerationService.processPhotoModeration(
                     rec.getId(),
                     rec.getUserId(),
                     rec.getStoragePath(),
                     rec.getModerationStatus(),
-                    isPrimary
+                    ref.isPrimary(),
+                    ref.photoOrder()
             );
         }
 
         return ResponseEntity.accepted().build();
     }
 
-    private boolean resolveIsPrimary(UUID photoId) {
+    private record PhotoRef(boolean isPrimary, int photoOrder) {}
+
+    private PhotoRef resolvePhotoRef(UUID photoId) {
         List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT is_primary FROM profile_photos WHERE id = :id AND deleted_at IS NULL",
+                "SELECT is_primary, photo_order FROM profile_photos WHERE id = :id AND deleted_at IS NULL",
                 Map.of("id", photoId));
-        return !rows.isEmpty() && Boolean.TRUE.equals(rows.get(0).get("is_primary"));
+        if (rows.isEmpty()) return new PhotoRef(false, Integer.MAX_VALUE);
+        boolean isPrimary = Boolean.TRUE.equals(rows.get(0).get("is_primary"));
+        int photoOrder = ((Number) rows.get(0).get("photo_order")).intValue();
+        return new PhotoRef(isPrimary, photoOrder);
     }
 
     @GetMapping("/api/v1/admin/moderation/photos")

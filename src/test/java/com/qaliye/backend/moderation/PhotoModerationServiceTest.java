@@ -63,19 +63,19 @@ class PhotoModerationServiceTest {
 
     @Test
     void skips_when_status_not_pending() {
-        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "APPROVED", true);
+        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "APPROVED", true, 0);
 
         verify(moderationResultService, never()).createAndClaim(any(), any(), any());
-        verify(orchestrator, never()).moderate(any(), anyBoolean());
+        verify(orchestrator, never()).moderate(any(), any(), anyBoolean(), anyInt());
     }
 
     @Test
     void skips_when_claim_fails() {
         when(moderationResultService.createAndClaim(any(), any(), anyString())).thenReturn(false);
 
-        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", true);
+        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", true, 0);
 
-        verify(orchestrator, never()).moderate(any(), anyBoolean());
+        verify(orchestrator, never()).moderate(any(), any(), anyBoolean(), anyInt());
     }
 
     @Test
@@ -84,23 +84,23 @@ class PhotoModerationServiceTest {
         givenRows(1);
         when(storageService.downloadPhoto("profile-photos/u/p.jpg")).thenReturn(null);
 
-        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", true);
+        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", true, 0);
 
         verify(moderationResultService).markError(eq(photoId), eq("STORAGE_DOWNLOAD_FAILED"),
                 eq("Image could not be downloaded from Supabase Storage"),
                 eq(List.of("STORAGE_DOWNLOAD_FAILED")),
                 eq("Image could not be downloaded from Supabase Storage"));
-        verify(orchestrator, never()).moderate(any(), anyBoolean());
+        verify(orchestrator, never()).moderate(any(), any(), anyBoolean(), anyInt());
     }
 
     @Test
     void updates_photo_to_approved_and_recomputes_score() {
         givenClaimed(); givenBytes(); givenRows(1);
-        when(orchestrator.moderate(any(), eq(true)))
+        when(orchestrator.moderate(any(), any(), eq(true), anyInt()))
                 .thenReturn(new ModerationDecision(ImageModerationStatus.APPROVED,
-                        true, true, null, null, List.of(), null));
+                        true, true, null, null, List.of(), null, null));
 
-        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", true);
+        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", true, 0);
 
         verify(moderationResultService).markCompleted(eq(photoId), any(), anyString());
         verify(onboardingService).recomputeScore(userId);
@@ -110,12 +110,12 @@ class PhotoModerationServiceTest {
     @Test
     void updates_photo_to_rejected_and_deletes_from_storage() {
         givenClaimed(); givenBytes(); givenRows(1);
-        when(orchestrator.moderate(any(), eq(true)))
+        when(orchestrator.moderate(any(), any(), eq(true), anyInt()))
                 .thenReturn(new ModerationDecision(ImageModerationStatus.REJECTED,
                         true, true, null, null,
-                        List.of("NO_FACE_DETECTED"), "The profile photo should have a clear and visible face."));
+                        List.of("NO_FACE_DETECTED"), "The profile photo should have a clear and visible face.", null));
 
-        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", true);
+        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", true, 0);
 
         verify(moderationResultService).markCompleted(eq(photoId), any(), anyString());
         verify(onboardingService).recomputeScore(userId);
@@ -127,10 +127,10 @@ class PhotoModerationServiceTest {
     void does_not_delete_storage_on_retryable_error() {
         givenClaimed(); givenBytes();
         givenRows(1);
-        when(orchestrator.moderate(any(), anyBoolean()))
+        when(orchestrator.moderate(any(), any(), anyBoolean(), anyInt()))
                 .thenThrow(new RekognitionProviderException("ThrottlingException", "rate limit", true));
 
-        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", true);
+        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", true, 0);
 
         verify(moderationResultService).markError(eq(photoId), eq("ThrottlingException"), eq("rate limit"),
                 eq(List.of("ThrottlingException")), eq("rate limit"));
@@ -141,9 +141,9 @@ class PhotoModerationServiceTest {
     void marks_error_on_unexpected_exception() {
         givenClaimed(); givenBytes();
         givenRows(1);
-        when(orchestrator.moderate(any(), anyBoolean())).thenThrow(new RuntimeException("unexpected"));
+        when(orchestrator.moderate(any(), any(), anyBoolean(), anyInt())).thenThrow(new RuntimeException("unexpected"));
 
-        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", true);
+        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", true, 0);
 
         verify(moderationResultService).markError(eq(photoId), eq("INTERNAL_ERROR"),
                 eq("Unexpected error during moderation"),
@@ -155,9 +155,9 @@ class PhotoModerationServiceTest {
     @Test
     void skipped_decision_maps_to_approved() {
         givenClaimed(); givenBytes(); givenRows(1);
-        when(orchestrator.moderate(any(), anyBoolean())).thenReturn(ModerationDecision.skipped());
+        when(orchestrator.moderate(any(), any(), anyBoolean(), anyInt())).thenReturn(ModerationDecision.skipped());
 
-        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", true);
+        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", true, 0);
 
         verify(onboardingService).recomputeScore(userId);
         verify(storageService, never()).deleteObject(any(), any());
@@ -166,11 +166,11 @@ class PhotoModerationServiceTest {
     @Test
     void does_not_call_recompute_when_photo_already_past_pending() {
         givenClaimed(); givenBytes(); givenRows(0);
-        when(orchestrator.moderate(any(), anyBoolean()))
+        when(orchestrator.moderate(any(), any(), anyBoolean(), anyInt()))
                 .thenReturn(new ModerationDecision(ImageModerationStatus.APPROVED,
-                        true, false, null, null, List.of(), null));
+                        true, false, null, null, List.of(), null, null));
 
-        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", true);
+        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", true, 0);
 
         verify(onboardingService, never()).recomputeScore(any());
     }
@@ -180,10 +180,10 @@ class PhotoModerationServiceTest {
     @Test
     void sync_moderation_throws_503_when_credentials_missing() {
         givenClaimed(); givenBytes();
-        when(orchestrator.moderate(any(), eq(true)))
+        when(orchestrator.moderate(any(), any(), eq(true), anyInt()))
                 .thenThrow(new RekognitionProviderException("CREDENTIALS_UNAVAILABLE", "missing AWS creds", false));
 
-        assertThatThrownBy(() -> service.processPhotoModerationSync(photoId, userId, "profile-photos/u/p.jpg", true))
+        assertThatThrownBy(() -> service.processPhotoModerationSync(photoId, userId, "profile-photos/u/p.jpg", true, 0))
                 .isInstanceOf(ResponseStatusException.class)
                 .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode().value()).isEqualTo(503));
 
@@ -193,27 +193,27 @@ class PhotoModerationServiceTest {
     @Test
     void secondary_photo_passes_isPrimary_false_to_orchestrator() {
         givenClaimed(); givenBytes(); givenRows(1);
-        when(orchestrator.moderate(any(), eq(false)))
+        when(orchestrator.moderate(any(), any(), eq(false), anyInt()))
                 .thenReturn(new ModerationDecision(ImageModerationStatus.APPROVED,
-                        false, true, null, null, List.of(), null));
+                        false, true, null, null, List.of(), null, null));
 
-        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", false);
+        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", false, 0);
 
         // Must pass isPrimary=false so orchestrator skips face detection
-        verify(orchestrator).moderate(any(), eq(false));
+        verify(orchestrator).moderate(any(), any(), eq(false), anyInt());
         verify(storageService, never()).deleteObject(any(), any());
     }
 
     @Test
     void rejected_secondary_photo_deleted_from_storage_and_profile_stays_active() {
         givenClaimed(); givenBytes(); givenRows(1);
-        when(orchestrator.moderate(any(), eq(false)))
+        when(orchestrator.moderate(any(), any(), eq(false), anyInt()))
                 .thenReturn(new ModerationDecision(ImageModerationStatus.REJECTED,
                         false, true, null, null,
                         List.of("EXPLICIT_CONTENT_DETECTED"),
-                        "This photo could not be approved because it may contain nudity or sexual content."));
+                        "This photo could not be approved because it may contain nudity or sexual content.", null));
 
-        service.processPhotoModeration(photoId, userId, "profile-photos/u/sec.jpg", "PENDING", false);
+        service.processPhotoModeration(photoId, userId, "profile-photos/u/sec.jpg", "PENDING", false, 0);
 
         // Storage deleted
         verify(storageService).deleteObject(eq("profile-photos"), eq("u/sec.jpg"));
@@ -224,12 +224,12 @@ class PhotoModerationServiceTest {
     @Test
     void manual_review_does_not_delete_from_storage() {
         givenClaimed(); givenBytes(); givenRows(1);
-        when(orchestrator.moderate(any(), anyBoolean()))
+        when(orchestrator.moderate(any(), any(), anyBoolean(), anyInt()))
                 .thenReturn(new ModerationDecision(ImageModerationStatus.MANUAL_REVIEW,
                         false, true, null, null,
-                        List.of("SUGGESTIVE_CONTENT_REVIEW"), "This photo requires additional review."));
+                        List.of("SUGGESTIVE_CONTENT_REVIEW"), "This photo requires additional review.", null));
 
-        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", true);
+        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", true, 0);
 
         // Photo kept in storage for admin review
         verify(storageService, never()).deleteObject(any(), any());
@@ -238,12 +238,12 @@ class PhotoModerationServiceTest {
     @Test
     void primary_photo_rejection_blocks_profile_via_onboarding_recompute() {
         givenClaimed(); givenBytes(); givenRows(1);
-        when(orchestrator.moderate(any(), eq(true)))
+        when(orchestrator.moderate(any(), any(), eq(true), anyInt()))
                 .thenReturn(new ModerationDecision(ImageModerationStatus.REJECTED,
                         true, false, null, null,
-                        List.of("NO_FACE_DETECTED"), "The profile photo should have a clear and visible face."));
+                        List.of("NO_FACE_DETECTED"), "The profile photo should have a clear and visible face.", null));
 
-        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", true);
+        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.jpg", "PENDING", true, 0);
 
         // onboarding recompute runs — sets profile inactive because primary photo is REJECTED
         verify(onboardingService).recomputeScore(userId);
@@ -259,7 +259,7 @@ class PhotoModerationServiceTest {
         when(moderationImageConverter.prepareForModeration(any())).thenThrow(failure);
 
         PhotoModerationService.SyncModerationOutcome outcome =
-                service.processPhotoModerationSync(photoId, userId, "profile-photos/u/p.webp", true);
+                service.processPhotoModerationSync(photoId, userId, "profile-photos/u/p.webp", true, 0);
 
         assertThat(outcome.status()).isEqualTo("MANUAL_REVIEW");
         assertThat(outcome.rejectionReason()).isEqualTo("Invalid WebP");
@@ -268,7 +268,7 @@ class PhotoModerationServiceTest {
                 eq(List.of("INVALID_IMAGE_FORMAT")), eq("Invalid WebP"));
         verify(storageService, never()).deleteObject(any(), any());
         verify(onboardingService).recomputeScore(userId);
-        verify(orchestrator, never()).moderate(any(), anyBoolean());
+        verify(orchestrator, never()).moderate(any(), any(), anyBoolean(), anyInt());
     }
 
     @Test
@@ -279,12 +279,12 @@ class PhotoModerationServiceTest {
         InvalidModerationImageException failure = new InvalidModerationImageException("WEBP_ANIMATED", "Animated WebP");
         when(moderationImageConverter.prepareForModeration(any())).thenThrow(failure);
 
-        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.webp", "PENDING", true);
+        service.processPhotoModeration(photoId, userId, "profile-photos/u/p.webp", "PENDING", true, 0);
 
         verify(moderationResultService).markError(eq(photoId), eq("INVALID_IMAGE_FORMAT"), eq("Animated WebP"),
                 eq(List.of("INVALID_IMAGE_FORMAT")), eq("Animated WebP"));
         verify(storageService, never()).deleteObject(any(), any());
         verify(onboardingService).recomputeScore(userId);
-        verify(orchestrator, never()).moderate(any(), anyBoolean());
+        verify(orchestrator, never()).moderate(any(), any(), anyBoolean(), anyInt());
     }
 }

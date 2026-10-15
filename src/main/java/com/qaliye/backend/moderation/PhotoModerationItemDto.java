@@ -9,6 +9,10 @@ public record PhotoModerationItemDto(
         String imageUrl,
         String moderationStatus,
         OffsetDateTime createdAt,
-        String displayName
+        String displayName,
+        Boolean aiGeneratedDetected,
+        Double aiGeneratedConfidence,
+        String aiDetectedGenerator,
+        String aiDetectionAction
 ) {
 }

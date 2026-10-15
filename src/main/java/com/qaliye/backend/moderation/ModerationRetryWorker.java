@@ -68,6 +68,8 @@ public class ModerationRetryWorker implements Job {
             String  storagePath = (String) row.get("image_storage_path");
             int     attempts   = ((Number) row.get("attempt_count")).intValue();
             boolean isPrimary  = Boolean.TRUE.equals(row.get("is_primary"));
+            int photoOrder = row.get("photo_order") != null
+                    ? ((Number) row.get("photo_order")).intValue() : Integer.MAX_VALUE;
 
             if (attempts >= maxRetries) {
                 log.debug("Photo {} exhausted {} retries — leaving as ERROR", imageId, maxRetries);
@@ -75,7 +77,7 @@ public class ModerationRetryWorker implements Job {
             }
 
             log.info("Retrying moderation for photo={} attempt={}", imageId, attempts + 1);
-            photoModerationService.processPhotoModeration(imageId, profileId, storagePath, "PENDING", isPrimary);
+            photoModerationService.processPhotoModeration(imageId, profileId, storagePath, "PENDING", isPrimary, photoOrder);
         }
     }
 
@@ -87,9 +89,11 @@ public class ModerationRetryWorker implements Job {
             UUID    profileId  = (UUID) row.get("profile_id");
             String  storagePath = (String) row.get("full_storage_path");
             boolean isPrimary  = Boolean.TRUE.equals(row.get("is_primary"));
+            int photoOrder = row.get("photo_order") != null
+                    ? ((Number) row.get("photo_order")).intValue() : Integer.MAX_VALUE;
 
             log.info("Recovering stalled photo={}", imageId);
-            photoModerationService.processPhotoModeration(imageId, profileId, storagePath, "PENDING", isPrimary);
+            photoModerationService.processPhotoModeration(imageId, profileId, storagePath, "PENDING", isPrimary, photoOrder);
         }
     }
 }

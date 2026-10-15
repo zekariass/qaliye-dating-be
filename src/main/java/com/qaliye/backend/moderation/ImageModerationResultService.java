@@ -2,6 +2,7 @@ package com.qaliye.backend.moderation;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.qaliye.backend.moderation.aidetection.AiDetectionResult;
 import com.qaliye.backend.moderation.rekognition.*;
 import com.qaliye.backend.notifications.worker.BackoffCalculator;
 import org.slf4j.Logger;
@@ -70,6 +71,12 @@ public class ImageModerationResultService {
                 manual_review_reason     = :reviewReason,
                 image_hash               = :imageHash,
                 config_version           = :configVersion,
+                ai_detection_enabled     = :aiDetectionEnabled,
+                ai_generated_detected    = :aiDetected,
+                ai_generated_confidence  = :aiConfidence,
+                ai_detected_generator    = :aiGenerator,
+                ai_detection_verdict     = :aiVerdict,
+                ai_detection_action      = :aiAction,
                 attempt_count            = attempt_count + 1,
                 processed_at             = NOW(),
                 updated_at               = NOW()
@@ -97,7 +104,7 @@ public class ImageModerationResultService {
 
     private static final String FIND_RETRY_ELIGIBLE_SQL = """
             SELECT imr.image_id, imr.profile_id, imr.image_storage_path, imr.attempt_count,
-                   pp.is_primary
+                   pp.is_primary, pp.photo_order
             FROM image_moderation_results imr
             JOIN profile_photos pp ON pp.id = imr.image_id
             WHERE imr.status = 'ERROR'
@@ -109,7 +116,7 @@ public class ImageModerationResultService {
     private static final String FIND_STALLED_PENDING_SQL = """
             SELECT pp.id AS image_id, pp.user_id AS profile_id,
                    pp.storage_bucket || '/' || pp.storage_path AS full_storage_path,
-                   pp.is_primary
+                   pp.is_primary, pp.photo_order
             FROM profile_photos pp
             WHERE pp.moderation_status = 'PENDING'
               AND pp.deleted_at IS NULL
@@ -174,6 +181,8 @@ public class ImageModerationResultService {
         String reviewReason = decision.status() == ImageModerationStatus.MANUAL_REVIEW
                 ? decision.userMessage() : null;
 
+        AiDetectionResult ai = decision.aiResult();
+
         jdbc.update(UPDATE_COMPLETED_SQL, new MapSqlParameterSource()
                 .addValue("status", decision.status().name())
                 .addValue("faceEnabled", decision.faceDetectionRan())
@@ -191,6 +200,12 @@ public class ImageModerationResultService {
                 .addValue("reviewReason", reviewReason)
                 .addValue("imageHash",   imageHash)
                 .addValue("configVersion", props.configVersion())
+                .addValue("aiDetectionEnabled", ai != null)
+                .addValue("aiDetected",   ai != null ? ai.aiDetected()   : null)
+                .addValue("aiConfidence", ai != null ? ai.confidence()   : null)
+                .addValue("aiGenerator", ai != null ? ai.topGenerator()  : null)
+                .addValue("aiVerdict",   ai != null ? ai.verdict()       : null)
+                .addValue("aiAction",    ai != null && ai.actionTaken() != null ? ai.actionTaken().name() : null)
                 .addValue("imageId",     imageId));
     }
 

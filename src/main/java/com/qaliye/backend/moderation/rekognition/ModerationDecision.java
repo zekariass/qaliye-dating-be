@@ -1,5 +1,7 @@
 package com.qaliye.backend.moderation.rekognition;
 
+import com.qaliye.backend.moderation.aidetection.AiDetectionResult;
+
 import java.util.List;
 
 /**
@@ -12,10 +14,11 @@ public record ModerationDecision(
         FaceAnalysisResult faceResult,
         NudityAnalysisResult nudityResult,
         List<String> reasons,
-        String userMessage
+        String userMessage,
+        AiDetectionResult aiResult
 ) {
     public static ModerationDecision skipped() {
         return new ModerationDecision(
-                ImageModerationStatus.SKIPPED, false, false, null, null, List.of(), null);
+                ImageModerationStatus.SKIPPED, false, false, null, null, List.of(), null, null);
     }
 }

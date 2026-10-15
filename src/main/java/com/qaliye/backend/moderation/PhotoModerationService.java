@@ -1,10 +1,13 @@
 package com.qaliye.backend.moderation;
 
+import com.qaliye.backend.moderation.aidetection.AiDetectionAction;
+import com.qaliye.backend.moderation.aidetection.AiDetectionResult;
 import com.qaliye.backend.moderation.rekognition.ImageModerationOrchestrator;
 import com.qaliye.backend.moderation.rekognition.ImageModerationStatus;
 import com.qaliye.backend.moderation.rekognition.ModerationDecision;
 import com.qaliye.backend.moderation.rekognition.RekognitionProviderException;
 import com.qaliye.backend.onboarding.OnboardingService;
+import com.qaliye.backend.profile.dto.AiDetectionAdvisoryDto;
 import com.qaliye.backend.storage.SupabaseStorageService;
 import com.qaliye.backend.user.UserStatusService;
 import org.slf4j.Logger;
@@ -48,9 +51,12 @@ public class PhotoModerationService {
 
     private static final String GET_PHOTO_QUEUE_SQL = """
             SELECT pp.id, pp.user_id, pp.storage_bucket, pp.storage_path, pp.moderation_status,
-                   pp.created_at, p.display_name
+                   pp.created_at, p.display_name,
+                   imr.ai_generated_detected, imr.ai_generated_confidence,
+                   imr.ai_detected_generator, imr.ai_detection_action
             FROM profile_photos pp
             JOIN profiles p ON p.user_id = pp.user_id
+            LEFT JOIN image_moderation_results imr ON imr.image_id = pp.id
             WHERE pp.moderation_status = :status
               AND pp.deleted_at IS NULL
             ORDER BY pp.created_at ASC
@@ -180,7 +186,7 @@ public class PhotoModerationService {
         }
     }
 
-    public record SyncModerationOutcome(String status, String rejectionReason) {}
+    public record SyncModerationOutcome(String status, String rejectionReason, AiDetectionAdvisoryDto aiAdvisory) {}
 
     /**
      * Runs moderation synchronously and returns the outcome.  Called from the
@@ -189,11 +195,12 @@ public class PhotoModerationService {
      * worker can pick it up later — no exception propagates to the caller.
      */
     public SyncModerationOutcome processPhotoModerationSync(UUID photoId, UUID userId,
-                                                             String storagePath, boolean isPrimary) {
+                                                             String storagePath, boolean isPrimary,
+                                                             int photoOrder) {
         boolean claimed = imageModerationResultService.createAndClaim(photoId, userId, storagePath);
         if (!claimed) {
             log.debug("Photo {} already claimed — returning PENDING", photoId);
-            return new SyncModerationOutcome("PENDING", null);
+            return new SyncModerationOutcome("PENDING", null, null);
         }
         StorageRef ref = null;
         try {
@@ -203,7 +210,7 @@ public class PhotoModerationService {
                         "Photo record not found in database",
                         List.of("PHOTO_NOT_FOUND"),
                         "Photo record not found in database");
-                return new SyncModerationOutcome("PENDING", null);
+                return new SyncModerationOutcome("PENDING", null, null);
             }
 
             byte[] originalBytes = storageService.downloadPhoto(ref.fullPath());
@@ -213,7 +220,7 @@ public class PhotoModerationService {
                         "STORAGE_DOWNLOAD_FAILED",
                         reason,
                         List.of("STORAGE_DOWNLOAD_FAILED"));
-                return new SyncModerationOutcome("MANUAL_REVIEW", reason);
+                return new SyncModerationOutcome("MANUAL_REVIEW", reason, null);
             }
 
             byte[] moderationBytes;
@@ -221,13 +228,16 @@ public class PhotoModerationService {
                 moderationBytes = moderationImageConverter.prepareForModeration(originalBytes);
             } catch (InvalidModerationImageException e) {
                 handleInvalidModerationImage(photoId, userId, ref, e);
-                return new SyncModerationOutcome("MANUAL_REVIEW", e.getMessage());
+                return new SyncModerationOutcome("MANUAL_REVIEW", e.getMessage(), null);
             }
 
             String imageHash = ImageModerationResultService.computeImageHash(moderationBytes);
-            ModerationDecision decision = imageModerationOrchestrator.moderate(moderationBytes, ref.isPrimary());
+            ModerationDecision decision = imageModerationOrchestrator.moderate(
+                    moderationBytes, originalBytes, ref.isPrimary(), photoOrder);
 
             imageModerationResultService.markCompleted(photoId, decision, imageHash);
+
+            AiDetectionAdvisoryDto advisory = buildAdvisory(decision.aiResult());
 
             String photoStatus = toPhotoStatus(decision.status());
             if (photoStatus != null) {
@@ -251,11 +261,12 @@ public class PhotoModerationService {
 
             return new SyncModerationOutcome(
                     photoStatus != null ? photoStatus : "PENDING",
-                    decision.userMessage());
+                    decision.userMessage(),
+                    advisory);
 
         } catch (InvalidModerationImageException e) {
             handleInvalidModerationImage(photoId, userId, ref, e);
-            return new SyncModerationOutcome("MANUAL_REVIEW", e.getMessage());
+            return new SyncModerationOutcome("MANUAL_REVIEW", e.getMessage(), null);
         } catch (RekognitionProviderException e) {
             if ("CREDENTIALS_UNAVAILABLE".equals(e.getErrorCode())) {
                 log.error("Image moderation credentials unavailable for photo {}: {}", photoId, e.getMessage());
@@ -268,14 +279,14 @@ public class PhotoModerationService {
                     e.getErrorCode(),
                     e.getMessage(),
                     List.of(e.getErrorCode()));
-            return new SyncModerationOutcome("MANUAL_REVIEW", e.getMessage());
+            return new SyncModerationOutcome("MANUAL_REVIEW", e.getMessage(), null);
         } catch (Exception e) {
             log.error("Sync moderation failed for photoId={}: {}", photoId, e.getMessage());
             escalateToManualReview(photoId, userId, ref,
                     "INTERNAL_ERROR",
                     "Unexpected error during moderation",
                     List.of("INTERNAL_ERROR"));
-            return new SyncModerationOutcome("MANUAL_REVIEW", "Unexpected error during moderation");
+            return new SyncModerationOutcome("MANUAL_REVIEW", "Unexpected error during moderation", null);
         }
     }
 
@@ -296,7 +307,7 @@ public class PhotoModerationService {
      */
     @Async
     public void processPhotoModeration(UUID photoId, UUID userId, String storagePath,
-                                       String moderationStatus, boolean isPrimary) {
+                                       String moderationStatus, boolean isPrimary, int photoOrder) {
         if (!"PENDING".equals(moderationStatus)) {
             return;
         }
@@ -339,7 +350,8 @@ public class PhotoModerationService {
             }
 
             String imageHash = ImageModerationResultService.computeImageHash(moderationBytes);
-            ModerationDecision decision = imageModerationOrchestrator.moderate(moderationBytes, ref.isPrimary());
+            ModerationDecision decision = imageModerationOrchestrator.moderate(
+                    moderationBytes, originalBytes, ref.isPrimary(), photoOrder);
 
             imageModerationResultService.markCompleted(photoId, decision, imageHash);
 
@@ -426,7 +438,11 @@ public class PhotoModerationService {
                     storageService.generateSignedUrl(rs.getString("storage_bucket"), rs.getString("storage_path"), 3600),
                     rs.getString("moderation_status"),
                     toOffsetDateTime(rs.getTimestamp("created_at")),
-                    rs.getString("display_name")
+                    rs.getString("display_name"),
+                    (Boolean) rs.getObject("ai_generated_detected"),
+                    (Double) rs.getObject("ai_generated_confidence"),
+                    rs.getString("ai_detected_generator"),
+                    rs.getString("ai_detection_action")
             ));
         });
         return items;
@@ -516,5 +532,11 @@ public class PhotoModerationService {
 
     private OffsetDateTime toOffsetDateTime(Timestamp ts) {
         return ts == null ? null : ts.toInstant().atOffset(ZoneOffset.UTC);
+    }
+
+    private AiDetectionAdvisoryDto buildAdvisory(AiDetectionResult aiResult) {
+        if (aiResult == null || !aiResult.aiDetected()) return null;
+        if (aiResult.actionTaken() != AiDetectionAction.ADVISE_ONLY) return null;
+        return new AiDetectionAdvisoryDto(true, aiResult.confidence(), aiResult.topGenerator());
     }
 }

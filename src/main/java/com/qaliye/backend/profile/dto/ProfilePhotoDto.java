@@ -10,5 +10,6 @@ public record ProfilePhotoDto(
         String signedUrl,
         Instant expiresAt,
         String moderationStatus,
-        String rejectionReason
+        String rejectionReason,
+        AiDetectionAdvisoryDto aiDetectionAdvisory
 ) {}
