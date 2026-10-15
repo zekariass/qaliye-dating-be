@@ -1,11 +1,16 @@
 package com.qaliye.backend.admin;
 
+import com.qaliye.backend.admin.dto.AuditLogEntryDto;
 import com.qaliye.backend.user.UserStatusService;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.sql.Timestamp;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -113,6 +118,16 @@ public class AdminAnalyticsService {
             FROM notification_outbox_events
             """;
 
+    private static final String RECENT_AUDIT_SQL = """
+            SELECT al.id, al.actor_user_id, al.action, al.target_table, al.target_id,
+                   al.request_id, al.details, al.created_at,
+                   p.display_name AS actor_display_name
+            FROM audit_log al
+            LEFT JOIN profiles p ON p.user_id = al.actor_user_id
+            ORDER BY al.created_at DESC
+            LIMIT 10
+            """;
+
     private final NamedParameterJdbcTemplate jdbc;
     private final UserStatusService userStatusService;
 
@@ -138,6 +153,7 @@ public class AdminAnalyticsService {
         dashboard.put("revenue", revenue);
         dashboard.put("subscriptions", querySingleRow(SUBSCRIPTION_STATS_SQL));
         dashboard.put("notifications", querySingleRow(NOTIFICATION_STATS_SQL));
+        dashboard.put("recentAuditEvents", queryRecentAuditEvents());
 
         return dashboard;
     }
@@ -148,6 +164,28 @@ public class AdminAnalyticsService {
             return Map.of();
         }
         return rows.get(0);
+    }
+
+    private List<AuditLogEntryDto> queryRecentAuditEvents() {
+        List<AuditLogEntryDto> entries = new ArrayList<>();
+        jdbc.query(RECENT_AUDIT_SQL, Map.of(), rs -> {
+            entries.add(new AuditLogEntryDto(
+                    rs.getObject("id", UUID.class),
+                    rs.getObject("actor_user_id", UUID.class),
+                    rs.getString("actor_display_name"),
+                    rs.getString("action"),
+                    rs.getString("target_table"),
+                    rs.getObject("target_id", UUID.class),
+                    rs.getObject("request_id", UUID.class),
+                    rs.getString("details"),
+                    toOffsetDateTime(rs.getTimestamp("created_at"))
+            ));
+        });
+        return entries;
+    }
+
+    private OffsetDateTime toOffsetDateTime(Timestamp ts) {
+        return ts == null ? null : ts.toInstant().atOffset(ZoneOffset.UTC);
     }
 
     private void requireModeratorOrAdmin(UUID callerId) {

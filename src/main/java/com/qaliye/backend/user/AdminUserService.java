@@ -147,9 +147,14 @@ public class AdminUserService {
 
         Long total = jdbc.queryForObject(COUNT_USERS_SQL, params, Long.class);
 
+        long totalCount = total != null ? total : 0;
+        int totalPages = pageSize > 0 ? (int) Math.ceil((double) totalCount / pageSize) : 1;
+        if (totalPages < 1) totalPages = 1;
+
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("users", users);
-        result.put("total", total != null ? total : 0);
+        result.put("total", totalCount);
+        result.put("totalPages", totalPages);
         result.put("page", page);
         result.put("pageSize", pageSize);
         return result;

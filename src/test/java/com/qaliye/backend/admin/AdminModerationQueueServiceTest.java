@@ -1,6 +1,7 @@
 package com.qaliye.backend.admin;
 
 import com.qaliye.backend.moderation.PhotoModerationItemDto;
+import com.qaliye.backend.notifications.NotificationDispatcher;
 import com.qaliye.backend.storage.SupabaseStorageService;
 import com.qaliye.backend.user.UserStatusService;
 import org.junit.jupiter.api.BeforeEach;
@@ -30,6 +31,7 @@ class AdminModerationQueueServiceTest {
     @Mock private NamedParameterJdbcTemplate jdbc;
     @Mock private UserStatusService userStatusService;
     @Mock private SupabaseStorageService storageService;
+    @Mock private NotificationDispatcher notificationDispatcher;
 
     @InjectMocks
     private AdminModerationQueueService service;

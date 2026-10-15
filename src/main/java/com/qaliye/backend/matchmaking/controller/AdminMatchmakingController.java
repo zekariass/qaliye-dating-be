@@ -102,6 +102,14 @@ public class AdminMatchmakingController {
 
     // ── Preferences ──────────────────────────────────────────────────────
 
+    @GetMapping("/users/{userId}/matchmaking-preferences")
+    public ResponseEntity<?> getMatchmakingPreferences(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable UUID userId) {
+        requireAdmin(jwt);
+        return ResponseEntity.ok(preferenceService.getPreferences(userId));
+    }
+
     @PatchMapping("/users/{userId}/matchmaking-preferences/notes")
     public ResponseEntity<Void> updateMatchmakerNotes(
             @AuthenticationPrincipal Jwt jwt,
