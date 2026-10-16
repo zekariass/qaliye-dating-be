@@ -240,9 +240,15 @@ public class ProfilePhotoService {
             log.warn("Could not delete photo {} from Supabase Storage: {}", photoId, ex.getMessage());
         }
 
-        if (wasPrimary) {
-            promoteQualifiedPrimary(userId);
-        }
+        // Deletion can expose unchecked photos (uploaded at order >= 2) in the
+        // top two displayed positions — recheck them for AI-generated content
+        // BEFORE promoting so rejected photos are excluded from candidacy.
+        photoModerationService.recheckUncheckedTopPhotos(userId);
+
+        // Safe to call unconditionally: it is a no-op when a primary already
+        // exists, and the sweep above may have rejected the current primary
+        // even when the deleted photo was not primary.
+        promoteQualifiedPrimary(userId);
 
         recomputeCompletionScore(userId);
         return getPhotos(userId);

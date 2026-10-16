@@ -309,6 +309,18 @@ class PhotoModerationServiceTest {
                         "ai_detection_enabled", aiEnabled)));
     }
 
+    private void givenCheckedPhotoRow(boolean detected, String action) {
+        when(jdbc.queryForList(contains("WHERE pp.id = :photoId"), anyMap()))
+                .thenReturn(List.of(Map.of(
+                        "moderation_status", "APPROVED",
+                        "storage_bucket", "profile-photos",
+                        "storage_path", "u/p.jpg",
+                        "ai_detection_enabled", Boolean.TRUE,
+                        "ai_generated_detected", detected,
+                        "ai_generated_confidence", 0.97,
+                        "ai_detection_action", action)));
+    }
+
     private AiDetectionResult detected(AiDetectionAction action) {
         return new AiDetectionResult(true, 0.97, "midjourney", "ai", action);
     }
@@ -329,12 +341,75 @@ class PhotoModerationServiceTest {
     @Test
     void recheck_skips_already_checked_photo() {
         givenModule();
-        givenPhotoRow("APPROVED", Boolean.TRUE);
+        givenCheckedPhotoRow(false, "ADVISE_ONLY");
 
         service.recheckAiDetectionIfUnchecked(photoId, userId, 1);
 
         verify(aiDetectionModule, never()).analyze(any(), anyInt());
         verify(storageService, never()).downloadPhoto(anyString());
+        verify(jdbc, never()).update(anyString(), any(MapSqlParameterSource.class));
+    }
+
+    @Test
+    void recheck_reuses_stored_detected_result_without_provider_call() {
+        givenModule();
+        givenCheckedPhotoRow(true, "REJECTED");
+        givenRows(1);
+
+        service.recheckAiDetectionIfUnchecked(photoId, userId, 1);
+
+        // Stored verdict enforced — the cloud provider was never called.
+        verify(aiDetectionModule, never()).analyze(any(), anyInt());
+        verify(storageService, never()).downloadPhoto(anyString());
+        verify(storageService).deleteObject("profile-photos", "u/p.jpg");
+        verify(onboardingService).recomputeScore(userId);
+    }
+
+    @Test
+    void recheck_reuses_stored_manual_review_without_provider_call() {
+        givenModule();
+        givenCheckedPhotoRow(true, "MANUAL_REVIEW");
+        givenRows(1);
+
+        service.recheckAiDetectionIfUnchecked(photoId, userId, 0);
+
+        verify(aiDetectionModule, never()).analyze(any(), anyInt());
+        verify(storageService, never()).deleteObject(any(), any());
+        verify(onboardingService).recomputeScore(userId);
+    }
+
+    @Test
+    void recheck_stored_advise_only_detection_does_not_enforce() {
+        givenModule();
+        givenCheckedPhotoRow(true, "ADVISE_ONLY");
+
+        service.recheckAiDetectionIfUnchecked(photoId, userId, 1);
+
+        verify(aiDetectionModule, never()).analyze(any(), anyInt());
+        verify(jdbc, never()).update(anyString(), any(MapSqlParameterSource.class));
+        verify(onboardingService, never()).recomputeScore(any());
+    }
+
+    @Test
+    void recheck_skips_admin_reviewed_photo() {
+        givenModule();
+        when(jdbc.queryForList(contains("WHERE pp.id = :photoId"), anyMap()))
+                .thenReturn(List.of(Map.of(
+                        "moderation_status", "APPROVED",
+                        "storage_bucket", "profile-photos",
+                        "storage_path", "u/p.jpg",
+                        "reviewed_by", UUID.randomUUID(),
+                        "ai_detection_enabled", Boolean.TRUE,
+                        "ai_generated_detected", Boolean.TRUE,
+                        "ai_detection_action", "REJECTED")));
+
+        service.recheckAiDetectionIfUnchecked(photoId, userId, 1);
+
+        // Human decision stands: no enforcement, no provider call, no download.
+        verify(aiDetectionModule, never()).analyze(any(), anyInt());
+        verify(storageService, never()).downloadPhoto(anyString());
+        verify(storageService, never()).deleteObject(any(), any());
+        verify(jdbc, never()).update(anyString(), any(MapSqlParameterSource.class));
     }
 
     @Test
@@ -441,11 +516,23 @@ class PhotoModerationServiceTest {
                         Map.of("id", checkedId,   "ai_detection_enabled", Boolean.TRUE),
                         Map.of("id", uncheckedId, "ai_detection_enabled", Boolean.FALSE)));
         when(jdbc.queryForList(contains("WHERE pp.id = :photoId"), anyMap()))
-                .thenReturn(List.of(Map.of(
-                        "moderation_status", "APPROVED",
-                        "storage_bucket", "profile-photos",
-                        "storage_path", "u/p2.jpg",
-                        "ai_detection_enabled", Boolean.FALSE)));
+                .thenAnswer(inv -> {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> params = inv.getArgument(1);
+                    if (checkedId.equals(params.get("photoId"))) {
+                        return List.of(Map.of(
+                                "moderation_status", "APPROVED",
+                                "storage_bucket", "profile-photos",
+                                "storage_path", "u/p1.jpg",
+                                "ai_detection_enabled", Boolean.TRUE,
+                                "ai_generated_detected", Boolean.FALSE));
+                    }
+                    return List.of(Map.of(
+                            "moderation_status", "APPROVED",
+                            "storage_bucket", "profile-photos",
+                            "storage_path", "u/p2.jpg",
+                            "ai_detection_enabled", Boolean.FALSE));
+                });
         givenBytes();
         when(aiDetectionModule.analyze(any(), eq(1)))
                 .thenReturn(new AiDetectionResult(false, 0.05, null, "human", AiDetectionAction.ADVISE_ONLY));
