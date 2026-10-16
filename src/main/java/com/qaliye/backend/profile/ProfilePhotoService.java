@@ -192,6 +192,13 @@ public class ProfilePhotoService {
                             .addValue("userId", userId));
         }
 
+        // Photos that just entered an AI-eligible slot (order 0/1) from a higher
+        // order were never AI-checked at upload — check them now.  Already-checked
+        // photos are skipped internally via imr.ai_detection_enabled.
+        for (int i = 0; i < sorted.size() && i <= 1; i++) {
+            photoModerationService.recheckAiDetectionIfUnchecked(sorted.get(i).id(), userId, i);
+        }
+
         promoteQualifiedPrimary(userId);
         return getPhotos(userId);
     }
