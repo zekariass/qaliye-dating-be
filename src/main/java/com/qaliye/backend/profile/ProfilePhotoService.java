@@ -15,6 +15,8 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
@@ -193,13 +195,18 @@ public class ProfilePhotoService {
         }
 
         // Photos that just entered an AI-eligible slot (order 0/1) from a higher
-        // order were never AI-checked at upload — check them now.  Already-checked
-        // photos are skipped internally via imr.ai_detection_enabled.
-        for (int i = 0; i < sorted.size() && i <= 1; i++) {
-            photoModerationService.recheckAiDetectionIfUnchecked(sorted.get(i).id(), userId, i);
-        }
-
-        promoteQualifiedPrimary(userId);
+        // order were never AI-checked at upload — recheck them AFTER COMMIT.
+        // Running inside this transaction was unsafe: Postgres aborts the whole
+        // transaction once any statement fails, so a caught recheck failure left
+        // every subsequent statement failing with "current transaction is
+        // aborted" → 409 CONFLICT.  Promotion runs after the sweep so a photo
+        // rejected by the recheck is never chosen as primary.
+        runAfterCommit(() -> {
+            for (int i = 0; i < sorted.size() && i <= 1; i++) {
+                photoModerationService.recheckAiDetectionIfUnchecked(sorted.get(i).id(), userId, i);
+            }
+            promoteQualifiedPrimary(userId);
+        });
         return getPhotos(userId);
     }
 
@@ -242,16 +249,36 @@ public class ProfilePhotoService {
 
         // Deletion can expose unchecked photos (uploaded at order >= 2) in the
         // top two displayed positions — recheck them for AI-generated content
-        // BEFORE promoting so rejected photos are excluded from candidacy.
-        photoModerationService.recheckUncheckedTopPhotos(userId);
-
-        // Safe to call unconditionally: it is a no-op when a primary already
-        // exists, and the sweep above may have rejected the current primary
-        // even when the deleted photo was not primary.
-        promoteQualifiedPrimary(userId);
-
-        recomputeCompletionScore(userId);
+        // AFTER COMMIT (same transaction-poisoning reason as in reorderPhotos),
+        // then promote so rejected photos are excluded from candidacy.
+        // promoteQualifiedPrimary is safe unconditionally: it is a no-op when a
+        // primary already exists, and the sweep may have rejected the current
+        // primary even when the deleted photo was not primary.
+        runAfterCommit(() -> {
+            photoModerationService.recheckUncheckedTopPhotos(userId);
+            promoteQualifiedPrimary(userId);
+            recomputeCompletionScore(userId);
+        });
         return getPhotos(userId);
+    }
+
+    /**
+     * Runs {@code task} after the surrounding transaction commits, or
+     * immediately when no transaction is active.  Used to keep AI-detection
+     * rechecks (cloud calls + multi-statement writes) out of the photo
+     * mutation transaction.
+     */
+    private void runAfterCommit(Runnable task) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    task.run();
+                }
+            });
+        } else {
+            task.run();
+        }
     }
 
     /**

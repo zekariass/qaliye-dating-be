@@ -362,11 +362,19 @@ public class PhotoModerationService {
                 log.warn("Could not delete AI-rejected photo object {}/{}: {}", bucket, path, e.getMessage());
             }
         };
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()
+                && TransactionSynchronizationManager.isActualTransactionActive()) {
+            // afterCompletion rather than afterCommit: this recheck itself can
+            // run inside an afterCommit callback (see runAfterCommit in
+            // ProfilePhotoService).  A sync registered at that point never sees
+            // afterCommit — the snapshot was already taken — but it does still
+            // receive afterCompletion, which also runs for late registrations.
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
-                public void afterCommit() {
-                    delete.run();
+                public void afterCompletion(int status) {
+                    if (status == STATUS_COMMITTED) {
+                        delete.run();
+                    }
                 }
             });
         } else {
