@@ -1,5 +1,7 @@
 package com.qaliye.backend.moderation;
 
+import com.qaliye.backend.moderation.aidetection.AiDetectionAction;
+import com.qaliye.backend.moderation.aidetection.AiDetectionResult;
 import com.qaliye.backend.moderation.rekognition.ImageModerationOrchestrator;
 import com.qaliye.backend.moderation.rekognition.ImageModerationStatus;
 import com.qaliye.backend.moderation.rekognition.ModerationDecision;
@@ -286,5 +288,112 @@ class PhotoModerationServiceTest {
         verify(storageService, never()).deleteObject(any(), any());
         verify(onboardingService).recomputeScore(userId);
         verify(orchestrator, never()).moderate(any(), any(), anyBoolean(), anyInt());
+    }
+
+    // ── enforceAiDetectionForPromotion ────────────────────────────────────────
+
+    @Test
+    void enforce_ai_skips_when_ai_detection_globally_disabled() {
+        when(orchestrator.isAiDetectionEnabled()).thenReturn(false);
+
+        service.enforceAiDetectionForPromotion(photoId, userId, "profile-photos/u/p.jpg", 1);
+
+        verify(storageService, never()).downloadPhoto(any());
+        verify(orchestrator, never()).runAiDetectionOnly(any(), anyInt());
+    }
+
+    @Test
+    void enforce_ai_skips_when_photo_already_ai_checked() {
+        when(orchestrator.isAiDetectionEnabled()).thenReturn(true);
+        when(moderationResultService.hasCompletedAiDetection(photoId)).thenReturn(true);
+
+        service.enforceAiDetectionForPromotion(photoId, userId, "profile-photos/u/p.jpg", 1);
+
+        verify(storageService, never()).downloadPhoto(any());
+        verify(orchestrator, never()).runAiDetectionOnly(any(), anyInt());
+    }
+
+    @Test
+    void enforce_ai_throws_422_when_download_returns_null() {
+        when(orchestrator.isAiDetectionEnabled()).thenReturn(true);
+        when(moderationResultService.hasCompletedAiDetection(photoId)).thenReturn(false);
+        when(storageService.downloadPhoto(anyString())).thenReturn(null);
+
+        assertThatThrownBy(() ->
+                service.enforceAiDetectionForPromotion(photoId, userId, "profile-photos/u/p.jpg", 1))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode().value()).isEqualTo(422));
+
+        verify(orchestrator, never()).runAiDetectionOnly(any(), anyInt());
+    }
+
+    @Test
+    void enforce_ai_passes_when_not_ai_detected() {
+        when(orchestrator.isAiDetectionEnabled()).thenReturn(true);
+        when(moderationResultService.hasCompletedAiDetection(photoId)).thenReturn(false);
+        when(storageService.downloadPhoto(anyString())).thenReturn(new byte[]{1, 2, 3});
+        AiDetectionResult result = new AiDetectionResult(false, 0.1, null, "human", AiDetectionAction.ADVISE_ONLY);
+        when(orchestrator.runAiDetectionOnly(any(), anyInt())).thenReturn(result);
+
+        service.enforceAiDetectionForPromotion(photoId, userId, "profile-photos/u/p.jpg", 2);
+
+        verify(moderationResultService).updateAiDetectionResult(photoId, result);
+    }
+
+    @Test
+    void enforce_ai_throws_422_when_ai_detected_with_rejected_action() {
+        when(orchestrator.isAiDetectionEnabled()).thenReturn(true);
+        when(moderationResultService.hasCompletedAiDetection(photoId)).thenReturn(false);
+        when(storageService.downloadPhoto(anyString())).thenReturn(new byte[]{1, 2, 3});
+        AiDetectionResult result = new AiDetectionResult(true, 0.97, "midjourney", "ai", AiDetectionAction.REJECTED);
+        when(orchestrator.runAiDetectionOnly(any(), anyInt())).thenReturn(result);
+
+        assertThatThrownBy(() ->
+                service.enforceAiDetectionForPromotion(photoId, userId, "profile-photos/u/p.jpg", 0))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode().value()).isEqualTo(422));
+
+        verify(moderationResultService).updateAiDetectionResult(photoId, result);
+    }
+
+    @Test
+    void enforce_ai_throws_422_when_ai_detected_with_manual_review_action() {
+        when(orchestrator.isAiDetectionEnabled()).thenReturn(true);
+        when(moderationResultService.hasCompletedAiDetection(photoId)).thenReturn(false);
+        when(storageService.downloadPhoto(anyString())).thenReturn(new byte[]{1, 2, 3});
+        AiDetectionResult result = new AiDetectionResult(
+                true, 0.91, "stable_diffusion", "ai", AiDetectionAction.MANUAL_REVIEW);
+        when(orchestrator.runAiDetectionOnly(any(), anyInt())).thenReturn(result);
+
+        assertThatThrownBy(() ->
+                service.enforceAiDetectionForPromotion(photoId, userId, "profile-photos/u/p.jpg", 2))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(ex -> assertThat(((ResponseStatusException) ex).getStatusCode().value()).isEqualTo(422));
+    }
+
+    @Test
+    void enforce_ai_allows_ai_detected_with_advise_only_action() {
+        when(orchestrator.isAiDetectionEnabled()).thenReturn(true);
+        when(moderationResultService.hasCompletedAiDetection(photoId)).thenReturn(false);
+        when(storageService.downloadPhoto(anyString())).thenReturn(new byte[]{1, 2, 3});
+        AiDetectionResult result = new AiDetectionResult(
+                true, 0.72, "unknown", "ai", AiDetectionAction.ADVISE_ONLY);
+        when(orchestrator.runAiDetectionOnly(any(), anyInt())).thenReturn(result);
+
+        service.enforceAiDetectionForPromotion(photoId, userId, "profile-photos/u/p.jpg", 1);
+
+        verify(moderationResultService).updateAiDetectionResult(photoId, result);
+    }
+
+    @Test
+    void enforce_ai_returns_silently_when_run_only_returns_null() {
+        when(orchestrator.isAiDetectionEnabled()).thenReturn(true);
+        when(moderationResultService.hasCompletedAiDetection(photoId)).thenReturn(false);
+        when(storageService.downloadPhoto(anyString())).thenReturn(new byte[]{1, 2, 3});
+        when(orchestrator.runAiDetectionOnly(any(), anyInt())).thenReturn(null);
+
+        service.enforceAiDetectionForPromotion(photoId, userId, "profile-photos/u/p.jpg", 5);
+
+        verify(moderationResultService, never()).updateAiDetectionResult(any(), any());
     }
 }

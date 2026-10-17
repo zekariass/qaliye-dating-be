@@ -16,7 +16,7 @@ public class AiDetectionModule {
 
     private static final Logger log = LoggerFactory.getLogger(AiDetectionModule.class);
 
-    static final int MAX_ELIGIBLE_ORDER = 1;
+    static final int MAX_ELIGIBLE_ORDER = 2;
 
     private final AiDetectionProperties props;
     private final AiDetectionProvider provider;

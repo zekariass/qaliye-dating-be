@@ -50,6 +50,36 @@ public class ImageModerationOrchestrator {
     }
 
     /**
+     * Returns {@code true} when the AI-detection module is wired in and the
+     * global moderation flag is enabled.  Used by callers that need to decide
+     * whether to enforce AI detection without running the full pipeline.
+     */
+    public boolean isAiDetectionEnabled() {
+        return props.isEnabled() && aiDetectionModule != null;
+    }
+
+    /**
+     * Runs only AI detection for the given image bytes and photo order.
+     * Returns {@code null} when AI detection is disabled, the module is absent,
+     * or the photo order exceeds {@link AiDetectionModule#MAX_ELIGIBLE_ORDER}.
+     * Any provider exception is caught and logged — the caller receives null.
+     *
+     * @param imageBytes raw image bytes (use the original, unconverted file for
+     *                   best detection accuracy)
+     * @param photoOrder zero-based photo order; orders above the eligible
+     *                   threshold are skipped by the module internally
+     */
+    public AiDetectionResult runAiDetectionOnly(byte[] imageBytes, int photoOrder) {
+        if (!isAiDetectionEnabled()) return null;
+        try {
+            return aiDetectionModule.analyze(imageBytes, photoOrder);
+        } catch (Exception e) {
+            log.warn("AI-only detection failed — skipping: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * Runs the configured moderation modules and returns a combined decision.
      * Treats the photo as a primary photo (face detection required).
      *

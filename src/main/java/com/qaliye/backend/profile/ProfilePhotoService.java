@@ -30,6 +30,7 @@ public class ProfilePhotoService {
 
     private static final int MAX_PHOTOS = 7;
     private static final int SIGNED_URL_TTL_SECONDS = 3600;
+    private static final int AI_ELIGIBLE_ORDER_MAX = 2;
 
     private final NamedParameterJdbcTemplate jdbc;
     private final SupabaseStorageService storageService;
@@ -129,9 +130,17 @@ public class ProfilePhotoService {
         lockUserPhotos(userId);
         List<PhotoReorderItem> items = request.photos();
 
-        for (PhotoReorderItem item : items) {
+        // Sort first so we know each photo's new position (index == new photo_order)
+        List<PhotoReorderItem> sorted = new ArrayList<>(items);
+        sorted.sort((a, b) -> Integer.compare(a.photoOrder(), b.photoOrder()));
+
+        for (int i = 0; i < sorted.size(); i++) {
+            PhotoReorderItem item = sorted.get(i);
+            int newOrder = i;
+
             List<Map<String, Object>> existing = jdbc.queryForList("""
-                    SELECT pp.moderation_status, imr.face_detection_enabled, imr.face_count
+                    SELECT pp.moderation_status, pp.storage_bucket, pp.storage_path,
+                           imr.face_detection_enabled, imr.face_count
                     FROM profile_photos pp
                     LEFT JOIN image_moderation_results imr ON imr.image_id = pp.id
                     WHERE pp.id = :id AND pp.user_id = :userId AND pp.deleted_at IS NULL
@@ -139,10 +148,13 @@ public class ProfilePhotoService {
             if (existing.isEmpty()) {
                 throw new ResponseStatusException(HttpStatus.NOT_FOUND, "PHOTO_NOT_FOUND");
             }
+
+            Map<String, Object> row = existing.get(0);
+
             if (Boolean.TRUE.equals(item.isPrimary())) {
-                String status = (String) existing.get(0).get("moderation_status");
-                Boolean faceEnabled = (Boolean) existing.get(0).get("face_detection_enabled");
-                Number faceCountNum = (Number) existing.get(0).get("face_count");
+                String status = (String) row.get("moderation_status");
+                Boolean faceEnabled = (Boolean) row.get("face_detection_enabled");
+                Number faceCountNum = (Number) row.get("face_count");
                 int faceCount = faceCountNum != null ? faceCountNum.intValue() : 0;
                 boolean faceVerified = faceEnabled == null
                         || (Boolean.TRUE.equals(faceEnabled) && faceCount > 0);
@@ -150,16 +162,20 @@ public class ProfilePhotoService {
                     throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_PRIMARY_PHOTO");
                 }
             }
+
+            if (newOrder <= AI_ELIGIBLE_ORDER_MAX) {
+                String bucket = (String) row.get("storage_bucket");
+                String path   = (String) row.get("storage_path");
+                photoModerationService.enforceAiDetectionForPromotion(
+                        item.id(), userId, bucket + "/" + path, newOrder);
+            }
         }
 
-        int countPrimary = (int) items.stream().filter(i -> Boolean.TRUE.equals(i.isPrimary())).count();
-        PhotoReorderItem primaryItem = items.stream()
+        int countPrimary = (int) sorted.stream().filter(i -> Boolean.TRUE.equals(i.isPrimary())).count();
+        PhotoReorderItem primaryItem = sorted.stream()
                 .filter(i -> Boolean.TRUE.equals(i.isPrimary()))
                 .min((a, b) -> Integer.compare(a.photoOrder(), b.photoOrder()))
                 .orElse(null);
-
-        List<PhotoReorderItem> sorted = new ArrayList<>(items);
-        sorted.sort((a, b) -> Integer.compare(a.photoOrder(), b.photoOrder()));
 
         // Shift existing orders out of the way first to avoid transient unique constraint
         // violations (user_id, photo_order) when two photos swap positions.

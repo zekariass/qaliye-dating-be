@@ -189,6 +189,60 @@ public class PhotoModerationService {
     public record SyncModerationOutcome(String status, String rejectionReason, AiDetectionAdvisoryDto aiAdvisory) {}
 
     /**
+     * Enforces AI detection for a photo being promoted into an AI-eligible order
+     * slot (photo_order 0, 1, or 2) via reorder.  The check is skipped when:
+     * <ul>
+     *   <li>AI detection is globally disabled or the module is absent.</li>
+     *   <li>The photo already has a completed AI detection result in
+     *       {@code image_moderation_results} ({@code ai_detection_enabled = TRUE}
+     *       and a terminal status).</li>
+     * </ul>
+     *
+     * @throws ResponseStatusException HTTP 422 when AI detection identifies the
+     *         photo as AI-generated with an enforcement action of
+     *         {@code REJECTED} or {@code MANUAL_REVIEW}.
+     */
+    public void enforceAiDetectionForPromotion(UUID photoId, UUID userId,
+                                               String fullStoragePath, int newOrder) {
+        if (!imageModerationOrchestrator.isAiDetectionEnabled()) return;
+        if (imageModerationResultService.hasCompletedAiDetection(photoId)) return;
+
+        byte[] originalBytes;
+        try {
+            originalBytes = storageService.downloadPhoto(fullStoragePath);
+        } catch (Exception e) {
+            log.warn("Could not download photo {} for AI promotion check: {}", photoId, e.getMessage());
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "AI_CHECK_DOWNLOAD_FAILED");
+        }
+        if (originalBytes == null || originalBytes.length == 0) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "AI_CHECK_DOWNLOAD_FAILED");
+        }
+
+        byte[] moderationBytes;
+        try {
+            moderationBytes = moderationImageConverter.prepareForModeration(originalBytes);
+        } catch (InvalidModerationImageException e) {
+            throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    e.getMessage() != null ? e.getMessage() : "INVALID_IMAGE_FORMAT");
+        }
+
+        AiDetectionResult aiResult = imageModerationOrchestrator.runAiDetectionOnly(moderationBytes, newOrder);
+        if (aiResult == null) return;
+
+        imageModerationResultService.updateAiDetectionResult(photoId, aiResult);
+
+        if (aiResult.aiDetected()) {
+            switch (aiResult.actionTaken()) {
+                case REJECTED -> throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "This photo appears to be AI-generated. Please upload a real photo.");
+                case MANUAL_REVIEW -> throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
+                        "This photo has been flagged for review and cannot be used in this position until approved.");
+                default -> {} // ADVISE_ONLY: allowed with advisory
+            }
+        }
+    }
+
+    /**
      * Runs moderation synchronously and returns the outcome.  Called from the
      * registration path so the HTTP response can immediately reflect the decision.
      * On transient AWS / network failures returns {@code PENDING} so the retry

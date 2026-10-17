@@ -1,12 +1,18 @@
 package com.qaliye.backend.moderation;
 
+import com.qaliye.backend.moderation.aidetection.AiDetectionAction;
+import com.qaliye.backend.moderation.aidetection.AiDetectionModule;
+import com.qaliye.backend.moderation.aidetection.AiDetectionResult;
 import com.qaliye.backend.moderation.rekognition.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.lang.reflect.Field;
 import java.util.List;
+
+import static org.mockito.Mockito.when;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -17,6 +23,7 @@ class ImageModerationOrchestratorTest {
 
     @Mock FaceDetectionService faceDetectionService;
     @Mock NudityModerationService nudityModerationService;
+    @Mock AiDetectionModule aiDetectionModule;
 
     byte[] dummyBytes = new byte[100];
 
@@ -147,8 +154,65 @@ class ImageModerationOrchestratorTest {
     }
 
     // -----------------------------------------------------------------------
+    // isAiDetectionEnabled
+    // -----------------------------------------------------------------------
+
+    @Test
+    void isAiDetectionEnabled_returns_false_when_no_ai_module() {
+        ImageModerationOrchestrator orch = new ImageModerationOrchestrator(
+                propsWithFlags(true, false, false), faceDetectionService, nudityModerationService);
+        assertThat(orch.isAiDetectionEnabled()).isFalse();
+    }
+
+    @Test
+    void isAiDetectionEnabled_returns_false_when_globally_disabled() throws Exception {
+        ImageModerationOrchestrator orch = new ImageModerationOrchestrator(
+                propsWithFlags(false, false, false), faceDetectionService, nudityModerationService);
+        setAiModule(orch, aiDetectionModule);
+        assertThat(orch.isAiDetectionEnabled()).isFalse();
+    }
+
+    @Test
+    void isAiDetectionEnabled_returns_true_when_module_present_and_enabled() throws Exception {
+        ImageModerationOrchestrator orch = new ImageModerationOrchestrator(
+                propsWithFlags(true, false, false), faceDetectionService, nudityModerationService);
+        setAiModule(orch, aiDetectionModule);
+        assertThat(orch.isAiDetectionEnabled()).isTrue();
+    }
+
+    // -----------------------------------------------------------------------
+    // runAiDetectionOnly
+    // -----------------------------------------------------------------------
+
+    @Test
+    void runAiDetectionOnly_returns_null_when_no_module() {
+        ImageModerationOrchestrator orch = new ImageModerationOrchestrator(
+                propsWithFlags(true, false, false), faceDetectionService, nudityModerationService);
+        assertThat(orch.runAiDetectionOnly(dummyBytes, 0)).isNull();
+    }
+
+    @Test
+    void runAiDetectionOnly_delegates_to_ai_module_and_returns_result() throws Exception {
+        ImageModerationOrchestrator orch = new ImageModerationOrchestrator(
+                propsWithFlags(true, false, false), faceDetectionService, nudityModerationService);
+        setAiModule(orch, aiDetectionModule);
+
+        AiDetectionResult expected = new AiDetectionResult(
+                false, 0.12, null, "human", AiDetectionAction.ADVISE_ONLY);
+        when(aiDetectionModule.analyze(dummyBytes, 1)).thenReturn(expected);
+
+        assertThat(orch.runAiDetectionOnly(dummyBytes, 1)).isEqualTo(expected);
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
+
+    private void setAiModule(ImageModerationOrchestrator orch, AiDetectionModule module) throws Exception {
+        Field field = ImageModerationOrchestrator.class.getDeclaredField("aiDetectionModule");
+        field.setAccessible(true);
+        field.set(orch, module);
+    }
 
     private ImageModerationProperties propsWithFlags(boolean global, boolean face, boolean nudity) {
         ImageModerationProperties p = new ImageModerationProperties();

@@ -102,6 +102,24 @@ public class ImageModerationResultService {
             WHERE image_id = :imageId
             """;
 
+    private static final String FIND_AI_STATUS_SQL = """
+            SELECT status, ai_detection_enabled
+            FROM image_moderation_results
+            WHERE image_id = :imageId
+            """;
+
+    private static final String UPDATE_AI_DETECTION_SQL = """
+            UPDATE image_moderation_results
+            SET ai_detection_enabled    = TRUE,
+                ai_generated_detected   = :aiDetected,
+                ai_generated_confidence = :aiConfidence,
+                ai_detected_generator   = :aiGenerator,
+                ai_detection_verdict    = :aiVerdict,
+                ai_detection_action     = :aiAction,
+                updated_at              = NOW()
+            WHERE image_id = :imageId
+            """;
+
     private static final String FIND_RETRY_ELIGIBLE_SQL = """
             SELECT imr.image_id, imr.profile_id, imr.image_storage_path, imr.attempt_count,
                    pp.is_primary, pp.photo_order
@@ -235,6 +253,41 @@ public class ImageModerationResultService {
                 .addValue("manualReason", truncate(manualReviewReason, 500))
                 .addValue("retryAfter", retryAfter)
                 .addValue("imageId", imageId));
+    }
+
+    /**
+     * Returns {@code true} when the photo already has a completed AI detection
+     * result — i.e. a terminal moderation row exists with
+     * {@code ai_detection_enabled = TRUE}.  Used to skip redundant re-checks
+     * during photo reordering.
+     */
+    public boolean hasCompletedAiDetection(UUID imageId) {
+        List<Map<String, Object>> rows = jdbc.queryForList(FIND_AI_STATUS_SQL, Map.of("imageId", imageId));
+        if (rows.isEmpty()) return false;
+        Map<String, Object> row = rows.get(0);
+        Boolean aiEnabled = (Boolean) row.get("ai_detection_enabled");
+        String status = (String) row.get("status");
+        Set<String> terminal = Set.of("APPROVED", "REJECTED", "MANUAL_REVIEW");
+        return Boolean.TRUE.equals(aiEnabled) && terminal.contains(status);
+    }
+
+    /**
+     * Updates the AI detection fields on an existing
+     * {@code image_moderation_results} row.  No-op (0 rows updated) when no
+     * row exists for {@code imageId} — the enforcement decision is still
+     * applied by the caller.
+     */
+    public void updateAiDetectionResult(UUID imageId, AiDetectionResult aiResult) {
+        int updated = jdbc.update(UPDATE_AI_DETECTION_SQL, new MapSqlParameterSource()
+                .addValue("aiDetected",   aiResult.aiDetected())
+                .addValue("aiConfidence", aiResult.confidence())
+                .addValue("aiGenerator",  aiResult.topGenerator())
+                .addValue("aiVerdict",    aiResult.verdict())
+                .addValue("aiAction",     aiResult.actionTaken() != null ? aiResult.actionTaken().name() : null)
+                .addValue("imageId",      imageId));
+        if (updated == 0) {
+            log.debug("updateAiDetectionResult: no moderation row found for imageId={}", imageId);
+        }
     }
 
     /**
