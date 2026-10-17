@@ -96,19 +96,6 @@ public class ImageModerationResultService {
             WHERE image_id = :imageId
             """;
 
-    private static final String UPDATE_AI_DETECTION_SQL = """
-            UPDATE image_moderation_results
-            SET ai_detection_enabled    = TRUE,
-                ai_generated_detected   = :aiDetected,
-                ai_generated_confidence = :aiConfidence,
-                ai_detected_generator   = :aiGenerator,
-                ai_detection_verdict    = :aiVerdict,
-                ai_detection_action     = :aiAction,
-                updated_at              = NOW()
-            WHERE image_id = :imageId
-              AND (ai_detection_enabled IS NULL OR ai_detection_enabled = FALSE)
-            """;
-
     private static final String FIND_BY_IMAGE_ID_SQL = """
             SELECT id, image_id, profile_id, status, attempt_count, config_version, retry_after
             FROM image_moderation_results
@@ -220,29 +207,6 @@ public class ImageModerationResultService {
                 .addValue("aiVerdict",   ai != null ? ai.verdict()       : null)
                 .addValue("aiAction",    ai != null && ai.actionTaken() != null ? ai.actionTaken().name() : null)
                 .addValue("imageId",     imageId));
-    }
-
-    /**
-     * Persists the AI-detection columns on an existing result row.  Used when
-     * a photo becomes eligible for AI detection only after upload (e.g. it was
-     * reordered into photo_order 0/1 or a deletion shifted it into the top two
-     * displayed positions).
-     * <p>
-     * If the photo has no result row yet (moderation was globally disabled at
-     * upload time) nothing is written — a sparse AI-only row would break the
-     * primary-photo eligibility queries that treat "no row" as "no moderation".
-     */
-    public void updateAiDetectionResult(UUID imageId, AiDetectionResult ai) {
-        int updated = jdbc.update(UPDATE_AI_DETECTION_SQL, new MapSqlParameterSource()
-                .addValue("aiDetected",   ai.aiDetected())
-                .addValue("aiConfidence", ai.confidence())
-                .addValue("aiGenerator",  ai.topGenerator())
-                .addValue("aiVerdict",    ai.verdict())
-                .addValue("aiAction",     ai.actionTaken() != null ? ai.actionTaken().name() : null)
-                .addValue("imageId",      imageId));
-        if (updated == 0) {
-            log.debug("No moderation result row for image {} — AI recheck result not persisted", imageId);
-        }
     }
 
     /**

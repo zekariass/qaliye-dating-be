@@ -1,7 +1,6 @@
 package com.qaliye.backend.moderation;
 
 import com.qaliye.backend.moderation.aidetection.AiDetectionAction;
-import com.qaliye.backend.moderation.aidetection.AiDetectionModule;
 import com.qaliye.backend.moderation.aidetection.AiDetectionResult;
 import com.qaliye.backend.moderation.rekognition.ImageModerationOrchestrator;
 import com.qaliye.backend.moderation.rekognition.ImageModerationStatus;
@@ -13,18 +12,14 @@ import com.qaliye.backend.storage.SupabaseStorageService;
 import com.qaliye.backend.user.UserStatusService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.http.HttpStatus;
-import org.springframework.lang.Nullable;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.sql.Timestamp;
@@ -51,41 +46,6 @@ public class PhotoModerationService {
 
     private static final String LOAD_PHOTO_STORAGE_SQL =
             "SELECT storage_bucket, storage_path, is_primary FROM profile_photos WHERE id = :photoId AND deleted_at IS NULL";
-
-    private static final String LOAD_PHOTO_FOR_AI_RECHECK_SQL = """
-            SELECT pp.moderation_status, pp.storage_bucket, pp.storage_path,
-                   pp.reviewed_by,
-                   imr.ai_detection_enabled, imr.ai_generated_detected,
-                   imr.ai_generated_confidence, imr.ai_detected_generator,
-                   imr.ai_detection_verdict, imr.ai_detection_action
-            FROM profile_photos pp
-            LEFT JOIN image_moderation_results imr ON imr.image_id = pp.id
-            WHERE pp.id = :photoId AND pp.user_id = :userId AND pp.deleted_at IS NULL
-            """;
-
-    private static final String FIND_TOP_TWO_PHOTOS_SQL = """
-            SELECT pp.id, imr.ai_detection_enabled
-            FROM profile_photos pp
-            LEFT JOIN image_moderation_results imr ON imr.image_id = pp.id
-            WHERE pp.user_id = :userId
-              AND pp.deleted_at IS NULL
-              AND pp.moderation_status IN ('APPROVED', 'MANUAL_REVIEW')
-            ORDER BY pp.photo_order ASC
-            LIMIT 2
-            """;
-
-    // Same shape as UPDATE_PHOTO_STATUS_SQL but targets already-moderated photos:
-    // used when a reordered/shifted photo newly enters an AI-eligible slot and
-    // the recheck rejects it or sends it to manual review.
-    private static final String UPDATE_PHOTO_AI_OUTCOME_SQL = """
-            UPDATE profile_photos
-            SET moderation_status = :status,
-                rejection_reason  = :reason,
-                is_primary        = CASE WHEN :status = 'REJECTED' THEN FALSE ELSE is_primary END,
-                updated_at        = NOW()
-            WHERE id = :photoId AND moderation_status IN ('APPROVED', 'MANUAL_REVIEW')
-              AND reviewed_by IS NULL
-            """;
 
     private record StorageRef(String bucket, String path, String fullPath, boolean isPrimary) {}
 
@@ -135,14 +95,6 @@ public class PhotoModerationService {
             """;
 
     private final SupabaseStorageService storageService;
-
-    // Optional like in ImageModerationOrchestrator: present only when the
-    // AI-detection feature is wired.  Field injection keeps the constructor
-    // signature stable for tests.
-    @Autowired(required = false)
-    @Nullable
-    private AiDetectionModule aiDetectionModule;
-
     private final OnboardingService onboardingService;
     private final UserStatusService userStatusService;
     private final CacheManager cacheManager;
@@ -207,196 +159,6 @@ public class PhotoModerationService {
         if (updated > 0) {
             onboardingService.recomputeScore(userId);
             syncProfileVisibilityWithPrimary(userId);
-        }
-    }
-
-    /**
-     * Ensures a photo that just moved into an AI-eligible displayed position
-     * (photo_order 0 or 1) has an AI-detection verdict, <b>reusing the stored
-     * result whenever the image was already checked</b> — the cloud provider is
-     * only called for images with no prior check, which keeps provider cost
-     * bounded to one call per image.
-     *
-     * <p>Flow: if {@code ai_detection_enabled = TRUE} the stored
-     * {@code ai_*} columns are rebuilt into an {@link AiDetectionResult} and
-     * enforced as-is (a stored "detected" verdict still applies — no cloud
-     * call). Otherwise the provider is called once and the result persisted.
-     * No-op when the module is absent/disabled, {@code effectiveOrder} is not
-     * eligible, or the photo is not in a terminal moderated state.</p>
-     *
-     * <p>Never throws — a provider/storage failure must not break the
-     * reorder/delete request that triggered this.</p>
-     *
-     * @param effectiveOrder the photo's displayed position (0-based), used for
-     *                       the module's eligibility gate
-     */
-    public void recheckAiDetectionIfUnchecked(UUID photoId, UUID userId, int effectiveOrder) {
-        if (aiDetectionModule == null
-                || effectiveOrder > AiDetectionModule.MAX_ELIGIBLE_ORDER) {
-            return;
-        }
-        try {
-            List<Map<String, Object>> rows = jdbc.queryForList(LOAD_PHOTO_FOR_AI_RECHECK_SQL,
-                    Map.of("photoId", photoId, "userId", userId));
-            if (rows.isEmpty()) {
-                return;
-            }
-            Map<String, Object> row = rows.get(0);
-            String status = (String) row.get("moderation_status");
-            if (!"APPROVED".equals(status) && !"MANUAL_REVIEW".equals(status)) {
-                return;
-            }
-            if (row.get("reviewed_by") != null) {
-                // An admin already adjudicated this photo — human decisions
-                // override automation, so no recheck and no enforcement.
-                return;
-            }
-            String bucket = (String) row.get("storage_bucket");
-            String path   = (String) row.get("storage_path");
-
-            AiDetectionResult aiResult = storedAiResult(row);
-            if (aiResult == null) {
-                // Never checked — call the provider once and persist the verdict.
-                // AI detection uses the ORIGINAL bytes (re-encoding degrades accuracy).
-                byte[] originalBytes = storageService.downloadPhoto(bucket + "/" + path);
-                if (originalBytes == null || originalBytes.length == 0) {
-                    log.warn("AI recheck skipped — could not download photo {}", photoId);
-                    return;
-                }
-                try {
-                    aiResult = aiDetectionModule.analyze(originalBytes, effectiveOrder);
-                } catch (Exception e) {
-                    log.warn("AI recheck provider call failed for photo {}: {}", photoId, e.getMessage());
-                    return;
-                }
-                if (aiResult == null) {
-                    return; // feature disabled
-                }
-                imageModerationResultService.updateAiDetectionResult(photoId, aiResult);
-            }
-
-            enforceAiOutcome(photoId, userId, bucket, path, aiResult);
-        } catch (Exception e) {
-            log.warn("AI recheck failed for photo {}: {}", photoId, e.getMessage());
-        }
-    }
-
-    /**
-     * Rebuilds the AI-detection verdict persisted on the moderation result row,
-     * or {@code null} when the image was never checked ({@code ai_detection_enabled
-     * IS NOT TRUE}).
-     */
-    private static AiDetectionResult storedAiResult(Map<String, Object> row) {
-        if (!Boolean.TRUE.equals(row.get("ai_detection_enabled"))) {
-            return null;
-        }
-        Object confidence = row.get("ai_generated_confidence");
-        return new AiDetectionResult(
-                Boolean.TRUE.equals(row.get("ai_generated_detected")),
-                confidence instanceof Number n ? n.doubleValue() : 0.0,
-                (String) row.get("ai_detected_generator"),
-                (String) row.get("ai_detection_verdict"),
-                parseAiAction(row.get("ai_detection_action")));
-    }
-
-    private static AiDetectionAction parseAiAction(Object action) {
-        if (action == null) {
-            return null;
-        }
-        try {
-            return AiDetectionAction.valueOf(action.toString());
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
-    }
-
-    /**
-     * Applies the moderation consequence of an AI-detection verdict (fresh or
-     * stored) to the photo row: REJECTED removes the photo from storage,
-     * MANUAL_REVIEW flags it, ADVISE_ONLY/undetected does nothing.
-     */
-    private void enforceAiOutcome(UUID photoId, UUID userId, String bucket, String path,
-                                  AiDetectionResult aiResult) {
-        if (!aiResult.aiDetected() || aiResult.actionTaken() == null) {
-            return;
-        }
-        String newStatus = switch (aiResult.actionTaken()) {
-            case REJECTED      -> "REJECTED";
-            case MANUAL_REVIEW -> "MANUAL_REVIEW";
-            case ADVISE_ONLY   -> null;
-        };
-        if (newStatus == null) {
-            return;
-        }
-        String reason = "REJECTED".equals(newStatus)
-                ? "This photo appears to be AI-generated. Please upload a real photo."
-                : "This photo has been flagged for review.";
-
-        int updated = jdbc.update(UPDATE_PHOTO_AI_OUTCOME_SQL,
-                new MapSqlParameterSource()
-                        .addValue("status", newStatus)
-                        .addValue("reason", reason)
-                        .addValue("photoId", photoId));
-        if (updated > 0) {
-            log.info("AI detection verdict on promoted photo {} -> {}", photoId, newStatus);
-            if ("REJECTED".equals(newStatus)) {
-                deletePhotoObjectAfterCommit(bucket, path);
-            }
-            onboardingService.recomputeScore(userId);
-            syncProfileVisibilityWithPrimary(userId);
-        }
-    }
-
-    /**
-     * Deletes the storage object only after the surrounding transaction commits.
-     * Running it eagerly inside {@code reorderPhotos}/{@code deletePhoto}'s
-     * transaction would leave an APPROVED row pointing at a deleted file if a
-     * later statement rolled the transaction back.  Falls back to an immediate
-     * delete when no transaction is active.
-     */
-    private void deletePhotoObjectAfterCommit(String bucket, String path) {
-        Runnable delete = () -> {
-            try {
-                storageService.deleteObject(bucket, path);
-            } catch (Exception e) {
-                log.warn("Could not delete AI-rejected photo object {}/{}: {}", bucket, path, e.getMessage());
-            }
-        };
-        if (TransactionSynchronizationManager.isSynchronizationActive()
-                && TransactionSynchronizationManager.isActualTransactionActive()) {
-            // afterCompletion rather than afterCommit: this recheck itself can
-            // run inside an afterCommit callback (see runAfterCommit in
-            // ProfilePhotoService).  A sync registered at that point never sees
-            // afterCommit — the snapshot was already taken — but it does still
-            // receive afterCompletion, which also runs for late registrations.
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCompletion(int status) {
-                    if (status == STATUS_COMMITTED) {
-                        delete.run();
-                    }
-                }
-            });
-        } else {
-            delete.run();
-        }
-    }
-
-    /**
-     * Rechecks the two photos currently occupying the top displayed positions
-     * (lowest {@code photo_order}) when they were never AI-checked.  Called
-     * after a deletion or primary promotion shifts unchecked photos into
-     * eligible slots.
-     */
-    public void recheckUncheckedTopPhotos(UUID userId) {
-        if (aiDetectionModule == null) {
-            return;
-        }
-        List<Map<String, Object>> top = jdbc.queryForList(FIND_TOP_TWO_PHOTOS_SQL,
-                Map.of("userId", userId));
-        for (int i = 0; i < top.size(); i++) {
-            // Checked photos reuse their stored verdict inside — no provider call.
-            recheckAiDetectionIfUnchecked((UUID) top.get(i).get("id"), userId, i);
         }
     }
 

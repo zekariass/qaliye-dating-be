@@ -332,7 +332,7 @@ image:
     confidence-threshold: ${IMAGE_AI_DETECTION_CONFIDENCE_THRESHOLD:0.85}
     action: ${IMAGE_AI_DETECTION_ACTION:REJECTED} # ADVISE_ONLY, MANUAL_REVIEW or REJECTED
     ai-or-not:
-      api-key: ${IMAGE_AI_OR_NOT_API_KEY:aion_prod_d9c4154065cc4cf1b4f456490c3cbb3428f1938e030c4912b686a9a96fa63fb6}
+      api-key: ${IMAGE_AI_OR_NOT_API_KEY:aion_prod_879eb5204aa24e9ebbbc98caed654489e2af80e39ed9416e9f6938fd59a6af89}
       base-url: ${IMAGE_AI_OR_NOT_BASE_URL:https://api.aiornot.com/v2/image/sync}
 
 links:

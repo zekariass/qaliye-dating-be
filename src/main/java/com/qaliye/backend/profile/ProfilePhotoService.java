@@ -15,8 +15,6 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
@@ -128,6 +126,7 @@ public class ProfilePhotoService {
 
     @Transactional
     public ProfilePhotosResponse reorderPhotos(UUID userId, PhotoReorderRequest request) {
+        lockUserPhotos(userId);
         List<PhotoReorderItem> items = request.photos();
 
         for (PhotoReorderItem item : items) {
@@ -164,12 +163,18 @@ public class ProfilePhotoService {
 
         // Shift existing orders out of the way first to avoid transient unique constraint
         // violations (user_id, photo_order) when two photos swap positions.
+        // The offset must exceed the current max: rows stranded in the scratch
+        // range by an earlier partial reorder would otherwise collide here.
         jdbc.update("""
                 UPDATE profile_photos
-                SET photo_order = photo_order + :offset
+                SET photo_order = photo_order + (
+                    SELECT COALESCE(MAX(photo_order), 0) + 10000
+                    FROM profile_photos
+                    WHERE user_id = :userId AND deleted_at IS NULL
+                )
                 WHERE user_id = :userId AND deleted_at IS NULL
                 """,
-                Map.of("offset", 10000, "userId", userId));
+                Map.of("userId", userId));
 
         // Clear all primary flags so the per-row loop never leaves two rows with
         // is_primary = TRUE simultaneously (unique_active_primary_photo_per_user).
@@ -194,19 +199,29 @@ public class ProfilePhotoService {
                             .addValue("userId", userId));
         }
 
-        // Photos that just entered an AI-eligible slot (order 0/1) from a higher
-        // order were never AI-checked at upload — recheck them AFTER COMMIT.
-        // Running inside this transaction was unsafe: Postgres aborts the whole
-        // transaction once any statement fails, so a caught recheck failure left
-        // every subsequent statement failing with "current transaction is
-        // aborted" → 409 CONFLICT.  Promotion runs after the sweep so a photo
-        // rejected by the recheck is never chosen as primary.
-        runAfterCommit(() -> {
-            for (int i = 0; i < sorted.size() && i <= 1; i++) {
-                photoModerationService.recheckAiDetectionIfUnchecked(sorted.get(i).id(), userId, i);
-            }
-            promoteQualifiedPrimary(userId);
-        });
+        // Photos not included in the request (e.g. REJECTED photos hidden from
+        // the client, or rows added concurrently) are still in the 10000+
+        // scratch range. Move them down so they cannot collide with the next
+        // reorder's shift UPDATE.
+        if (!sorted.isEmpty()) {
+            List<UUID> listedIds = sorted.stream().map(PhotoReorderItem::id).toList();
+            jdbc.update("""
+                    UPDATE profile_photos pp
+                    SET photo_order = sub.new_order
+                    FROM (
+                        SELECT id, (ROW_NUMBER() OVER (ORDER BY photo_order) - 1 + :base)::int AS new_order
+                        FROM profile_photos
+                        WHERE user_id = :userId AND deleted_at IS NULL AND id NOT IN (:listedIds)
+                    ) sub
+                    WHERE pp.id = sub.id
+                    """,
+                    new MapSqlParameterSource()
+                            .addValue("base", sorted.size())
+                            .addValue("userId", userId)
+                            .addValue("listedIds", listedIds));
+        }
+
+        promoteQualifiedPrimary(userId);
         return getPhotos(userId);
     }
 
@@ -247,38 +262,12 @@ public class ProfilePhotoService {
             log.warn("Could not delete photo {} from Supabase Storage: {}", photoId, ex.getMessage());
         }
 
-        // Deletion can expose unchecked photos (uploaded at order >= 2) in the
-        // top two displayed positions — recheck them for AI-generated content
-        // AFTER COMMIT (same transaction-poisoning reason as in reorderPhotos),
-        // then promote so rejected photos are excluded from candidacy.
-        // promoteQualifiedPrimary is safe unconditionally: it is a no-op when a
-        // primary already exists, and the sweep may have rejected the current
-        // primary even when the deleted photo was not primary.
-        runAfterCommit(() -> {
-            photoModerationService.recheckUncheckedTopPhotos(userId);
+        if (wasPrimary) {
             promoteQualifiedPrimary(userId);
-            recomputeCompletionScore(userId);
-        });
-        return getPhotos(userId);
-    }
-
-    /**
-     * Runs {@code task} after the surrounding transaction commits, or
-     * immediately when no transaction is active.  Used to keep AI-detection
-     * rechecks (cloud calls + multi-statement writes) out of the photo
-     * mutation transaction.
-     */
-    private void runAfterCommit(Runnable task) {
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    task.run();
-                }
-            });
-        } else {
-            task.run();
         }
+
+        recomputeCompletionScore(userId);
+        return getPhotos(userId);
     }
 
     /**
@@ -329,6 +318,15 @@ public class ProfilePhotoService {
                     WHERE user_id = :userId AND deleted_at IS NULL AND is_primary = TRUE
                 )
                 """, Map.of("userId", userId));
+    }
+
+    /**
+     * Serializes photo_order mutations for a user. Concurrent register/reorder
+     * calls otherwise race on the unique_active_profile_photo_order index.
+     */
+    private void lockUserPhotos(UUID userId) {
+        jdbc.queryForList("SELECT pg_advisory_xact_lock(hashtext(:uid))",
+                Map.of("uid", userId.toString()));
     }
 
     private long countActivePhotos(UUID userId) {
